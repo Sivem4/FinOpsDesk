@@ -1,2 +1,14 @@
 <Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/backend/">
+    <Project Path="src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj" />
+    <Project Path="src/backend/FinOpsDesk.SharedKernel/FinOpsDesk.SharedKernel.csproj" />
+  </Folder>
+  <Folder Name="/src/backend/Modules/">
+    <Project Path="src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FinOpsDesk.ArchitectureTests/FinOpsDesk.ArchitectureTests.csproj" />
+    <Project Path="tests/FinOpsDesk.UnitTests/FinOpsDesk.UnitTests.csproj" />
+  </Folder>
 </Solution>
