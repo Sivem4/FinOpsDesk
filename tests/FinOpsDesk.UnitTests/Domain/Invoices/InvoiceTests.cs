@@ -1,0 +1,162 @@
+using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+
+namespace FinOpsDesk.UnitTests.Reconciliation.Domain.Invoices;
+
+public sealed class InvoiceTests
+{
+    private static readonly CurrencyCode Pln = new("PLN");
+    private static readonly CurrencyCode Eur = new("EUR");
+
+    [Fact]
+    public void New_invoice_should_be_fully_outstanding()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        Assert.Equal(
+            new Money(0m, Pln),
+            invoice.AllocatedAmount);
+
+        Assert.Equal(
+            new Money(1000m, Pln),
+            invoice.OutstandingAmount);
+    }
+
+    [Fact]
+    public void Allocate_should_reduce_outstanding_amount()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        invoice.Allocate(new Money(300m, Pln));
+
+        Assert.Equal(
+            new Money(300m, Pln),
+            invoice.AllocatedAmount);
+
+        Assert.Equal(
+            new Money(700m, Pln),
+            invoice.OutstandingAmount);
+    }
+
+    [Fact]
+    public void Multiple_allocations_should_accumulate()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        invoice.Allocate(new Money(300m, Pln));
+        invoice.Allocate(new Money(200m, Pln));
+
+        Assert.Equal(
+            new Money(500m, Pln),
+            invoice.AllocatedAmount);
+
+        Assert.Equal(
+            new Money(500m, Pln),
+            invoice.OutstandingAmount);
+    }
+
+    [Fact]
+    public void Allocate_should_allow_exact_outstanding_amount()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        invoice.Allocate(new Money(1000m, Pln));
+
+        Assert.Equal(
+            Money.Zero(Pln),
+            invoice.OutstandingAmount);
+    }
+
+    [Fact]
+    public void Allocate_should_reject_amount_greater_than_outstanding()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        Assert.Throws<InvalidOperationException>(
+            () => invoice.Allocate(
+                new Money(1001m, Pln)));
+
+        Assert.Equal(
+            new Money(1000m, Pln),
+            invoice.OutstandingAmount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-100)]
+    public void Allocate_should_reject_non_positive_amount(
+        decimal amount)
+    {
+        var invoice = CreateInvoice(1000m);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => invoice.Allocate(
+                new Money(amount, Pln)));
+    }
+
+    [Fact]
+    public void Allocate_should_reject_different_currency()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        Assert.Throws<InvalidOperationException>(
+            () => invoice.Allocate(
+                new Money(100m, Eur)));
+    }
+
+    [Fact]
+    public void ReverseAllocation_should_restore_outstanding_amount()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        invoice.Allocate(new Money(600m, Pln));
+
+        invoice.ReverseAllocation(
+            new Money(200m, Pln));
+
+        Assert.Equal(
+            new Money(400m, Pln),
+            invoice.AllocatedAmount);
+
+        Assert.Equal(
+            new Money(600m, Pln),
+            invoice.OutstandingAmount);
+    }
+
+    [Fact]
+    public void ReverseAllocation_should_reject_amount_greater_than_allocated()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        invoice.Allocate(new Money(300m, Pln));
+
+        Assert.Throws<InvalidOperationException>(
+            () => invoice.ReverseAllocation(
+                new Money(301m, Pln)));
+
+        Assert.Equal(
+            new Money(300m, Pln),
+            invoice.AllocatedAmount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-100)]
+    public void Constructor_should_reject_non_positive_total_amount(
+        decimal amount)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new Invoice(
+                InvoiceId.New(),
+                "INV-001",
+                new Money(amount, Pln)));
+    }
+
+    private static Invoice CreateInvoice(decimal amount)
+    {
+        return new Invoice(
+            InvoiceId.New(),
+            "INV-001",
+            new Money(amount, Pln));
+    }
+}
