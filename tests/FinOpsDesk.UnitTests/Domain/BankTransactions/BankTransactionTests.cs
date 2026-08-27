@@ -7,6 +7,7 @@ public sealed class BankTransactionTests
 {
     private static readonly CurrencyCode Pln = new("PLN");
     private static readonly CurrencyCode Eur = new("EUR");
+    private static readonly DateOnly BookingDate = new(2026, 8, 24);
 
     [Fact]
     public void New_transaction_should_be_fully_unapplied()
@@ -146,6 +147,23 @@ public sealed class BankTransactionTests
             transaction.AllocatedAmount);
     }
 
+    [Fact]
+    public void ReverseAllocation_should_reject_different_currency()
+    {
+        var transaction = CreateTransaction(1000m);
+
+        transaction.Allocate(
+            new Money(300m, Pln));
+
+        Assert.Throws<InvalidOperationException>(
+            () => transaction.ReverseAllocation(
+                new Money(100m, Eur)));
+
+        Assert.Equal(
+            new Money(300m, Pln),
+            transaction.AllocatedAmount);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-100)]
@@ -156,17 +174,15 @@ public sealed class BankTransactionTests
             () => new BankTransaction(
                 BankTransactionId.New(),
                 new Money(amount, Pln),
-                new DateOnly(2026, 8, 24),
+                BookingDate,
                 "INV-001"));
     }
 
     [Fact]
     public void Constructor_should_trim_reference()
     {
-        var transaction = new BankTransaction(
-            BankTransactionId.New(),
-            new Money(1000m, Pln),
-            new DateOnly(2026, 8, 24),
+        var transaction = CreateTransaction(
+            1000m,
             "  INV-001  ");
 
         Assert.Equal(
@@ -181,21 +197,19 @@ public sealed class BankTransactionTests
     public void Empty_reference_should_be_normalized_to_null(
         string? reference)
     {
-        var transaction = new BankTransaction(
-            BankTransactionId.New(),
-            new Money(1000m, Pln),
-            new DateOnly(2026, 8, 24),
-            reference);
+        var transaction = CreateTransaction(1000m, reference);
 
         Assert.Null(transaction.Reference);
     }
 
-    private static BankTransaction CreateTransaction(decimal amount)
+    private static BankTransaction CreateTransaction(
+        decimal amount,
+        string? reference = "INV-001")
     {
         return new BankTransaction(
             BankTransactionId.New(),
             new Money(amount, Pln),
-            new DateOnly(2026, 8, 24),
-            "INV-001");
+            BookingDate,
+            reference);
     }
 }

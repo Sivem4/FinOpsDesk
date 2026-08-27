@@ -52,9 +52,7 @@ public sealed class BankTransaction
                 "Allocation amount must be greater than zero.");
         }
 
-        EnsureSameCurrency(amount);
-
-        if (amount.Amount > UnappliedAmount.Amount)
+        if (amount.IsGreaterThan(UnappliedAmount))
         {
             throw new InvalidOperationException(
                 "Allocation amount cannot exceed unapplied transaction amount.");
@@ -74,24 +72,13 @@ public sealed class BankTransaction
                 "Reversal amount must be greater than zero.");
         }
 
-        EnsureSameCurrency(amount);
-
-        if (amount.Amount > AllocatedAmount.Amount)
+        if (amount.IsGreaterThan(AllocatedAmount))
         {
             throw new InvalidOperationException(
                 "Reversal amount cannot exceed allocated transaction amount.");
         }
 
         AllocatedAmount = AllocatedAmount.Subtract(amount);
-    }
-
-    private void EnsureSameCurrency(Money amount)
-    {
-        if (Amount.Currency != amount.Currency)
-        {
-            throw new InvalidOperationException(
-                $"Bank transaction currency is {Amount.Currency}, but operation currency is {amount.Currency}.");
-        }
     }
 
     private static string? NormalizeReference(string? reference)
