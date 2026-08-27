@@ -62,6 +62,43 @@ public sealed class MoneyTests
     }
 
     [Fact]
+    public void IsGreaterThan_should_return_true_when_amount_is_greater()
+    {
+        var greater = new Money(100m, Pln);
+        var smaller = new Money(40m, Pln);
+
+        Assert.True(greater.IsGreaterThan(smaller));
+    }
+
+    [Fact]
+    public void IsGreaterThan_should_return_false_when_amounts_are_equal()
+    {
+        var first = new Money(100m, Pln);
+        var second = new Money(100m, Pln);
+
+        Assert.False(first.IsGreaterThan(second));
+    }
+
+    [Fact]
+    public void IsGreaterThan_should_return_false_when_amount_is_smaller()
+    {
+        var smaller = new Money(40m, Pln);
+        var greater = new Money(100m, Pln);
+
+        Assert.False(smaller.IsGreaterThan(greater));
+    }
+
+    [Fact]
+    public void IsGreaterThan_should_reject_different_currency()
+    {
+        var pln = new Money(100m, Pln);
+        var eur = new Money(50m, Eur);
+
+        Assert.Throws<InvalidOperationException>(
+            () => pln.IsGreaterThan(eur));
+    }
+
+    [Fact]
     public void Money_should_allow_negative_amount()
     {
         var money = new Money(-100m, Pln);

@@ -49,9 +49,7 @@ public sealed class Invoice
                 "Allocation amount must be greater than zero.");
         }
 
-        EnsureSameCurrency(amount);
-
-        if (amount.Amount > OutstandingAmount.Amount)
+        if (amount.IsGreaterThan(OutstandingAmount))
         {
             throw new InvalidOperationException(
                 "Allocation amount cannot exceed invoice outstanding amount.");
@@ -71,23 +69,12 @@ public sealed class Invoice
                 "Reversal amount must be greater than zero.");
         }
 
-        EnsureSameCurrency(amount);
-
-        if (amount.Amount > AllocatedAmount.Amount)
+        if (amount.IsGreaterThan(AllocatedAmount))
         {
             throw new InvalidOperationException(
                 "Reversal amount cannot exceed invoice allocated amount.");
         }
 
         AllocatedAmount = AllocatedAmount.Subtract(amount);
-    }
-
-    private void EnsureSameCurrency(Money amount)
-    {
-        if (TotalAmount.Currency != amount.Currency)
-        {
-            throw new InvalidOperationException(
-                $"Invoice currency is {TotalAmount.Currency}, but operation currency is {amount.Currency}.");
-        }
     }
 }

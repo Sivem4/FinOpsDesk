@@ -139,6 +139,22 @@ public sealed class InvoiceTests
             invoice.AllocatedAmount);
     }
 
+    [Fact]
+    public void ReverseAllocation_should_reject_different_currency()
+    {
+        var invoice = CreateInvoice(1000m);
+
+        invoice.Allocate(new Money(300m, Pln));
+
+        Assert.Throws<InvalidOperationException>(
+            () => invoice.ReverseAllocation(
+                new Money(100m, Eur)));
+
+        Assert.Equal(
+            new Money(300m, Pln),
+            invoice.AllocatedAmount);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-100)]

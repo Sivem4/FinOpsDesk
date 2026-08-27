@@ -43,6 +43,15 @@ public sealed record Money
         return new Money(0m, currency);
     }
 
+    public bool IsGreaterThan(Money other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+
+        EnsureSameCurrency(other);
+
+        return Amount > other.Amount;
+    }
+
     private void EnsureSameCurrency(Money other)
     {
         if (Currency != other.Currency)
