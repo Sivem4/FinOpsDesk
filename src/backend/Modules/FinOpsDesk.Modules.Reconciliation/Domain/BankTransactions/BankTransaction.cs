@@ -1,10 +1,13 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 
 public sealed class BankTransaction
 {
     public BankTransactionId Id { get; }
+
+    public OrganizationId OrganizationId { get; }
 
     public Money Amount { get; }
 
@@ -19,11 +22,13 @@ public sealed class BankTransaction
 
     public BankTransaction(
         BankTransactionId id,
+        OrganizationId organizationId,
         Money amount,
         DateOnly bookingDate,
         string? reference)
     {
         ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(organizationId);
         ArgumentNullException.ThrowIfNull(amount);
 
         if (amount.Amount <= 0)
@@ -34,6 +39,7 @@ public sealed class BankTransaction
         }
 
         Id = id;
+        OrganizationId = organizationId;
         Amount = amount;
         BookingDate = bookingDate;
         Reference = NormalizeReference(reference);

@@ -2,11 +2,14 @@ using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.Allocations;
 
 public sealed class AllocationTests
 {
+    private static readonly OrganizationId TestOrganizationId =
+        new(new Guid("11111111-1111-1111-1111-111111111111"));
     private static readonly CurrencyCode Pln = new("PLN");
     private static readonly DateTimeOffset ConfirmedAt =
         new(2026, 8, 24, 10, 0, 0, TimeSpan.Zero);
@@ -21,12 +24,14 @@ public sealed class AllocationTests
 
         var allocation = new Allocation(
             id,
+            TestOrganizationId,
             invoiceId,
             bankTransactionId,
             amount,
             ConfirmedAt);
 
         Assert.Equal(id, allocation.Id);
+        Assert.Equal(TestOrganizationId, allocation.OrganizationId);
         Assert.Equal(invoiceId, allocation.InvoiceId);
         Assert.Equal(bankTransactionId, allocation.BankTransactionId);
         Assert.Equal(amount, allocation.Amount);
@@ -45,6 +50,7 @@ public sealed class AllocationTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new Allocation(
                 AllocationId.New(),
+                TestOrganizationId,
                 InvoiceId.New(),
                 BankTransactionId.New(),
                 new Money(amount, Pln),
@@ -57,6 +63,7 @@ public sealed class AllocationTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new Allocation(
                 AllocationId.New(),
+                TestOrganizationId,
                 InvoiceId.New(),
                 BankTransactionId.New(),
                 new Money(300m, Pln),
@@ -174,6 +181,7 @@ public sealed class AllocationTests
     {
         return new Allocation(
             AllocationId.New(),
+            TestOrganizationId,
             InvoiceId.New(),
             BankTransactionId.New(),
             new Money(300m, Pln),

@@ -1,10 +1,13 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 
 public sealed class Invoice
 {
     public InvoiceId Id { get; }
+
+    public OrganizationId OrganizationId { get; }
 
     public string InvoiceNumber { get; }
 
@@ -17,10 +20,12 @@ public sealed class Invoice
 
     public Invoice(
         InvoiceId id,
+        OrganizationId organizationId,
         string invoiceNumber,
         Money totalAmount)
     {
         ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(organizationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(invoiceNumber);
         ArgumentNullException.ThrowIfNull(totalAmount);
 
@@ -32,6 +37,7 @@ public sealed class Invoice
         }
 
         Id = id;
+        OrganizationId = organizationId;
         InvoiceNumber = invoiceNumber.Trim();
         TotalAmount = totalAmount;
 
