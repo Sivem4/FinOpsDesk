@@ -3,6 +3,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain.MatchSuggestions;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.MatchSuggestions;
@@ -79,8 +80,9 @@ public sealed class MatchSuggestionTests
         var allocationId = AllocationId.New();
         var resolvedAt = GeneratedAt.AddHours(1);
 
-        suggestion.Accept(allocationId, resolvedAt);
+        Result result = suggestion.Accept(allocationId, resolvedAt);
 
+        Assert.True(result.IsSuccess);
         Assert.Equal(MatchSuggestionStatus.Accepted, suggestion.Status);
         Assert.Equal(resolvedAt, suggestion.ResolvedAt);
         Assert.Equal(allocationId, suggestion.AllocationId);
@@ -130,6 +132,26 @@ public sealed class MatchSuggestionTests
     }
 
     [Fact]
+    public void Accept_should_reject_null_allocation_id_when_already_accepted()
+    {
+        var suggestion = CreateSuggestion();
+        var allocationId = AllocationId.New();
+        var resolvedAt = GeneratedAt.AddHours(1);
+
+        suggestion.Accept(allocationId, resolvedAt);
+
+        Assert.Throws<ArgumentNullException>(
+            () => suggestion.Accept(
+                null!,
+                resolvedAt.AddHours(1)));
+
+        Assert.Equal(MatchSuggestionStatus.Accepted, suggestion.Status);
+        Assert.Equal(resolvedAt, suggestion.ResolvedAt);
+        Assert.Equal(allocationId, suggestion.AllocationId);
+        Assert.Null(suggestion.RejectionReason);
+    }
+
+    [Fact]
     public void Accept_should_reject_when_already_accepted()
     {
         var suggestion = CreateSuggestion();
@@ -138,10 +160,14 @@ public sealed class MatchSuggestionTests
 
         suggestion.Accept(allocationId, resolvedAt);
 
-        Assert.Throws<InvalidOperationException>(
-            () => suggestion.Accept(
-                AllocationId.New(),
-                resolvedAt.AddHours(1)));
+        Result result = suggestion.Accept(
+            AllocationId.New(),
+            resolvedAt.AddHours(1));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.MatchSuggestionAlreadyResolved.Code,
+            result.Error?.Code);
 
         Assert.Equal(MatchSuggestionStatus.Accepted, suggestion.Status);
         Assert.Equal(resolvedAt, suggestion.ResolvedAt);
@@ -157,10 +183,14 @@ public sealed class MatchSuggestionTests
 
         suggestion.Reject("Incorrect reference", resolvedAt);
 
-        Assert.Throws<InvalidOperationException>(
-            () => suggestion.Accept(
-                AllocationId.New(),
-                resolvedAt.AddHours(1)));
+        Result result = suggestion.Accept(
+            AllocationId.New(),
+            resolvedAt.AddHours(1));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.MatchSuggestionAlreadyResolved.Code,
+            result.Error?.Code);
 
         Assert.Equal(MatchSuggestionStatus.Rejected, suggestion.Status);
         Assert.Equal(resolvedAt, suggestion.ResolvedAt);
@@ -174,8 +204,9 @@ public sealed class MatchSuggestionTests
         var suggestion = CreateSuggestion();
         var resolvedAt = GeneratedAt.AddHours(1);
 
-        suggestion.Reject("Incorrect reference", resolvedAt);
+        Result result = suggestion.Reject("Incorrect reference", resolvedAt);
 
+        Assert.True(result.IsSuccess);
         Assert.Equal(MatchSuggestionStatus.Rejected, suggestion.Status);
         Assert.Equal(resolvedAt, suggestion.ResolvedAt);
         Assert.Equal("Incorrect reference", suggestion.RejectionReason);
@@ -260,10 +291,14 @@ public sealed class MatchSuggestionTests
 
         suggestion.Reject("Incorrect reference", resolvedAt);
 
-        Assert.Throws<InvalidOperationException>(
-            () => suggestion.Reject(
-                "Duplicate payment",
-                resolvedAt.AddHours(1)));
+        Result result = suggestion.Reject(
+            "Duplicate payment",
+            resolvedAt.AddHours(1));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.MatchSuggestionAlreadyResolved.Code,
+            result.Error?.Code);
 
         Assert.Equal(MatchSuggestionStatus.Rejected, suggestion.Status);
         Assert.Equal(resolvedAt, suggestion.ResolvedAt);
@@ -280,10 +315,14 @@ public sealed class MatchSuggestionTests
 
         suggestion.Accept(allocationId, resolvedAt);
 
-        Assert.Throws<InvalidOperationException>(
-            () => suggestion.Reject(
-                "Incorrect reference",
-                resolvedAt.AddHours(1)));
+        Result result = suggestion.Reject(
+            "Incorrect reference",
+            resolvedAt.AddHours(1));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.MatchSuggestionAlreadyResolved.Code,
+            result.Error?.Code);
 
         Assert.Equal(MatchSuggestionStatus.Accepted, suggestion.Status);
         Assert.Equal(resolvedAt, suggestion.ResolvedAt);

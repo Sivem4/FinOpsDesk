@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.Allocations;
@@ -76,8 +77,9 @@ public sealed class AllocationTests
         var allocation = CreateAllocation();
         var reversedAt = ConfirmedAt.AddHours(1);
 
-        allocation.Reverse("Duplicate payment", reversedAt);
+        Result result = allocation.Reverse("Duplicate payment", reversedAt);
 
+        Assert.True(result.IsSuccess);
         Assert.Equal(AllocationStatus.Reversed, allocation.Status);
         Assert.Equal(reversedAt, allocation.ReversedAt);
         Assert.Equal("Duplicate payment", allocation.ReversalReason);
@@ -119,9 +121,31 @@ public sealed class AllocationTests
 
         allocation.Reverse("Duplicate payment", reversedAt);
 
-        Assert.Throws<InvalidOperationException>(
+        Result result = allocation.Reverse(
+            "Entered in error",
+            reversedAt.AddHours(1));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.AllocationAlreadyReversed.Code,
+            result.Error?.Code);
+
+        Assert.Equal(AllocationStatus.Reversed, allocation.Status);
+        Assert.Equal(reversedAt, allocation.ReversedAt);
+        Assert.Equal("Duplicate payment", allocation.ReversalReason);
+    }
+
+    [Fact]
+    public void Reverse_should_reject_null_reason_when_already_reversed()
+    {
+        var allocation = CreateAllocation();
+        var reversedAt = ConfirmedAt.AddHours(1);
+
+        allocation.Reverse("Duplicate payment", reversedAt);
+
+        Assert.Throws<ArgumentNullException>(
             () => allocation.Reverse(
-                "Entered in error",
+                null!,
                 reversedAt.AddHours(1)));
 
         Assert.Equal(AllocationStatus.Reversed, allocation.Status);

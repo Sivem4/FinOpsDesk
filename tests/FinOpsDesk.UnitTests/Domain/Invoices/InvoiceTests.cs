@@ -1,5 +1,6 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.Invoices;
@@ -31,8 +32,9 @@ public sealed class InvoiceTests
     {
         var invoice = CreateInvoice(1000m);
 
-        invoice.Allocate(new Money(300m, Pln));
+        Result result = invoice.Allocate(new Money(300m, Pln));
 
+        Assert.True(result.IsSuccess);
         Assert.Equal(
             new Money(300m, Pln),
             invoice.AllocatedAmount);
@@ -76,9 +78,13 @@ public sealed class InvoiceTests
     {
         var invoice = CreateInvoice(1000m);
 
-        Assert.Throws<InvalidOperationException>(
-            () => invoice.Allocate(
-                new Money(1001m, Pln)));
+        Result result = invoice.Allocate(
+            new Money(1001m, Pln));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.InvoiceAllocationExceedsOutstanding.Code,
+            result.Error?.Code);
 
         Assert.Equal(
             new Money(1000m, Pln),
@@ -103,9 +109,13 @@ public sealed class InvoiceTests
     {
         var invoice = CreateInvoice(1000m);
 
-        Assert.Throws<InvalidOperationException>(
-            () => invoice.Allocate(
-                new Money(100m, Eur)));
+        Result result = invoice.Allocate(
+            new Money(100m, Eur));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.CurrencyMismatch.Code,
+            result.Error?.Code);
     }
 
     [Fact]
@@ -115,8 +125,10 @@ public sealed class InvoiceTests
 
         invoice.Allocate(new Money(600m, Pln));
 
-        invoice.ReverseAllocation(
+        Result result = invoice.ReverseAllocation(
             new Money(200m, Pln));
+
+        Assert.True(result.IsSuccess);
 
         Assert.Equal(
             new Money(400m, Pln),
@@ -134,9 +146,13 @@ public sealed class InvoiceTests
 
         invoice.Allocate(new Money(300m, Pln));
 
-        Assert.Throws<InvalidOperationException>(
-            () => invoice.ReverseAllocation(
-                new Money(301m, Pln)));
+        Result result = invoice.ReverseAllocation(
+            new Money(301m, Pln));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.InvoiceReversalExceedsAllocated.Code,
+            result.Error?.Code);
 
         Assert.Equal(
             new Money(300m, Pln),
@@ -150,9 +166,13 @@ public sealed class InvoiceTests
 
         invoice.Allocate(new Money(300m, Pln));
 
-        Assert.Throws<InvalidOperationException>(
-            () => invoice.ReverseAllocation(
-                new Money(100m, Eur)));
+        Result result = invoice.ReverseAllocation(
+            new Money(100m, Eur));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.CurrencyMismatch.Code,
+            result.Error?.Code);
 
         Assert.Equal(
             new Money(300m, Pln),

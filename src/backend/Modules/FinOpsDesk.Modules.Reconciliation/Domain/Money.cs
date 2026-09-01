@@ -52,6 +52,13 @@ public sealed record Money
         return Amount > other.Amount;
     }
 
+    public bool HasSameCurrency(Money other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+
+        return Currency == other.Currency;
+    }
+
     private void EnsureSameCurrency(Money other)
     {
         if (Currency != other.Currency)

@@ -99,6 +99,24 @@ public sealed class MoneyTests
     }
 
     [Fact]
+    public void HasSameCurrency_should_return_true_for_same_currency()
+    {
+        var pln = new Money(100m, Pln);
+        var otherPln = new Money(50m, Pln);
+
+        Assert.True(pln.HasSameCurrency(otherPln));
+    }
+
+    [Fact]
+    public void HasSameCurrency_should_return_false_for_different_currency()
+    {
+        var pln = new Money(100m, Pln);
+        var eur = new Money(100m, Eur);
+
+        Assert.False(pln.HasSameCurrency(eur));
+    }
+
+    [Fact]
     public void Money_should_allow_negative_amount()
     {
         var money = new Money(-100m, Pln);

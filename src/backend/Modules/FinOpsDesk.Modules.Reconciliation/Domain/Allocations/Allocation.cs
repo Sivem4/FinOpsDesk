@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
@@ -62,16 +63,10 @@ public sealed class Allocation
         Status = AllocationStatus.Confirmed;
     }
 
-    public void Reverse(
+    public Result Reverse(
         string reason,
         DateTimeOffset reversedAt)
     {
-        if (Status == AllocationStatus.Reversed)
-        {
-            throw new InvalidOperationException(
-                "A reversed allocation cannot be reversed again.");
-        }
-
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
         if (reversedAt < ConfirmedAt)
@@ -81,8 +76,14 @@ public sealed class Allocation
                 "Reversal time cannot precede confirmation time.");
         }
 
+        if (Status == AllocationStatus.Reversed)
+        {
+            return Result.Failure(ReconciliationErrors.AllocationAlreadyReversed);
+        }
+
         Status = AllocationStatus.Reversed;
         ReversedAt = reversedAt;
         ReversalReason = reason.Trim();
+        return Result.Success();
     }
 }
