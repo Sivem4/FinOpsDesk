@@ -2,12 +2,15 @@ using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.MatchSuggestions;
 
 public sealed class MatchSuggestion
 {
     public MatchSuggestionId Id { get; }
+
+    public OrganizationId OrganizationId { get; }
 
     public InvoiceId InvoiceId { get; }
 
@@ -27,12 +30,14 @@ public sealed class MatchSuggestion
 
     public MatchSuggestion(
         MatchSuggestionId id,
+        OrganizationId organizationId,
         InvoiceId invoiceId,
         BankTransactionId bankTransactionId,
         Money suggestedAmount,
         DateTimeOffset generatedAt)
     {
         ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(organizationId);
         ArgumentNullException.ThrowIfNull(invoiceId);
         ArgumentNullException.ThrowIfNull(bankTransactionId);
         ArgumentNullException.ThrowIfNull(suggestedAmount);
@@ -52,6 +57,7 @@ public sealed class MatchSuggestion
         }
 
         Id = id;
+        OrganizationId = organizationId;
         InvoiceId = invoiceId;
         BankTransactionId = bankTransactionId;
         SuggestedAmount = suggestedAmount;

@@ -1,12 +1,15 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 
 public sealed class Allocation
 {
     public AllocationId Id { get; }
+
+    public OrganizationId OrganizationId { get; }
 
     public InvoiceId InvoiceId { get; }
 
@@ -24,12 +27,14 @@ public sealed class Allocation
 
     public Allocation(
         AllocationId id,
+        OrganizationId organizationId,
         InvoiceId invoiceId,
         BankTransactionId bankTransactionId,
         Money amount,
         DateTimeOffset confirmedAt)
     {
         ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(organizationId);
         ArgumentNullException.ThrowIfNull(invoiceId);
         ArgumentNullException.ThrowIfNull(bankTransactionId);
         ArgumentNullException.ThrowIfNull(amount);
@@ -49,6 +54,7 @@ public sealed class Allocation
         }
 
         Id = id;
+        OrganizationId = organizationId;
         InvoiceId = invoiceId;
         BankTransactionId = bankTransactionId;
         Amount = amount;

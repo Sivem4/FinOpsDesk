@@ -3,11 +3,14 @@ using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain.MatchSuggestions;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.MatchSuggestions;
 
 public sealed class MatchSuggestionTests
 {
+    private static readonly OrganizationId TestOrganizationId =
+        new(new Guid("11111111-1111-1111-1111-111111111111"));
     private static readonly CurrencyCode Pln = new("PLN");
     private static readonly DateTimeOffset GeneratedAt =
         new(2026, 8, 24, 10, 0, 0, TimeSpan.Zero);
@@ -22,12 +25,14 @@ public sealed class MatchSuggestionTests
 
         var suggestion = new MatchSuggestion(
             id,
+            TestOrganizationId,
             invoiceId,
             bankTransactionId,
             suggestedAmount,
             GeneratedAt);
 
         Assert.Equal(id, suggestion.Id);
+        Assert.Equal(TestOrganizationId, suggestion.OrganizationId);
         Assert.Equal(invoiceId, suggestion.InvoiceId);
         Assert.Equal(bankTransactionId, suggestion.BankTransactionId);
         Assert.Equal(suggestedAmount, suggestion.SuggestedAmount);
@@ -47,6 +52,7 @@ public sealed class MatchSuggestionTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new MatchSuggestion(
                 MatchSuggestionId.New(),
+                TestOrganizationId,
                 InvoiceId.New(),
                 BankTransactionId.New(),
                 new Money(amount, Pln),
@@ -59,6 +65,7 @@ public sealed class MatchSuggestionTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new MatchSuggestion(
                 MatchSuggestionId.New(),
+                TestOrganizationId,
                 InvoiceId.New(),
                 BankTransactionId.New(),
                 new Money(300m, Pln),
@@ -288,6 +295,7 @@ public sealed class MatchSuggestionTests
     {
         return new MatchSuggestion(
             MatchSuggestionId.New(),
+            TestOrganizationId,
             InvoiceId.New(),
             BankTransactionId.New(),
             new Money(300m, Pln),

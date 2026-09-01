@@ -1,10 +1,13 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.Invoices;
 
 public sealed class InvoiceTests
 {
+    private static readonly OrganizationId TestOrganizationId =
+        new(new Guid("11111111-1111-1111-1111-111111111111"));
     private static readonly CurrencyCode Pln = new("PLN");
     private static readonly CurrencyCode Eur = new("EUR");
 
@@ -13,6 +16,7 @@ public sealed class InvoiceTests
     {
         var invoice = CreateInvoice(1000m);
 
+        Assert.Equal(TestOrganizationId, invoice.OrganizationId);
         Assert.Equal(
             new Money(0m, Pln),
             invoice.AllocatedAmount);
@@ -164,6 +168,7 @@ public sealed class InvoiceTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new Invoice(
                 InvoiceId.New(),
+                TestOrganizationId,
                 "INV-001",
                 new Money(amount, Pln)));
     }
@@ -172,6 +177,7 @@ public sealed class InvoiceTests
     {
         return new Invoice(
             InvoiceId.New(),
+            TestOrganizationId,
             "INV-001",
             new Money(amount, Pln));
     }

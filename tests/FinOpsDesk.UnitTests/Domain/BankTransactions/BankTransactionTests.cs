@@ -1,10 +1,13 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.BankTransactions;
 
 public sealed class BankTransactionTests
 {
+    private static readonly OrganizationId TestOrganizationId =
+        new(new Guid("11111111-1111-1111-1111-111111111111"));
     private static readonly CurrencyCode Pln = new("PLN");
     private static readonly CurrencyCode Eur = new("EUR");
     private static readonly DateOnly BookingDate = new(2026, 8, 24);
@@ -14,6 +17,7 @@ public sealed class BankTransactionTests
     {
         var transaction = CreateTransaction(1000m);
 
+        Assert.Equal(TestOrganizationId, transaction.OrganizationId);
         Assert.Equal(
             Money.Zero(Pln),
             transaction.AllocatedAmount);
@@ -173,6 +177,7 @@ public sealed class BankTransactionTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new BankTransaction(
                 BankTransactionId.New(),
+                TestOrganizationId,
                 new Money(amount, Pln),
                 BookingDate,
                 "INV-001"));
@@ -208,6 +213,7 @@ public sealed class BankTransactionTests
     {
         return new BankTransaction(
             BankTransactionId.New(),
+            TestOrganizationId,
             new Money(amount, Pln),
             BookingDate,
             reference);
