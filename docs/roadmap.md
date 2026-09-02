@@ -41,7 +41,20 @@ Cover with unit tests:
 
 No EF Core or HTTP dependency is allowed in domain code.
 
-## Phase 2: Persistence and first vertical slice
+## Phase 2A: ConfirmAllocation application slice
+
+Add:
+
+- `Result<T>` in SharedKernel;
+- `ConfirmAllocation` command handler;
+- specialized command repositories for invoice, bank transaction, and allocation;
+- Application `IUnitOfWork` commit port;
+- trusted `ICurrentOrganizationContext`;
+- unit tests for application coordination.
+
+Persistence, EF Core, and HTTP remain deferred to Phase 2B.
+
+## Phase 2B: Persistence and first vertical slice
 
 Add:
 

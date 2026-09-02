@@ -77,6 +77,8 @@ Because the first version uses one assembly for the whole module, these boundari
 
 The module may be split into multiple assemblies later if it becomes large, has multiple contributors, or repeatedly violates internal dependency rules.
 
+Phase 2A introduces the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. Persistence adapters remain deferred to Phase 2B. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
+
 ## Request flow
 
 A command should follow this conceptual flow:
