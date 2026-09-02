@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.MatchSuggestions;
@@ -65,16 +66,10 @@ public sealed class MatchSuggestion
         Status = MatchSuggestionStatus.Pending;
     }
 
-    public void Accept(
+    public Result Accept(
         AllocationId allocationId,
         DateTimeOffset resolvedAt)
     {
-        if (Status != MatchSuggestionStatus.Pending)
-        {
-            throw new InvalidOperationException(
-                "A match suggestion can only be accepted or rejected while pending.");
-        }
-
         ArgumentNullException.ThrowIfNull(allocationId);
 
         if (resolvedAt < GeneratedAt)
@@ -84,21 +79,22 @@ public sealed class MatchSuggestion
                 "Resolution time cannot precede generation time.");
         }
 
+        if (Status != MatchSuggestionStatus.Pending)
+        {
+            return Result.Failure(
+                ReconciliationErrors.MatchSuggestionAlreadyResolved);
+        }
+
         Status = MatchSuggestionStatus.Accepted;
         ResolvedAt = resolvedAt;
         AllocationId = allocationId;
+        return Result.Success();
     }
 
-    public void Reject(
+    public Result Reject(
         string reason,
         DateTimeOffset resolvedAt)
     {
-        if (Status != MatchSuggestionStatus.Pending)
-        {
-            throw new InvalidOperationException(
-                "A match suggestion can only be accepted or rejected while pending.");
-        }
-
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
         if (resolvedAt < GeneratedAt)
@@ -108,8 +104,15 @@ public sealed class MatchSuggestion
                 "Resolution time cannot precede generation time.");
         }
 
+        if (Status != MatchSuggestionStatus.Pending)
+        {
+            return Result.Failure(
+                ReconciliationErrors.MatchSuggestionAlreadyResolved);
+        }
+
         Status = MatchSuggestionStatus.Rejected;
         ResolvedAt = resolvedAt;
         RejectionReason = reason.Trim();
+        return Result.Success();
     }
 }

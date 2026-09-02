@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
@@ -47,7 +48,7 @@ public sealed class BankTransaction
         AllocatedAmount = Money.Zero(amount.Currency);
     }
 
-    public void Allocate(Money amount)
+    public Result Allocate(Money amount)
     {
         ArgumentNullException.ThrowIfNull(amount);
 
@@ -58,16 +59,22 @@ public sealed class BankTransaction
                 "Allocation amount must be greater than zero.");
         }
 
+        if (!amount.HasSameCurrency(Amount))
+        {
+            return Result.Failure(ReconciliationErrors.CurrencyMismatch);
+        }
+
         if (amount.IsGreaterThan(UnappliedAmount))
         {
-            throw new InvalidOperationException(
-                "Allocation amount cannot exceed unapplied transaction amount.");
+            return Result.Failure(
+                ReconciliationErrors.BankTransactionAllocationExceedsUnapplied);
         }
 
         AllocatedAmount = AllocatedAmount.Add(amount);
+        return Result.Success();
     }
 
-    public void ReverseAllocation(Money amount)
+    public Result ReverseAllocation(Money amount)
     {
         ArgumentNullException.ThrowIfNull(amount);
 
@@ -78,13 +85,19 @@ public sealed class BankTransaction
                 "Reversal amount must be greater than zero.");
         }
 
+        if (!amount.HasSameCurrency(Amount))
+        {
+            return Result.Failure(ReconciliationErrors.CurrencyMismatch);
+        }
+
         if (amount.IsGreaterThan(AllocatedAmount))
         {
-            throw new InvalidOperationException(
-                "Reversal amount cannot exceed allocated transaction amount.");
+            return Result.Failure(
+                ReconciliationErrors.BankTransactionReversalExceedsAllocated);
         }
 
         AllocatedAmount = AllocatedAmount.Subtract(amount);
+        return Result.Success();
     }
 
     private static string? NormalizeReference(string? reference)

@@ -1,5 +1,6 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.UnitTests.Reconciliation.Domain.BankTransactions;
@@ -32,9 +33,10 @@ public sealed class BankTransactionTests
     {
         var transaction = CreateTransaction(1000m);
 
-        transaction.Allocate(
+        Result result = transaction.Allocate(
             new Money(300m, Pln));
 
+        Assert.True(result.IsSuccess);
         Assert.Equal(
             new Money(300m, Pln),
             transaction.AllocatedAmount);
@@ -82,9 +84,13 @@ public sealed class BankTransactionTests
     {
         var transaction = CreateTransaction(1000m);
 
-        Assert.Throws<InvalidOperationException>(
-            () => transaction.Allocate(
-                new Money(1001m, Pln)));
+        Result result = transaction.Allocate(
+            new Money(1001m, Pln));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.BankTransactionAllocationExceedsUnapplied.Code,
+            result.Error?.Code);
 
         Assert.Equal(
             new Money(1000m, Pln),
@@ -109,9 +115,13 @@ public sealed class BankTransactionTests
     {
         var transaction = CreateTransaction(1000m);
 
-        Assert.Throws<InvalidOperationException>(
-            () => transaction.Allocate(
-                new Money(100m, Eur)));
+        Result result = transaction.Allocate(
+            new Money(100m, Eur));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.CurrencyMismatch.Code,
+            result.Error?.Code);
     }
 
     [Fact]
@@ -122,8 +132,10 @@ public sealed class BankTransactionTests
         transaction.Allocate(
             new Money(600m, Pln));
 
-        transaction.ReverseAllocation(
+        Result result = transaction.ReverseAllocation(
             new Money(200m, Pln));
+
+        Assert.True(result.IsSuccess);
 
         Assert.Equal(
             new Money(400m, Pln),
@@ -142,9 +154,13 @@ public sealed class BankTransactionTests
         transaction.Allocate(
             new Money(300m, Pln));
 
-        Assert.Throws<InvalidOperationException>(
-            () => transaction.ReverseAllocation(
-                new Money(301m, Pln)));
+        Result result = transaction.ReverseAllocation(
+            new Money(301m, Pln));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.BankTransactionReversalExceedsAllocated.Code,
+            result.Error?.Code);
 
         Assert.Equal(
             new Money(300m, Pln),
@@ -159,9 +175,13 @@ public sealed class BankTransactionTests
         transaction.Allocate(
             new Money(300m, Pln));
 
-        Assert.Throws<InvalidOperationException>(
-            () => transaction.ReverseAllocation(
-                new Money(100m, Eur)));
+        Result result = transaction.ReverseAllocation(
+            new Money(100m, Eur));
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.CurrencyMismatch.Code,
+            result.Error?.Code);
 
         Assert.Equal(
             new Money(300m, Pln),

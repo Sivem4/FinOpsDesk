@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
@@ -44,7 +45,7 @@ public sealed class Invoice
         AllocatedAmount = Money.Zero(totalAmount.Currency);
     }
 
-    public void Allocate(Money amount)
+    public Result Allocate(Money amount)
     {
         ArgumentNullException.ThrowIfNull(amount);
 
@@ -55,16 +56,22 @@ public sealed class Invoice
                 "Allocation amount must be greater than zero.");
         }
 
+        if (!amount.HasSameCurrency(TotalAmount))
+        {
+            return Result.Failure(ReconciliationErrors.CurrencyMismatch);
+        }
+
         if (amount.IsGreaterThan(OutstandingAmount))
         {
-            throw new InvalidOperationException(
-                "Allocation amount cannot exceed invoice outstanding amount.");
+            return Result.Failure(
+                ReconciliationErrors.InvoiceAllocationExceedsOutstanding);
         }
 
         AllocatedAmount = AllocatedAmount.Add(amount);
+        return Result.Success();
     }
 
-    public void ReverseAllocation(Money amount)
+    public Result ReverseAllocation(Money amount)
     {
         ArgumentNullException.ThrowIfNull(amount);
 
@@ -75,12 +82,18 @@ public sealed class Invoice
                 "Reversal amount must be greater than zero.");
         }
 
+        if (!amount.HasSameCurrency(TotalAmount))
+        {
+            return Result.Failure(ReconciliationErrors.CurrencyMismatch);
+        }
+
         if (amount.IsGreaterThan(AllocatedAmount))
         {
-            throw new InvalidOperationException(
-                "Reversal amount cannot exceed invoice allocated amount.");
+            return Result.Failure(
+                ReconciliationErrors.InvoiceReversalExceedsAllocated);
         }
 
         AllocatedAmount = AllocatedAmount.Subtract(amount);
+        return Result.Success();
     }
 }
