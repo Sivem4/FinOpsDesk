@@ -77,7 +77,9 @@ Because the first version uses one assembly for the whole module, these boundari
 
 The module may be split into multiple assemblies later if it becomes large, has multiple contributors, or repeatedly violates internal dependency rules.
 
-Phase 2A introduces the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. Persistence adapters remain deferred to Phase 2B. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
+Phase 2A introduced the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
+
+Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbContext`, SQL schema `reconciliation`, specialized command repositories, and SQL Server migrations. Optimistic concurrency with `rowversion` is reserved for Phase 2B.2.
 
 ## Request flow
 
@@ -116,9 +118,9 @@ Confirmed financial operations are reversed rather than deleted.
 
 ## Multi-tenancy
 
-The MVP uses shared-database, shared-schema multi-tenancy.
+The MVP uses shared-database multi-tenancy. Tenant-owned rows share tables and are distinguished by `OrganizationId`. This is not a schema-per-tenant model.
 
-Every tenant-owned row contains `OrganizationId`.
+The `reconciliation` SQL schema is module ownership of Reconciliation tables, not tenant isolation.
 
 The effective organization is derived from authenticated server-side membership and is applied to:
 
@@ -137,11 +139,15 @@ A client-supplied organization identifier is never authoritative.
 
 The write side uses tracked aggregates and explicit business transaction boundaries.
 
+Reconciliation persistence is owned by `ReconciliationDbContext` in the Reconciliation module. Tables live in SQL schema `reconciliation`. Migrations are owned by the same module. The API host supplies `ConnectionStrings:FinOpsDesk` and does not own the model.
+
+Command repositories load aggregates tracked by the scoped `ReconciliationDbContext`. `ReconciliationDbContext` implements Application `IUnitOfWork`. ConfirmAllocation persists invoice, bank transaction, and allocation changes with one `SaveChangesAsync` call. EF Core/SQL Server supplies the transaction for that single SaveChanges. Explicit `BeginTransaction` is not used for this use case.
+
 The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`.
 
-`DbContext` supplies change tracking and unit-of-work behaviour. A generic repository is not planned.
+A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
 
-SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite.
+SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite. `rowversion` is not implemented in Phase 2B.1.
 
 ## Authentication direction
 

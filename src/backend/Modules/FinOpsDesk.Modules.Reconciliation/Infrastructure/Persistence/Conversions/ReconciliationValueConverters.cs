@@ -1,0 +1,27 @@
+using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
+using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.SharedKernel.Tenancy;
+
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+
+namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Conversions;
+
+internal static class ReconciliationValueConverters
+{
+    public static ValueConverter<InvoiceId, Guid> InvoiceId { get; } =
+        new(id => id.Value, value => new InvoiceId(value));
+
+    public static ValueConverter<BankTransactionId, Guid> BankTransactionId { get; } =
+        new(id => id.Value, value => new BankTransactionId(value));
+
+    public static ValueConverter<AllocationId, Guid> AllocationId { get; } =
+        new(id => id.Value, value => new AllocationId(value));
+
+    public static ValueConverter<OrganizationId, Guid> OrganizationId { get; } =
+        new(id => id.Value, value => new OrganizationId(value));
+
+    public static ValueConverter<CurrencyCode, string> CurrencyCode { get; } =
+        new(code => code.Value, value => new CurrencyCode(value));
+}

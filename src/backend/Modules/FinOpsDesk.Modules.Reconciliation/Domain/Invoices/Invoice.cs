@@ -19,6 +19,13 @@ public sealed class Invoice
     public Money OutstandingAmount =>
         TotalAmount.Subtract(AllocatedAmount);
 
+#pragma warning disable CS8618
+    // Required for persistence materialization.
+    private Invoice()
+    {
+    }
+#pragma warning restore CS8618
+
     public Invoice(
         InvoiceId id,
         OrganizationId organizationId,

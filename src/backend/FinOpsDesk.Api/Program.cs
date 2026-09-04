@@ -6,7 +6,14 @@ builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 
-builder.Services.AddReconciliationModule();
+string? connectionString = builder.Configuration.GetConnectionString("FinOpsDesk");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Connection string 'FinOpsDesk' is not configured.");
+}
+
+builder.Services.AddReconciliationModule(connectionString);
 
 var app = builder.Build();
 

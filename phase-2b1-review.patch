@@ -1,0 +1,2403 @@
+diff --git a/.editorconfig b/.editorconfig
+index af3d700..83763f7 100644
+--- a/.editorconfig
++++ b/.editorconfig
+@@ -387,3 +387,7 @@ dotnet_naming_style.s_camelcase.required_suffix =
+ dotnet_naming_style.s_camelcase.word_separator = 
+ dotnet_naming_style.s_camelcase.capitalization = camel_case
+ 
++# EF Core generated migrations
++[**/Infrastructure/Persistence/Migrations/*.cs]
++generated_code = true
++
+diff --git a/.github/workflows/backend-ci.yml b/.github/workflows/backend-ci.yml
+index 1630b6b..b2bb515 100644
+--- a/.github/workflows/backend-ci.yml
++++ b/.github/workflows/backend-ci.yml
+@@ -20,13 +20,29 @@ env:
+   DOTNET_NOLOGO: true
+   DOTNET_CLI_TELEMETRY_OPTOUT: true
+   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
++  FINOPSDESK_TEST_SQLSERVER: Server=localhost,1433;User Id=sa;Password=FinOpsDesk_CI_Sql#2026;TrustServerCertificate=True;Encrypt=True
+ 
+ jobs:
+   build-and-test:
+     name: Build, test and verify formatting
+ 
+     runs-on: ubuntu-latest
+-    timeout-minutes: 10
++    timeout-minutes: 20
++
++    services:
++      sqlserver:
++        image: mcr.microsoft.com/mssql/server:2022-latest
++        env:
++          ACCEPT_EULA: Y
++          MSSQL_SA_PASSWORD: FinOpsDesk_CI_Sql#2026
++        ports:
++          - 1433:1433
++        options: >-
++          --health-cmd "bash -c ':> /dev/tcp/127.0.0.1/1433' || exit 1"
++          --health-interval 5s
++          --health-timeout 3s
++          --health-retries 30
++          --health-start-period 20s
+ 
+     steps:
+       - name: Checkout repository
+@@ -47,4 +63,4 @@ jobs:
+         run: dotnet build FinOpsDesk.slnx --configuration Release --no-restore
+ 
+       - name: Run tests
+-        run: dotnet test FinOpsDesk.slnx --configuration Release --no-build --no-restore
+\ No newline at end of file
++        run: dotnet test FinOpsDesk.slnx --configuration Release --no-build --no-restore
+diff --git a/FinOpsDesk.slnx b/FinOpsDesk.slnx
+index 674fac3..3d8fd88 100644
+--- a/FinOpsDesk.slnx
++++ b/FinOpsDesk.slnx
+@@ -9,6 +9,7 @@
+   </Folder>
+   <Folder Name="/tests/">
+     <Project Path="tests/FinOpsDesk.ArchitectureTests/FinOpsDesk.ArchitectureTests.csproj" />
++    <Project Path="tests/FinOpsDesk.IntegrationTests/FinOpsDesk.IntegrationTests.csproj" />
+     <Project Path="tests/FinOpsDesk.UnitTests/FinOpsDesk.UnitTests.csproj" />
+   </Folder>
+ </Solution>
+diff --git a/README.md b/README.md
+index fde969c..42010b4 100644
+--- a/README.md
++++ b/README.md
+@@ -17,3 +17,43 @@ FinOpsDesk will help finance operations teams:
+ - preserve an audit history of financial operations;
+ - monitor operational queues and reconciliation metrics.
+ 
++## Backend persistence
++
++Reconciliation owns `ReconciliationDbContext`, SQL schema `reconciliation`, and module migrations.
++
++The API host reads `ConnectionStrings:FinOpsDesk` and passes it into module registration. The Development default is SQL Server LocalDB:
++
++```text
++Server=(localdb)\mssqllocaldb;Database=FinOpsDesk;Trusted_Connection=True;TrustServerCertificate=True
++```
++
++Override the connection string with configuration or environment variables. Do not commit production secrets.
++
++### Migrations
++
++Restore the local EF tool, then add a migration with the cmd helper:
++
++```bat
++dotnet tool restore
++scripts\ef-migrations-add.cmd MigrationName
++```
++
++The startup project is `FinOpsDesk.Api`. Migrations are stored in the Reconciliation module under `Infrastructure/Persistence/Migrations`.
++
++### Integration tests
++
++Persistence tests in `FinOpsDesk.IntegrationTests` run against real SQL Server. They do not skip when a database is missing.
++
++Local options:
++
++- SQL Server LocalDB (Windows default);
++- `FINOPSDESK_TEST_SQLSERVER` pointing at another SQL Server instance.
++
++CI uses a SQL Server 2022 service container.
++
++Run repository verification with:
++
++```bat
++scripts\verify.cmd
++```
++
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 7fab2b3..25ab8e9 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -77,7 +77,9 @@ Because the first version uses one assembly for the whole module, these boundari
+ 
+ The module may be split into multiple assemblies later if it becomes large, has multiple contributors, or repeatedly violates internal dependency rules.
+ 
+-Phase 2A introduces the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. Persistence adapters remain deferred to Phase 2B. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
++Phase 2A introduced the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
++
++Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbContext`, SQL schema `reconciliation`, specialized command repositories, and SQL Server migrations. Optimistic concurrency with `rowversion` is reserved for Phase 2B.2.
+ 
+ ## Request flow
+ 
+@@ -116,9 +118,9 @@ Confirmed financial operations are reversed rather than deleted.
+ 
+ ## Multi-tenancy
+ 
+-The MVP uses shared-database, shared-schema multi-tenancy.
++The MVP uses shared-database multi-tenancy. Tenant-owned rows share tables and are distinguished by `OrganizationId`. This is not a schema-per-tenant model.
+ 
+-Every tenant-owned row contains `OrganizationId`.
++The `reconciliation` SQL schema is module ownership of Reconciliation tables, not tenant isolation.
+ 
+ The effective organization is derived from authenticated server-side membership and is applied to:
+ 
+@@ -137,11 +139,15 @@ A client-supplied organization identifier is never authoritative.
+ 
+ The write side uses tracked aggregates and explicit business transaction boundaries.
+ 
++Reconciliation persistence is owned by `ReconciliationDbContext` in the Reconciliation module. Tables live in SQL schema `reconciliation`. Migrations are owned by the same module. The API host supplies `ConnectionStrings:FinOpsDesk` and does not own the model.
++
++Command repositories load aggregates tracked by the scoped `ReconciliationDbContext`. `ReconciliationDbContext` implements Application `IUnitOfWork`. ConfirmAllocation persists invoice, bank transaction, and allocation changes with one `SaveChangesAsync` call. EF Core/SQL Server supplies the transaction for that single SaveChanges. Explicit `BeginTransaction` is not used for this use case.
++
+ The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`.
+ 
+-`DbContext` supplies change tracking and unit-of-work behaviour. A generic repository is not planned.
++A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
+ 
+-SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite.
++SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite. `rowversion` is not implemented in Phase 2B.1.
+ 
+ ## Authentication direction
+ 
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 126686d..ee6716b 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -54,21 +54,31 @@ Add:
+ 
+ Persistence, EF Core, and HTTP remain deferred to Phase 2B.
+ 
+-## Phase 2B: Persistence and first vertical slice
++## Phase 2B.1: Reconciliation persistence foundation
++
++Status: in progress.
+ 
+ Add:
+ 
+ - EF Core SQL Server;
+-- Reconciliation DbContext;
++- module-owned `ReconciliationDbContext`;
++- SQL schema `reconciliation`;
+ - mappings and migrations;
+-- organization scope;
++- specialized command repositories;
++- organization-scoped lookups;
+ - decimal precision;
+-- unique constraints;
+-- indexes;
+-- SQL Server `rowversion`;
+-- integration test infrastructure.
++- composite tenant foreign keys;
++- integration tests against SQL Server.
++
++ConfirmAllocation remains the first persisted write use case. One `SaveChangesAsync` is the transaction boundary.
++
++## Phase 2B.2: Optimistic concurrency
++
++Add SQL Server `rowversion` and concurrency-conflict handling for mutable financial records.
++
++## Phase 2B.3: First HTTP vertical slice
+ 
+-First complete use case:
++First complete HTTP use case:
+ 
+ ```text
+ GET /api/invoices
+diff --git a/src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj b/src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj
+index c6b28a8..bab4fb3 100644
+--- a/src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj
++++ b/src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj
+@@ -6,6 +6,10 @@
+ 
+   <ItemGroup>
+     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
++    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
++      <PrivateAssets>all</PrivateAssets>
++      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
++    </PackageReference>
+     <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
+   </ItemGroup>
+ 
+diff --git a/src/backend/FinOpsDesk.Api/Program.cs b/src/backend/FinOpsDesk.Api/Program.cs
+index 0ff4c17..137834c 100644
+--- a/src/backend/FinOpsDesk.Api/Program.cs
++++ b/src/backend/FinOpsDesk.Api/Program.cs
+@@ -6,7 +6,14 @@ builder.Services.AddOpenApi();
+ builder.Services.AddProblemDetails();
+ builder.Services.AddHealthChecks();
+ 
+-builder.Services.AddReconciliationModule();
++string? connectionString = builder.Configuration.GetConnectionString("FinOpsDesk");
++if (string.IsNullOrWhiteSpace(connectionString))
++{
++    throw new InvalidOperationException(
++        "Connection string 'FinOpsDesk' is not configured.");
++}
++
++builder.Services.AddReconciliationModule(connectionString);
+ 
+ var app = builder.Build();
+ 
+diff --git a/src/backend/FinOpsDesk.Api/appsettings.Development.json b/src/backend/FinOpsDesk.Api/appsettings.Development.json
+index 0c208ae..3ce1d90 100644
+--- a/src/backend/FinOpsDesk.Api/appsettings.Development.json
++++ b/src/backend/FinOpsDesk.Api/appsettings.Development.json
+@@ -1,4 +1,7 @@
+ {
++  "ConnectionStrings": {
++    "FinOpsDesk": "Server=(localdb)\\mssqllocaldb;Database=FinOpsDesk;Trusted_Connection=True;TrustServerCertificate=True"
++  },
+   "Logging": {
+     "LogLevel": {
+       "Default": "Information",
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Allocations/Allocation.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Allocations/Allocation.cs
+index 46e2749..0c0bc73 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Allocations/Allocation.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Allocations/Allocation.cs
+@@ -26,6 +26,12 @@ public sealed class Allocation
+ 
+     public string? ReversalReason { get; private set; }
+ 
++#pragma warning disable CS8618
++    private Allocation()
++    {
++    }
++#pragma warning restore CS8618
++
+     public Allocation(
+         AllocationId id,
+         OrganizationId organizationId,
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/BankTransactions/BankTransaction.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/BankTransactions/BankTransaction.cs
+index 4a85601..1c26bdd 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/BankTransactions/BankTransaction.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/BankTransactions/BankTransaction.cs
+@@ -21,6 +21,12 @@ public sealed class BankTransaction
+ 
+     public DateOnly BookingDate { get; }
+ 
++#pragma warning disable CS8618
++    private BankTransaction()
++    {
++    }
++#pragma warning restore CS8618
++
+     public BankTransaction(
+         BankTransactionId id,
+         OrganizationId organizationId,
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Invoices/Invoice.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Invoices/Invoice.cs
+index d2245f6..6be4ff4 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Invoices/Invoice.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Domain/Invoices/Invoice.cs
+@@ -19,6 +19,12 @@ public sealed class Invoice
+     public Money OutstandingAmount =>
+         TotalAmount.Subtract(AllocatedAmount);
+ 
++#pragma warning disable CS8618
++    private Invoice()
++    {
++    }
++#pragma warning restore CS8618
++
+     public Invoice(
+         InvoiceId id,
+         OrganizationId organizationId,
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj
+index 507cf0a..937da44 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj
+@@ -6,6 +6,9 @@
+   <ItemGroup>
+     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+   </ItemGroup>
++  <ItemGroup>
++    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
++  </ItemGroup>
+ 
+   <PropertyGroup>
+     <TargetFramework>net10.0</TargetFramework>
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/ReconciliationModule.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/ReconciliationModule.cs
+index 7827907..145701c 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/ReconciliationModule.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/ReconciliationModule.cs
+@@ -1,3 +1,11 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositories;
++
++using Microsoft.EntityFrameworkCore;
+ using Microsoft.Extensions.DependencyInjection;
+ 
+ namespace FinOpsDesk.Modules.Reconciliation;
+@@ -5,9 +13,24 @@ namespace FinOpsDesk.Modules.Reconciliation;
+ public static class ReconciliationModule
+ {
+     public static IServiceCollection AddReconciliationModule(
+-        this IServiceCollection services)
++        this IServiceCollection services,
++        string connectionString)
+     {
+         ArgumentNullException.ThrowIfNull(services);
++        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
++
++        services.AddDbContext<ReconciliationDbContext>(options =>
++            options.UseSqlServer(
++                connectionString,
++                sqlServer => sqlServer.MigrationsHistoryTable(
++                    "__EFMigrationsHistory",
++                    "reconciliation")));
++
++        services.AddScoped<IInvoiceRepository, InvoiceRepository>();
++        services.AddScoped<IBankTransactionRepository, BankTransactionRepository>();
++        services.AddScoped<IAllocationRepository, AllocationRepository>();
++        services.AddScoped<IUnitOfWork>(
++            serviceProvider => serviceProvider.GetRequiredService<ReconciliationDbContext>());
+ 
+         return services;
+     }
+diff --git a/.config/dotnet-tools.json b/.config/dotnet-tools.json
+new file mode 100644
+index 0000000..e7d991d
+--- /dev/null
++++ b/.config/dotnet-tools.json
+@@ -0,0 +1,12 @@
++{
++  "version": 1,
++  "isRoot": true,
++  "tools": {
++    "dotnet-ef": {
++      "version": "10.0.11",
++      "commands": [
++        "dotnet-ef"
++      ]
++    }
++  }
++}
+diff --git a/docs/adr/0002-module-owned-reconciliation-dbcontext.md b/docs/adr/0002-module-owned-reconciliation-dbcontext.md
+new file mode 100644
+index 0000000..68267f3
+--- /dev/null
++++ b/docs/adr/0002-module-owned-reconciliation-dbcontext.md
+@@ -0,0 +1,53 @@
++# ADR 0002: Module-owned Reconciliation DbContext
++
++- Status: Accepted
++- Date: 2026-09-04
++
++## Context
++
++FinOpsDesk is a modular monolith with one ASP.NET Core host and one SQL Server database. Phase 2B.1 introduces the first real persistence implementation. The first write use case is ConfirmAllocation in the Reconciliation module.
++
++The persistence design must keep module ownership explicit while remaining practical for a single shared database.
++
++## Decision
++
++Reconciliation persistence is owned by the Reconciliation module:
++
++- `ReconciliationDbContext` lives in the module Infrastructure layer;
++- SQL tables use schema `reconciliation`;
++- EF Core migrations live in the Reconciliation module;
++- the EF migrations history table is stored in schema `reconciliation`;
++- the API host remains the composition root and supplies `ConnectionStrings:FinOpsDesk`.
++
++Tenant isolation remains shared-database with `OrganizationId` on tenant-owned rows. The `reconciliation` schema is module ownership, not a schema-per-tenant model.
++
++`ReconciliationDbContext` implements the existing Application `IUnitOfWork` port directly. Command repositories inject that scoped context. ConfirmAllocation continues to call `SaveChangesAsync` once.
++
++## Alternatives considered
++
++### One global FinOpsDeskDbContext
++
++Rejected for the first persistence implementation because later modules would share mappings, migrations, and table ownership in one model.
++
++### Separate Infrastructure assembly
++
++Deferred. The current decision remains one assembly per business module, with Infrastructure as a namespace/folder boundary.
++
++### Extra EfUnitOfWork wrapper
++
++Rejected. It would only forward `DbContext.SaveChangesAsync()`.
++
++## Consequences
++
++Positive:
++
++- Reconciliation mappings and migrations stay with the module that owns the workflow;
++- later modules can add their own DbContext and schema without editing Reconciliation tables;
++- ConfirmAllocation keeps a single SaveChanges transaction boundary.
++
++Negative:
++
++- multiple module DbContexts will eventually migrate the same physical database;
++- internal Domain/Application/Infrastructure boundaries inside the module assembly still rely on convention and review.
++
++Optimistic concurrency with SQL Server `rowversion` is reserved for Phase 2B.2.
+diff --git a/scripts/ef-migrations-add.cmd b/scripts/ef-migrations-add.cmd
+new file mode 100644
+index 0000000..9fe7c2a
+--- /dev/null
++++ b/scripts/ef-migrations-add.cmd
+@@ -0,0 +1,15 @@
++@echo off
++setlocal
++
++if "%~1"=="" (
++    echo Usage: scripts\ef-migrations-add.cmd MigrationName
++    exit /b 1
++)
++
++pushd "%~dp0.."
++
++dotnet ef migrations add %1 --project src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj --startup-project src\backend\FinOpsDesk.Api\FinOpsDesk.Api.csproj --output-dir Infrastructure\Persistence\Migrations --context ReconciliationDbContext
++set EXIT_CODE=%ERRORLEVEL%
++
++popd
++exit /b %EXIT_CODE%
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/AllocationConfiguration.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/AllocationConfiguration.cs
+new file mode 100644
+index 0000000..4b9defb
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/AllocationConfiguration.cs
+@@ -0,0 +1,75 @@
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Conversions;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Metadata.Builders;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
++
++internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocation>
++{
++    public void Configure(EntityTypeBuilder<Allocation> builder)
++    {
++        builder.ToTable("Allocations");
++
++        builder.HasKey(allocation => allocation.Id);
++
++        builder.Property(allocation => allocation.Id)
++            .HasConversion(ReconciliationValueConverters.AllocationId)
++            .ValueGeneratedNever();
++
++        builder.Property(allocation => allocation.OrganizationId)
++            .HasConversion(ReconciliationValueConverters.OrganizationId);
++
++        builder.Property(allocation => allocation.InvoiceId)
++            .HasConversion(ReconciliationValueConverters.InvoiceId);
++
++        builder.Property(allocation => allocation.BankTransactionId)
++            .HasConversion(ReconciliationValueConverters.BankTransactionId);
++
++        builder.Property(allocation => allocation.Status);
++
++        builder.Property(allocation => allocation.ConfirmedAt)
++            .HasColumnType("datetimeoffset");
++
++        builder.Property(allocation => allocation.ReversedAt)
++            .HasColumnType("datetimeoffset");
++
++        builder.Property(allocation => allocation.ReversalReason);
++
++        MoneyPropertyConfiguration.Configure(
++            builder.ComplexProperty(allocation => allocation.Amount),
++            "Amount",
++            "Currency");
++
++        builder.HasOne<Invoice>()
++            .WithMany()
++            .HasForeignKey(allocation => new
++            {
++                allocation.OrganizationId,
++                allocation.InvoiceId
++            })
++            .HasPrincipalKey(invoice => new
++            {
++                invoice.OrganizationId,
++                invoice.Id
++            })
++            .OnDelete(DeleteBehavior.Restrict);
++
++        builder.HasOne<BankTransaction>()
++            .WithMany()
++            .HasForeignKey(allocation => new
++            {
++                allocation.OrganizationId,
++                allocation.BankTransactionId
++            })
++            .HasPrincipalKey(bankTransaction => new
++            {
++                bankTransaction.OrganizationId,
++                bankTransaction.Id
++            })
++            .OnDelete(DeleteBehavior.Restrict);
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs
+new file mode 100644
+index 0000000..0813940
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs
+@@ -0,0 +1,47 @@
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Conversions;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Metadata.Builders;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
++
++internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<BankTransaction>
++{
++    public void Configure(EntityTypeBuilder<BankTransaction> builder)
++    {
++        builder.ToTable("BankTransactions");
++
++        builder.HasKey(bankTransaction => bankTransaction.Id);
++
++        builder.Property(bankTransaction => bankTransaction.Id)
++            .HasConversion(ReconciliationValueConverters.BankTransactionId)
++            .ValueGeneratedNever();
++
++        builder.Property(bankTransaction => bankTransaction.OrganizationId)
++            .HasConversion(ReconciliationValueConverters.OrganizationId);
++
++        builder.HasAlternateKey(bankTransaction => new
++        {
++            bankTransaction.OrganizationId,
++            bankTransaction.Id
++        });
++
++        builder.Property(bankTransaction => bankTransaction.Reference);
++
++        builder.Property(bankTransaction => bankTransaction.BookingDate)
++            .HasColumnType("date");
++
++        MoneyPropertyConfiguration.Configure(
++            builder.ComplexProperty(bankTransaction => bankTransaction.Amount),
++            "Amount",
++            "Currency");
++
++        MoneyPropertyConfiguration.Configure(
++            builder.ComplexProperty(bankTransaction => bankTransaction.AllocatedAmount),
++            "AllocatedAmount",
++            "AllocatedCurrency");
++
++        builder.Ignore(bankTransaction => bankTransaction.UnappliedAmount);
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs
+new file mode 100644
+index 0000000..7683704
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs
+@@ -0,0 +1,45 @@
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Conversions;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Metadata.Builders;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
++
++internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
++{
++    public void Configure(EntityTypeBuilder<Invoice> builder)
++    {
++        builder.ToTable("Invoices");
++
++        builder.HasKey(invoice => invoice.Id);
++
++        builder.Property(invoice => invoice.Id)
++            .HasConversion(ReconciliationValueConverters.InvoiceId)
++            .ValueGeneratedNever();
++
++        builder.Property(invoice => invoice.OrganizationId)
++            .HasConversion(ReconciliationValueConverters.OrganizationId);
++
++        builder.HasAlternateKey(invoice => new
++        {
++            invoice.OrganizationId,
++            invoice.Id
++        });
++
++        builder.Property(invoice => invoice.InvoiceNumber)
++            .IsRequired();
++
++        MoneyPropertyConfiguration.Configure(
++            builder.ComplexProperty(invoice => invoice.TotalAmount),
++            "TotalAmount",
++            "TotalCurrency");
++
++        MoneyPropertyConfiguration.Configure(
++            builder.ComplexProperty(invoice => invoice.AllocatedAmount),
++            "AllocatedAmount",
++            "AllocatedCurrency");
++
++        builder.Ignore(invoice => invoice.OutstandingAmount);
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/MoneyPropertyConfiguration.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/MoneyPropertyConfiguration.cs
+new file mode 100644
+index 0000000..4075032
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/MoneyPropertyConfiguration.cs
+@@ -0,0 +1,33 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Conversions;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Metadata.Builders;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
++
++internal static class MoneyPropertyConfiguration
++{
++    public static void Configure(
++        ComplexPropertyBuilder<Money> builder,
++        string amountColumnName,
++        string currencyColumnName)
++    {
++        ArgumentNullException.ThrowIfNull(builder);
++        ArgumentException.ThrowIfNullOrWhiteSpace(amountColumnName);
++        ArgumentException.ThrowIfNullOrWhiteSpace(currencyColumnName);
++
++        builder.IsRequired();
++
++        builder.Property(money => money.Amount)
++            .HasColumnName(amountColumnName)
++            .HasPrecision(19, 4);
++
++        builder.Property(money => money.Currency)
++            .HasColumnName(currencyColumnName)
++            .HasConversion(ReconciliationValueConverters.CurrencyCode)
++            .HasMaxLength(3)
++            .IsUnicode(false)
++            .IsFixedLength();
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Conversions/ReconciliationValueConverters.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Conversions/ReconciliationValueConverters.cs
+new file mode 100644
+index 0000000..fe5a8a2
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Conversions/ReconciliationValueConverters.cs
+@@ -0,0 +1,27 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Conversions;
++
++internal static class ReconciliationValueConverters
++{
++    public static ValueConverter<InvoiceId, Guid> InvoiceId { get; } =
++        new(id => id.Value, value => new InvoiceId(value));
++
++    public static ValueConverter<BankTransactionId, Guid> BankTransactionId { get; } =
++        new(id => id.Value, value => new BankTransactionId(value));
++
++    public static ValueConverter<AllocationId, Guid> AllocationId { get; } =
++        new(id => id.Value, value => new AllocationId(value));
++
++    public static ValueConverter<OrganizationId, Guid> OrganizationId { get; } =
++        new(id => id.Value, value => new OrganizationId(value));
++
++    public static ValueConverter<CurrencyCode, string> CurrencyCode { get; } =
++        new(code => code.Value, value => new CurrencyCode(value));
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260904211216_InitialReconciliation.Designer.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260904211216_InitialReconciliation.Designer.cs
+new file mode 100644
+index 0000000..7e837d2
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260904211216_InitialReconciliation.Designer.cs
+@@ -0,0 +1,210 @@
++﻿// <auto-generated />
++using System;
++using System.Collections.Generic;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Metadata;
++using Microsoft.EntityFrameworkCore.Migrations;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++
++#nullable disable
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migrations
++{
++    [DbContext(typeof(ReconciliationDbContext))]
++    [Migration("20260904211216_InitialReconciliation")]
++    partial class InitialReconciliation
++    {
++        /// <inheritdoc />
++        protected override void BuildTargetModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasDefaultSchema("reconciliation")
++                .HasAnnotation("ProductVersion", "10.0.11")
++                .HasAnnotation("Relational:MaxIdentifierLength", 128);
++
++            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<Guid>("BankTransactionId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<DateTimeOffset>("ConfirmedAt")
++                        .HasColumnType("datetimeoffset");
++
++                    b.Property<Guid>("InvoiceId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("ReversalReason")
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<DateTimeOffset?>("ReversedAt")
++                        .HasColumnType("datetimeoffset");
++
++                    b.Property<int>("Status")
++                        .HasColumnType("int");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation.Amount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("Amount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("Currency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("OrganizationId", "BankTransactionId");
++
++                    b.HasIndex("OrganizationId", "InvoiceId");
++
++                    b.ToTable("Allocations", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<DateOnly>("BookingDate")
++                        .HasColumnType("date");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("Reference")
++                        .HasColumnType("nvarchar(max)");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.AllocatedAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("AllocatedAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("AllocatedCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.Amount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("Amount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("Currency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.ToTable("BankTransactions", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("InvoiceNumber")
++                        .IsRequired()
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.AllocatedAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("AllocatedAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("AllocatedCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "TotalAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.TotalAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("TotalAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("TotalCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Invoices", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
++                {
++                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
++                        .WithMany()
++                        .HasForeignKey("OrganizationId", "BankTransactionId")
++                        .HasPrincipalKey("OrganizationId", "Id")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++
++                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
++                        .WithMany()
++                        .HasForeignKey("OrganizationId", "InvoiceId")
++                        .HasPrincipalKey("OrganizationId", "Id")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260904211216_InitialReconciliation.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260904211216_InitialReconciliation.cs
+new file mode 100644
+index 0000000..88592f2
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260904211216_InitialReconciliation.cs
+@@ -0,0 +1,120 @@
++﻿using System;
++using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migrations
++{
++    /// <inheritdoc />
++    public partial class InitialReconciliation : Migration
++    {
++        /// <inheritdoc />
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.EnsureSchema(
++                name: "reconciliation");
++
++            migrationBuilder.CreateTable(
++                name: "BankTransactions",
++                schema: "reconciliation",
++                columns: table => new
++                {
++                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    OrganizationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    Reference = table.Column<string>(type: "nvarchar(max)", nullable: true),
++                    BookingDate = table.Column<DateOnly>(type: "date", nullable: false),
++                    AllocatedAmount = table.Column<decimal>(type: "decimal(19,4)", precision: 19, scale: 4, nullable: false),
++                    AllocatedCurrency = table.Column<string>(type: "char(3)", unicode: false, fixedLength: true, maxLength: 3, nullable: false),
++                    Amount = table.Column<decimal>(type: "decimal(19,4)", precision: 19, scale: 4, nullable: false),
++                    Currency = table.Column<string>(type: "char(3)", unicode: false, fixedLength: true, maxLength: 3, nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_BankTransactions", x => x.Id);
++                    table.UniqueConstraint("AK_BankTransactions_OrganizationId_Id", x => new { x.OrganizationId, x.Id });
++                });
++
++            migrationBuilder.CreateTable(
++                name: "Invoices",
++                schema: "reconciliation",
++                columns: table => new
++                {
++                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    OrganizationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    InvoiceNumber = table.Column<string>(type: "nvarchar(max)", nullable: false),
++                    AllocatedAmount = table.Column<decimal>(type: "decimal(19,4)", precision: 19, scale: 4, nullable: false),
++                    AllocatedCurrency = table.Column<string>(type: "char(3)", unicode: false, fixedLength: true, maxLength: 3, nullable: false),
++                    TotalAmount = table.Column<decimal>(type: "decimal(19,4)", precision: 19, scale: 4, nullable: false),
++                    TotalCurrency = table.Column<string>(type: "char(3)", unicode: false, fixedLength: true, maxLength: 3, nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_Invoices", x => x.Id);
++                    table.UniqueConstraint("AK_Invoices_OrganizationId_Id", x => new { x.OrganizationId, x.Id });
++                });
++
++            migrationBuilder.CreateTable(
++                name: "Allocations",
++                schema: "reconciliation",
++                columns: table => new
++                {
++                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    OrganizationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    InvoiceId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    BankTransactionId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
++                    Status = table.Column<int>(type: "int", nullable: false),
++                    ConfirmedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
++                    ReversedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: true),
++                    ReversalReason = table.Column<string>(type: "nvarchar(max)", nullable: true),
++                    Amount = table.Column<decimal>(type: "decimal(19,4)", precision: 19, scale: 4, nullable: false),
++                    Currency = table.Column<string>(type: "char(3)", unicode: false, fixedLength: true, maxLength: 3, nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_Allocations", x => x.Id);
++                    table.ForeignKey(
++                        name: "FK_Allocations_BankTransactions_OrganizationId_BankTransactionId",
++                        columns: x => new { x.OrganizationId, x.BankTransactionId },
++                        principalSchema: "reconciliation",
++                        principalTable: "BankTransactions",
++                        principalColumns: new[] { "OrganizationId", "Id" },
++                        onDelete: ReferentialAction.Restrict);
++                    table.ForeignKey(
++                        name: "FK_Allocations_Invoices_OrganizationId_InvoiceId",
++                        columns: x => new { x.OrganizationId, x.InvoiceId },
++                        principalSchema: "reconciliation",
++                        principalTable: "Invoices",
++                        principalColumns: new[] { "OrganizationId", "Id" },
++                        onDelete: ReferentialAction.Restrict);
++                });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_Allocations_OrganizationId_BankTransactionId",
++                schema: "reconciliation",
++                table: "Allocations",
++                columns: new[] { "OrganizationId", "BankTransactionId" });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_Allocations_OrganizationId_InvoiceId",
++                schema: "reconciliation",
++                table: "Allocations",
++                columns: new[] { "OrganizationId", "InvoiceId" });
++        }
++
++        /// <inheritdoc />
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropTable(
++                name: "Allocations",
++                schema: "reconciliation");
++
++            migrationBuilder.DropTable(
++                name: "BankTransactions",
++                schema: "reconciliation");
++
++            migrationBuilder.DropTable(
++                name: "Invoices",
++                schema: "reconciliation");
++        }
++    }
++}
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs
+new file mode 100644
+index 0000000..66f8335
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs
+@@ -0,0 +1,207 @@
++﻿// <auto-generated />
++using System;
++using System.Collections.Generic;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Metadata;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++
++#nullable disable
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migrations
++{
++    [DbContext(typeof(ReconciliationDbContext))]
++    partial class ReconciliationDbContextModelSnapshot : ModelSnapshot
++    {
++        protected override void BuildModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasDefaultSchema("reconciliation")
++                .HasAnnotation("ProductVersion", "10.0.11")
++                .HasAnnotation("Relational:MaxIdentifierLength", 128);
++
++            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<Guid>("BankTransactionId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<DateTimeOffset>("ConfirmedAt")
++                        .HasColumnType("datetimeoffset");
++
++                    b.Property<Guid>("InvoiceId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("ReversalReason")
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<DateTimeOffset?>("ReversedAt")
++                        .HasColumnType("datetimeoffset");
++
++                    b.Property<int>("Status")
++                        .HasColumnType("int");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation.Amount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("Amount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("Currency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("OrganizationId", "BankTransactionId");
++
++                    b.HasIndex("OrganizationId", "InvoiceId");
++
++                    b.ToTable("Allocations", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<DateOnly>("BookingDate")
++                        .HasColumnType("date");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("Reference")
++                        .HasColumnType("nvarchar(max)");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.AllocatedAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("AllocatedAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("AllocatedCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.Amount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("Amount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("Currency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.ToTable("BankTransactions", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("InvoiceNumber")
++                        .IsRequired()
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.AllocatedAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("AllocatedAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("AllocatedCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "TotalAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.TotalAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("TotalAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("TotalCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Invoices", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
++                {
++                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
++                        .WithMany()
++                        .HasForeignKey("OrganizationId", "BankTransactionId")
++                        .HasPrincipalKey("OrganizationId", "Id")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++
++                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
++                        .WithMany()
++                        .HasForeignKey("OrganizationId", "InvoiceId")
++                        .HasPrincipalKey("OrganizationId", "Id")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs
+new file mode 100644
+index 0000000..915eb47
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs
+@@ -0,0 +1,37 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++
++public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
++{
++    public ReconciliationDbContext(DbContextOptions<ReconciliationDbContext> options)
++        : base(options)
++    {
++    }
++
++    public DbSet<Invoice> Invoices => Set<Invoice>();
++
++    public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
++
++    public DbSet<Allocation> Allocations => Set<Allocation>();
++
++    async Task IUnitOfWork.SaveChangesAsync(CancellationToken cancellationToken)
++    {
++        await SaveChangesAsync(cancellationToken);
++    }
++
++    protected override void OnModelCreating(ModelBuilder modelBuilder)
++    {
++        modelBuilder.HasDefaultSchema("reconciliation");
++
++        modelBuilder.ApplyConfiguration(new InvoiceConfiguration());
++        modelBuilder.ApplyConfiguration(new BankTransactionConfiguration());
++        modelBuilder.ApplyConfiguration(new AllocationConfiguration());
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/AllocationRepository.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/AllocationRepository.cs
+new file mode 100644
+index 0000000..6b48aae
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/AllocationRepository.cs
+@@ -0,0 +1,23 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositories;
++
++internal sealed class AllocationRepository : IAllocationRepository
++{
++    private readonly ReconciliationDbContext _dbContext;
++
++    public AllocationRepository(ReconciliationDbContext dbContext)
++    {
++        ArgumentNullException.ThrowIfNull(dbContext);
++
++        _dbContext = dbContext;
++    }
++
++    public void Add(Allocation allocation)
++    {
++        ArgumentNullException.ThrowIfNull(allocation);
++
++        _dbContext.Allocations.Add(allocation);
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/BankTransactionRepository.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/BankTransactionRepository.cs
+new file mode 100644
+index 0000000..6e6422a
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/BankTransactionRepository.cs
+@@ -0,0 +1,30 @@
++using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositories;
++
++internal sealed class BankTransactionRepository : IBankTransactionRepository
++{
++    private readonly ReconciliationDbContext _dbContext;
++
++    public BankTransactionRepository(ReconciliationDbContext dbContext)
++    {
++        ArgumentNullException.ThrowIfNull(dbContext);
++
++        _dbContext = dbContext;
++    }
++
++    public Task<BankTransaction?> GetByIdAsync(
++        OrganizationId organizationId,
++        BankTransactionId bankTransactionId,
++        CancellationToken cancellationToken)
++    {
++        return _dbContext.BankTransactions.SingleOrDefaultAsync(
++            bankTransaction => bankTransaction.OrganizationId == organizationId
++                && bankTransaction.Id == bankTransactionId,
++            cancellationToken);
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/InvoiceRepository.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/InvoiceRepository.cs
+new file mode 100644
+index 0000000..a6e72ea
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Repositories/InvoiceRepository.cs
+@@ -0,0 +1,30 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositories;
++
++internal sealed class InvoiceRepository : IInvoiceRepository
++{
++    private readonly ReconciliationDbContext _dbContext;
++
++    public InvoiceRepository(ReconciliationDbContext dbContext)
++    {
++        ArgumentNullException.ThrowIfNull(dbContext);
++
++        _dbContext = dbContext;
++    }
++
++    public Task<Invoice?> GetByIdAsync(
++        OrganizationId organizationId,
++        InvoiceId invoiceId,
++        CancellationToken cancellationToken)
++    {
++        return _dbContext.Invoices.SingleOrDefaultAsync(
++            invoice => invoice.OrganizationId == organizationId
++                && invoice.Id == invoiceId,
++            cancellationToken);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/FinOpsDesk.IntegrationTests.csproj b/tests/FinOpsDesk.IntegrationTests/FinOpsDesk.IntegrationTests.csproj
+new file mode 100644
+index 0000000..9c6e61a
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/FinOpsDesk.IntegrationTests.csproj
+@@ -0,0 +1,23 @@
++<Project Sdk="Microsoft.NET.Sdk">
++
++  <PropertyGroup>
++    <TargetFramework>net10.0</TargetFramework>
++    <IsPackable>false</IsPackable>
++  </PropertyGroup>
++
++  <ItemGroup>
++    <PackageReference Include="coverlet.collector" Version="6.0.4" />
++    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
++    <PackageReference Include="xunit" Version="2.9.3" />
++    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
++  </ItemGroup>
++
++  <ItemGroup>
++    <Using Include="Xunit" />
++  </ItemGroup>
++
++  <ItemGroup>
++    <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />
++  </ItemGroup>
++
++</Project>
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/AllocationPersistenceTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/AllocationPersistenceTests.cs
+new file mode 100644
+index 0000000..088d55b
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/AllocationPersistenceTests.cs
+@@ -0,0 +1,98 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class AllocationPersistenceTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public AllocationPersistenceTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Confirmed_allocation_round_trips_status_amount_and_timestamps()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            1000m);
++        var confirmedAt = new DateTimeOffset(2026, 9, 4, 18, 0, 0, TimeSpan.Zero);
++        var allocation = new Allocation(
++            AllocationId.New(),
++            organizationId,
++            invoice.Id,
++            bankTransaction.Id,
++            new Money(250m, PersistenceTestData.Pln),
++            confirmedAt);
++
++        await using (ReconciliationDbContext context = _fixture.CreateContext())
++        {
++            context.Invoices.Add(invoice);
++            context.BankTransactions.Add(bankTransaction);
++            context.Allocations.Add(allocation);
++            await context.SaveChangesAsync();
++        }
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        Allocation loaded = await reloadContext.Allocations.SingleAsync(
++            stored => stored.Id == allocation.Id);
++
++        Assert.Equal(allocation.Id, loaded.Id);
++        Assert.Equal(organizationId, loaded.OrganizationId);
++        Assert.Equal(invoice.Id, loaded.InvoiceId);
++        Assert.Equal(bankTransaction.Id, loaded.BankTransactionId);
++        Assert.Equal(new Money(250m, PersistenceTestData.Pln), loaded.Amount);
++        Assert.Equal(AllocationStatus.Confirmed, loaded.Status);
++        Assert.Equal(confirmedAt, loaded.ConfirmedAt);
++        Assert.Null(loaded.ReversedAt);
++        Assert.Null(loaded.ReversalReason);
++    }
++
++    [Fact]
++    public async Task Reversed_allocation_round_trips_status_and_reversal_fields()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            1000m);
++        var confirmedAt = new DateTimeOffset(2026, 9, 4, 18, 0, 0, TimeSpan.Zero);
++        var reversedAt = new DateTimeOffset(2026, 9, 5, 9, 30, 0, TimeSpan.Zero);
++        var allocation = new Allocation(
++            AllocationId.New(),
++            organizationId,
++            invoice.Id,
++            bankTransaction.Id,
++            new Money(250m, PersistenceTestData.Pln),
++            confirmedAt);
++        allocation.Reverse("Customer requested reversal", reversedAt);
++
++        await using (ReconciliationDbContext context = _fixture.CreateContext())
++        {
++            context.Invoices.Add(invoice);
++            context.BankTransactions.Add(bankTransaction);
++            context.Allocations.Add(allocation);
++            await context.SaveChangesAsync();
++        }
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        Allocation loaded = await reloadContext.Allocations.SingleAsync(
++            stored => stored.Id == allocation.Id);
++
++        Assert.Equal(AllocationStatus.Reversed, loaded.Status);
++        Assert.Equal(confirmedAt, loaded.ConfirmedAt);
++        Assert.Equal(reversedAt, loaded.ReversedAt);
++        Assert.Equal("Customer requested reversal", loaded.ReversalReason);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs
+new file mode 100644
+index 0000000..91c66c8
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs
+@@ -0,0 +1,50 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class BankTransactionPersistenceTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public BankTransactionPersistenceTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Bank_transaction_round_trips_money_date_only_reference_and_nonzero_allocated_amount()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        var bookingDate = new DateOnly(2026, 8, 24);
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            2500.5000m,
++            bookingDate,
++            "REF-42");
++        bankTransaction.Allocate(new Money(400.2500m, PersistenceTestData.Pln));
++
++        await using (ReconciliationDbContext context = _fixture.CreateContext())
++        {
++            context.BankTransactions.Add(bankTransaction);
++            await context.SaveChangesAsync();
++        }
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        BankTransaction loaded = await reloadContext.BankTransactions.SingleAsync(
++            stored => stored.Id == bankTransaction.Id);
++
++        Assert.Equal(bankTransaction.Id, loaded.Id);
++        Assert.Equal(organizationId, loaded.OrganizationId);
++        Assert.Equal(new Money(2500.5000m, PersistenceTestData.Pln), loaded.Amount);
++        Assert.Equal(new Money(400.2500m, PersistenceTestData.Pln), loaded.AllocatedAmount);
++        Assert.Equal(new Money(2100.2500m, PersistenceTestData.Pln), loaded.UnappliedAmount);
++        Assert.Equal(bookingDate, loaded.BookingDate);
++        Assert.Equal("REF-42", loaded.Reference);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationAtomicityTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationAtomicityTests.cs
+new file mode 100644
+index 0000000..66e3578
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationAtomicityTests.cs
+@@ -0,0 +1,99 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class ConfirmAllocationAtomicityTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public ConfirmAllocationAtomicityTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task SaveChanges_rolls_back_invoice_and_bank_transaction_when_allocation_insert_fails()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            1000m);
++        var amount = new Money(300m, PersistenceTestData.Pln);
++
++        await using (ReconciliationDbContext seedContext = _fixture.CreateContext())
++        {
++            seedContext.Invoices.Add(invoice);
++            seedContext.BankTransactions.Add(bankTransaction);
++            await seedContext.SaveChangesAsync();
++        }
++
++        await using (ReconciliationDbContext context = _fixture.CreateContext())
++        {
++            await context.Database.ExecuteSqlRawAsync(
++                """
++                CREATE TRIGGER [reconciliation].[TR_Allocations_FailInsert]
++                ON [reconciliation].[Allocations]
++                AFTER INSERT
++                AS
++                BEGIN
++                    THROW 50001, 'FinOpsDesk integration test forced failure', 1;
++                END
++                """);
++
++            try
++            {
++                Invoice trackedInvoice = await context.Invoices.SingleAsync(
++                    stored => stored.Id == invoice.Id);
++                BankTransaction trackedBankTransaction =
++                    await context.BankTransactions.SingleAsync(
++                        stored => stored.Id == bankTransaction.Id);
++
++                trackedInvoice.Allocate(amount);
++                trackedBankTransaction.Allocate(amount);
++                context.Allocations.Add(
++                    new Allocation(
++                        AllocationId.New(),
++                        organizationId,
++                        trackedInvoice.Id,
++                        trackedBankTransaction.Id,
++                        amount,
++                        new DateTimeOffset(2026, 9, 4, 20, 0, 0, TimeSpan.Zero)));
++
++                await Assert.ThrowsAsync<DbUpdateException>(
++                    () => context.SaveChangesAsync());
++            }
++            finally
++            {
++                await context.Database.ExecuteSqlRawAsync(
++                    """
++                    IF OBJECT_ID(N'[reconciliation].[TR_Allocations_FailInsert]', N'TR') IS NOT NULL
++                        DROP TRIGGER [reconciliation].[TR_Allocations_FailInsert];
++                    """);
++            }
++        }
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        Invoice reloadedInvoice = await reloadContext.Invoices.SingleAsync(
++            stored => stored.Id == invoice.Id);
++        BankTransaction reloadedBankTransaction =
++            await reloadContext.BankTransactions.SingleAsync(
++                stored => stored.Id == bankTransaction.Id);
++        int allocationCount = await reloadContext.Allocations.CountAsync(
++            allocation => allocation.InvoiceId == invoice.Id);
++
++        Assert.Equal(Money.Zero(PersistenceTestData.Pln), reloadedInvoice.AllocatedAmount);
++        Assert.Equal(
++            Money.Zero(PersistenceTestData.Pln),
++            reloadedBankTransaction.AllocatedAmount);
++        Assert.Equal(0, allocationCount);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationPersistenceTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationPersistenceTests.cs
+new file mode 100644
+index 0000000..3b68de4
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationPersistenceTests.cs
+@@ -0,0 +1,110 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Results;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.DependencyInjection;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class ConfirmAllocationPersistenceTests
++{
++    private static readonly DateTimeOffset ConfirmedAt =
++        new(2026, 9, 4, 20, 0, 0, TimeSpan.Zero);
++
++    private readonly SqlServerFixture _fixture;
++
++    public ConfirmAllocationPersistenceTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Confirm_allocation_persists_invoice_bank_transaction_and_allocation_together()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            1000m);
++        var amount = new Money(300m, PersistenceTestData.Pln);
++
++        await using (ReconciliationDbContext seedContext = _fixture.CreateContext())
++        {
++            seedContext.Invoices.Add(invoice);
++            seedContext.BankTransactions.Add(bankTransaction);
++            await seedContext.SaveChangesAsync();
++        }
++
++        Result<ConfirmAllocationResult> result;
++        await using (ServiceProvider provider = _fixture.CreateServiceProvider())
++        await using (AsyncServiceScope scope = provider.CreateAsyncScope())
++        {
++            ConfirmAllocationHandler handler = CreateHandler(
++                scope.ServiceProvider,
++                organizationId);
++
++            result = await handler.Handle(
++                new ConfirmAllocationCommand(invoice.Id, bankTransaction.Id, amount),
++                CancellationToken.None);
++        }
++
++        Assert.True(result.IsSuccess);
++        Assert.NotNull(result.Value);
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        Invoice loadedInvoice = await reloadContext.Invoices.SingleAsync(
++            stored => stored.Id == invoice.Id);
++        BankTransaction loadedBankTransaction =
++            await reloadContext.BankTransactions.SingleAsync(
++                stored => stored.Id == bankTransaction.Id);
++        Allocation loadedAllocation = await reloadContext.Allocations.SingleAsync(
++            stored => stored.Id == result.Value.AllocationId);
++
++        Assert.Equal(amount, loadedInvoice.AllocatedAmount);
++        Assert.Equal(amount, loadedBankTransaction.AllocatedAmount);
++        Assert.Equal(organizationId, loadedAllocation.OrganizationId);
++        Assert.Equal(invoice.Id, loadedAllocation.InvoiceId);
++        Assert.Equal(bankTransaction.Id, loadedAllocation.BankTransactionId);
++        Assert.Equal(amount, loadedAllocation.Amount);
++        Assert.Equal(AllocationStatus.Confirmed, loadedAllocation.Status);
++        Assert.Equal(ConfirmedAt, loadedAllocation.ConfirmedAt);
++    }
++
++    private static ConfirmAllocationHandler CreateHandler(
++        IServiceProvider serviceProvider,
++        OrganizationId organizationId)
++    {
++        return new ConfirmAllocationHandler(
++            new TestCurrentOrganizationContext(organizationId),
++            serviceProvider.GetRequiredService<IInvoiceRepository>(),
++            serviceProvider.GetRequiredService<IBankTransactionRepository>(),
++            serviceProvider.GetRequiredService<IAllocationRepository>(),
++            serviceProvider.GetRequiredService<IUnitOfWork>(),
++            new FixedTimeProvider(ConfirmedAt));
++    }
++
++    private sealed class FixedTimeProvider : TimeProvider
++    {
++        private readonly DateTimeOffset _utcNow;
++
++        public FixedTimeProvider(DateTimeOffset utcNow)
++        {
++            _utcNow = utcNow;
++        }
++
++        public override DateTimeOffset GetUtcNow()
++        {
++            return _utcNow;
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/CrossTenantAllocationConstraintTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/CrossTenantAllocationConstraintTests.cs
+new file mode 100644
+index 0000000..e39defd
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/CrossTenantAllocationConstraintTests.cs
+@@ -0,0 +1,79 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.Data.SqlClient;
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class CrossTenantAllocationConstraintTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public CrossTenantAllocationConstraintTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Allocation_cannot_reference_an_invoice_owned_by_another_organization()
++    {
++        OrganizationId organizationA = OrganizationId.New();
++        OrganizationId organizationB = OrganizationId.New();
++        Invoice invoiceB = PersistenceTestData.CreateInvoice(organizationB, 1000m);
++        BankTransaction bankTransactionA = PersistenceTestData.CreateBankTransaction(
++            organizationA,
++            1000m);
++        var allocation = new Allocation(
++            AllocationId.New(),
++            organizationA,
++            invoiceB.Id,
++            bankTransactionA.Id,
++            new Money(100m, PersistenceTestData.Pln),
++            new DateTimeOffset(2026, 9, 4, 20, 0, 0, TimeSpan.Zero));
++
++        await using ReconciliationDbContext context = _fixture.CreateContext();
++        context.Invoices.Add(invoiceB);
++        context.BankTransactions.Add(bankTransactionA);
++        context.Allocations.Add(allocation);
++
++        await AssertSqlForeignKeyViolation(() => context.SaveChangesAsync());
++    }
++
++    [Fact]
++    public async Task Allocation_cannot_reference_a_bank_transaction_owned_by_another_organization()
++    {
++        OrganizationId organizationA = OrganizationId.New();
++        OrganizationId organizationB = OrganizationId.New();
++        Invoice invoiceA = PersistenceTestData.CreateInvoice(organizationA, 1000m);
++        BankTransaction bankTransactionB = PersistenceTestData.CreateBankTransaction(
++            organizationB,
++            1000m);
++        var allocation = new Allocation(
++            AllocationId.New(),
++            organizationA,
++            invoiceA.Id,
++            bankTransactionB.Id,
++            new Money(100m, PersistenceTestData.Pln),
++            new DateTimeOffset(2026, 9, 4, 20, 0, 0, TimeSpan.Zero));
++
++        await using ReconciliationDbContext context = _fixture.CreateContext();
++        context.Invoices.Add(invoiceA);
++        context.BankTransactions.Add(bankTransactionB);
++        context.Allocations.Add(allocation);
++
++        await AssertSqlForeignKeyViolation(() => context.SaveChangesAsync());
++    }
++
++    private static async Task AssertSqlForeignKeyViolation(Func<Task> saveChanges)
++    {
++        DbUpdateException exception = await Assert.ThrowsAsync<DbUpdateException>(saveChanges);
++        SqlException sqlException = Assert.IsType<SqlException>(exception.InnerException);
++        Assert.Equal(547, sqlException.Number);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs
+new file mode 100644
+index 0000000..79cd706
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs
+@@ -0,0 +1,44 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class InvoicePersistenceTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public InvoicePersistenceTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Invoice_round_trips_typed_ids_money_and_nonzero_allocated_amount()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000.2500m);
++        invoice.Allocate(new Money(300.1250m, PersistenceTestData.Pln));
++
++        await using (ReconciliationDbContext context = _fixture.CreateContext())
++        {
++            context.Invoices.Add(invoice);
++            await context.SaveChangesAsync();
++        }
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        Invoice loaded = await reloadContext.Invoices.SingleAsync(
++            stored => stored.Id == invoice.Id);
++
++        Assert.Equal(invoice.Id, loaded.Id);
++        Assert.Equal(organizationId, loaded.OrganizationId);
++        Assert.Equal("INV-001", loaded.InvoiceNumber);
++        Assert.Equal(new Money(1000.2500m, PersistenceTestData.Pln), loaded.TotalAmount);
++        Assert.Equal(new Money(300.1250m, PersistenceTestData.Pln), loaded.AllocatedAmount);
++        Assert.Equal(new Money(700.1250m, PersistenceTestData.Pln), loaded.OutstandingAmount);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/PersistenceTestData.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/PersistenceTestData.cs
+new file mode 100644
+index 0000000..ba51744
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/PersistenceTestData.cs
+@@ -0,0 +1,37 @@
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++internal static class PersistenceTestData
++{
++    public static readonly CurrencyCode Pln = new("PLN");
++
++    public static Invoice CreateInvoice(
++        OrganizationId organizationId,
++        decimal totalAmount,
++        string invoiceNumber = "INV-001")
++    {
++        return new Invoice(
++            InvoiceId.New(),
++            organizationId,
++            invoiceNumber,
++            new Money(totalAmount, Pln));
++    }
++
++    public static BankTransaction CreateBankTransaction(
++        OrganizationId organizationId,
++        decimal amount,
++        DateOnly? bookingDate = null,
++        string? reference = "INV-001")
++    {
++        return new BankTransaction(
++            BankTransactionId.New(),
++            organizationId,
++            new Money(amount, Pln),
++            bookingDate ?? new DateOnly(2026, 8, 24),
++            reference);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ReconciliationDbContextScopeTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ReconciliationDbContextScopeTests.cs
+new file mode 100644
+index 0000000..04057cc
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ReconciliationDbContextScopeTests.cs
+@@ -0,0 +1,85 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.Extensions.DependencyInjection;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class ReconciliationDbContextScopeTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public ReconciliationDbContextScopeTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Repositories_and_unit_of_work_share_the_scoped_dbcontext()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            1000m);
++
++        await using (ReconciliationDbContext seedContext = _fixture.CreateContext())
++        {
++            seedContext.Invoices.Add(invoice);
++            seedContext.BankTransactions.Add(bankTransaction);
++            await seedContext.SaveChangesAsync();
++        }
++
++        await using ServiceProvider provider = _fixture.CreateServiceProvider();
++        await using AsyncServiceScope scope = provider.CreateAsyncScope();
++        IServiceProvider services = scope.ServiceProvider;
++
++        ReconciliationDbContext context =
++            services.GetRequiredService<ReconciliationDbContext>();
++        IUnitOfWork unitOfWork = services.GetRequiredService<IUnitOfWork>();
++        IInvoiceRepository invoiceRepository =
++            services.GetRequiredService<IInvoiceRepository>();
++        IBankTransactionRepository bankTransactionRepository =
++            services.GetRequiredService<IBankTransactionRepository>();
++        IAllocationRepository allocationRepository =
++            services.GetRequiredService<IAllocationRepository>();
++
++        Assert.Same(context, unitOfWork);
++
++        Invoice? trackedInvoice = await invoiceRepository.GetByIdAsync(
++            organizationId,
++            invoice.Id,
++            CancellationToken.None);
++        BankTransaction? trackedBankTransaction =
++            await bankTransactionRepository.GetByIdAsync(
++                organizationId,
++                bankTransaction.Id,
++                CancellationToken.None);
++
++        Assert.NotNull(trackedInvoice);
++        Assert.NotNull(trackedBankTransaction);
++        Assert.Same(trackedInvoice, context.Invoices.Local.Single());
++        Assert.Same(trackedBankTransaction, context.BankTransactions.Local.Single());
++
++        var allocation = new Allocation(
++            AllocationId.New(),
++            organizationId,
++            invoice.Id,
++            bankTransaction.Id,
++            new Money(100m, PersistenceTestData.Pln),
++            new DateTimeOffset(2026, 9, 4, 20, 0, 0, TimeSpan.Zero));
++
++        allocationRepository.Add(allocation);
++
++        Assert.Same(allocation, context.Allocations.Local.Single());
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/SqlServerCollection.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/SqlServerCollection.cs
+new file mode 100644
+index 0000000..6721f7f
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/SqlServerCollection.cs
+@@ -0,0 +1,7 @@
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[CollectionDefinition(Name)]
++public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>
++{
++    public const string Name = "SqlServer";
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/SqlServerFixture.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/SqlServerFixture.cs
+new file mode 100644
+index 0000000..92aebbd
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/SqlServerFixture.cs
+@@ -0,0 +1,158 @@
++using FinOpsDesk.Modules.Reconciliation;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++
++using Microsoft.Data.SqlClient;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.DependencyInjection;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++public sealed class SqlServerFixture : IAsyncLifetime
++{
++    private const string DefaultLocalDbConnectionString =
++        "Server=(localdb)\\mssqllocaldb;Trusted_Connection=True;TrustServerCertificate=True";
++
++    private string? _masterConnectionString;
++    private string? _databaseName;
++
++    public string ConnectionString { get; private set; } = string.Empty;
++
++    public async Task InitializeAsync()
++    {
++        string baseConnectionString =
++            Environment.GetEnvironmentVariable("FINOPSDESK_TEST_SQLSERVER")
++            ?? DefaultLocalDbConnectionString;
++
++        _databaseName = $"FinOpsDesk_IT_{Guid.NewGuid():N}";
++
++        SqlConnectionStringBuilder masterBuilder;
++        SqlConnectionStringBuilder databaseBuilder;
++        try
++        {
++            masterBuilder = new SqlConnectionStringBuilder(baseConnectionString)
++            {
++                InitialCatalog = "master"
++            };
++            databaseBuilder = new SqlConnectionStringBuilder(baseConnectionString)
++            {
++                InitialCatalog = _databaseName
++            };
++        }
++        catch (Exception exception)
++        {
++            throw CreateUnavailableException(exception);
++        }
++
++        _masterConnectionString = masterBuilder.ConnectionString;
++        ConnectionString = databaseBuilder.ConnectionString;
++
++        try
++        {
++            await OpenMasterConnectionAsync();
++        }
++        catch (Exception exception)
++        {
++            throw CreateUnavailableException(exception);
++        }
++
++        await ExecuteMasterSqlAsync($"CREATE DATABASE [{_databaseName}]");
++
++        try
++        {
++            await using ReconciliationDbContext context = CreateContext();
++            await context.Database.MigrateAsync();
++        }
++        catch
++        {
++            await DeleteDatabaseAsync();
++            throw;
++        }
++    }
++
++    public ReconciliationDbContext CreateContext()
++    {
++        DbContextOptions<ReconciliationDbContext> options =
++            new DbContextOptionsBuilder<ReconciliationDbContext>()
++                .UseSqlServer(
++                    ConnectionString,
++                    sqlServer => sqlServer.MigrationsHistoryTable(
++                        "__EFMigrationsHistory",
++                        "reconciliation"))
++                .Options;
++
++        return new ReconciliationDbContext(options);
++    }
++
++    public ServiceProvider CreateServiceProvider()
++    {
++        var services = new ServiceCollection();
++        services.AddReconciliationModule(ConnectionString);
++        return services.BuildServiceProvider();
++    }
++
++    public async Task DisposeAsync()
++    {
++        await DeleteDatabaseAsync();
++    }
++
++    private async Task OpenMasterConnectionAsync()
++    {
++        const int maxAttempts = 30;
++        Exception? lastException = null;
++
++        for (int attempt = 1; attempt <= maxAttempts; attempt++)
++        {
++            try
++            {
++                await using var connection = new SqlConnection(_masterConnectionString);
++                await connection.OpenAsync();
++                return;
++            }
++            catch (Exception exception)
++            {
++                lastException = exception;
++                await Task.Delay(TimeSpan.FromSeconds(2));
++            }
++        }
++
++        throw lastException
++            ?? new InvalidOperationException("Could not open a SQL Server master connection.");
++    }
++
++    private async Task ExecuteMasterSqlAsync(string sql)
++    {
++        await using var connection = new SqlConnection(_masterConnectionString);
++        await connection.OpenAsync();
++        await using var command = new SqlCommand(sql, connection);
++        await command.ExecuteNonQueryAsync();
++    }
++
++    private async Task DeleteDatabaseAsync()
++    {
++        if (string.IsNullOrWhiteSpace(_masterConnectionString)
++            || string.IsNullOrWhiteSpace(_databaseName))
++        {
++            return;
++        }
++
++        try
++        {
++            await ExecuteMasterSqlAsync(
++                $"ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
++                + $"DROP DATABASE [{_databaseName}];");
++        }
++        catch (Exception)
++        {
++            // Best-effort cleanup after a failed or interrupted test run.
++        }
++    }
++
++    private static InvalidOperationException CreateUnavailableException(Exception exception)
++    {
++        return new InvalidOperationException(
++            "A SQL Server instance is required for FinOpsDesk integration tests. "
++            + "Set FINOPSDESK_TEST_SQLSERVER to a SQL Server connection string, "
++            + "or install SQL Server LocalDB. Persistence tests are not skipped.",
++            exception);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/TenantScopedRepositoryTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/TenantScopedRepositoryTests.cs
+new file mode 100644
+index 0000000..0eef49c
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/TenantScopedRepositoryTests.cs
+@@ -0,0 +1,87 @@
++using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.Extensions.DependencyInjection;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class TenantScopedRepositoryTests
++{
++    private readonly SqlServerFixture _fixture;
++
++    public TenantScopedRepositoryTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Invoice_repository_returns_entity_only_for_matching_organization()
++    {
++        OrganizationId ownerOrganizationId = OrganizationId.New();
++        OrganizationId otherOrganizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(ownerOrganizationId, 1000m);
++
++        await using (ReconciliationDbContext seedContext = _fixture.CreateContext())
++        {
++            seedContext.Invoices.Add(invoice);
++            await seedContext.SaveChangesAsync();
++        }
++
++        await using ServiceProvider provider = _fixture.CreateServiceProvider();
++        await using AsyncServiceScope scope = provider.CreateAsyncScope();
++        IInvoiceRepository repository =
++            scope.ServiceProvider.GetRequiredService<IInvoiceRepository>();
++
++        Invoice? matching = await repository.GetByIdAsync(
++            ownerOrganizationId,
++            invoice.Id,
++            CancellationToken.None);
++        Invoice? crossTenant = await repository.GetByIdAsync(
++            otherOrganizationId,
++            invoice.Id,
++            CancellationToken.None);
++
++        Assert.NotNull(matching);
++        Assert.Equal(invoice.Id, matching.Id);
++        Assert.Null(crossTenant);
++    }
++
++    [Fact]
++    public async Task Bank_transaction_repository_returns_entity_only_for_matching_organization()
++    {
++        OrganizationId ownerOrganizationId = OrganizationId.New();
++        OrganizationId otherOrganizationId = OrganizationId.New();
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            ownerOrganizationId,
++            1000m);
++
++        await using (ReconciliationDbContext seedContext = _fixture.CreateContext())
++        {
++            seedContext.BankTransactions.Add(bankTransaction);
++            await seedContext.SaveChangesAsync();
++        }
++
++        await using ServiceProvider provider = _fixture.CreateServiceProvider();
++        await using AsyncServiceScope scope = provider.CreateAsyncScope();
++        IBankTransactionRepository repository =
++            scope.ServiceProvider.GetRequiredService<IBankTransactionRepository>();
++
++        BankTransaction? matching = await repository.GetByIdAsync(
++            ownerOrganizationId,
++            bankTransaction.Id,
++            CancellationToken.None);
++        BankTransaction? crossTenant = await repository.GetByIdAsync(
++            otherOrganizationId,
++            bankTransaction.Id,
++            CancellationToken.None);
++
++        Assert.NotNull(matching);
++        Assert.Equal(bankTransaction.Id, matching.Id);
++        Assert.Null(crossTenant);
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/TestCurrentOrganizationContext.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/TestCurrentOrganizationContext.cs
+new file mode 100644
+index 0000000..7474fa5
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/TestCurrentOrganizationContext.cs
+@@ -0,0 +1,16 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++internal sealed class TestCurrentOrganizationContext : ICurrentOrganizationContext
++{
++    public TestCurrentOrganizationContext(OrganizationId organizationId)
++    {
++        ArgumentNullException.ThrowIfNull(organizationId);
++
++        OrganizationId = organizationId;
++    }
++
++    public OrganizationId OrganizationId { get; }
++}
+\ No newline at end of file

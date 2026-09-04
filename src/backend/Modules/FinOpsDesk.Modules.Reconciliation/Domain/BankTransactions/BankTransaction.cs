@@ -21,6 +21,13 @@ public sealed class BankTransaction
 
     public DateOnly BookingDate { get; }
 
+#pragma warning disable CS8618
+    // Required for persistence materialization.
+    private BankTransaction()
+    {
+    }
+#pragma warning restore CS8618
+
     public BankTransaction(
         BankTransactionId id,
         OrganizationId organizationId,
