@@ -54,21 +54,31 @@ Add:
 
 Persistence, EF Core, and HTTP remain deferred to Phase 2B.
 
-## Phase 2B: Persistence and first vertical slice
+## Phase 2B.1: Reconciliation persistence foundation
+
+Status: complete.
 
 Add:
 
 - EF Core SQL Server;
-- Reconciliation DbContext;
+- module-owned `ReconciliationDbContext`;
+- SQL schema `reconciliation`;
 - mappings and migrations;
-- organization scope;
+- specialized command repositories;
+- organization-scoped lookups;
 - decimal precision;
-- unique constraints;
-- indexes;
-- SQL Server `rowversion`;
-- integration test infrastructure.
+- composite tenant foreign keys;
+- integration tests against SQL Server.
 
-First complete use case:
+ConfirmAllocation remains the first persisted write use case. One `SaveChangesAsync` is the transaction boundary.
+
+## Phase 2B.2: Optimistic concurrency
+
+Add SQL Server `rowversion` and concurrency-conflict handling for mutable financial records.
+
+## Phase 2B.3: First HTTP vertical slice
+
+First complete HTTP use case:
 
 ```text
 GET /api/invoices
@@ -115,6 +125,8 @@ Implement:
 - optimistic concurrency conflict handling;
 - idempotency for selected commands.
 
+
+
 ## Phase 6: React operations workspace
 
 Create the React and TypeScript application with Vite.
@@ -133,6 +145,8 @@ Add:
 - loading, error, empty, forbidden, and conflict states;
 - component tests.
 
+
+
 ## Phase 7: Authentication, authorization, and tenant isolation
 
 Add:
@@ -147,6 +161,8 @@ Add:
 - cross-organization integration tests;
 - BOLA/IDOR tests.
 
+
+
 ## Phase 8: Disputes and dashboards
 
 Add:
@@ -158,6 +174,8 @@ Add:
 - resolution;
 - audit history;
 - operational dashboard read models.
+
+
 
 ## Phase 9: Performance and operability
 
@@ -173,6 +191,8 @@ Add:
 - readiness checks;
 - security review.
 
+
+
 ## Phase 10: Optional infrastructure
 
 Only after a demonstrated trigger:
@@ -182,6 +202,8 @@ Only after a demonstrated trigger:
 - SignalR;
 - Redis;
 - full Docker Compose.
+
+
 
 ## Phase 11: Optional AI feature
 

@@ -20,13 +20,29 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  FINOPSDESK_TEST_SQLSERVER: Server=localhost,1433;User Id=sa;Password=FinOpsDesk_CI_TestOnly#2026;TrustServerCertificate=True;Encrypt=True
 
 jobs:
   build-and-test:
     name: Build, test and verify formatting
 
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: FinOpsDesk_CI_TestOnly#2026
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "bash -c ':> /dev/tcp/127.0.0.1/1433' || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+          --health-start-period 20s
 
     steps:
       - name: Checkout repository

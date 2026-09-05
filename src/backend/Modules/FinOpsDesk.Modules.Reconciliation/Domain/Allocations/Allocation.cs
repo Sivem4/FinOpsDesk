@@ -26,6 +26,13 @@ public sealed class Allocation
 
     public string? ReversalReason { get; private set; }
 
+#pragma warning disable CS8618
+    // Required for persistence materialization.
+    private Allocation()
+    {
+    }
+#pragma warning restore CS8618
+
     public Allocation(
         AllocationId id,
         OrganizationId organizationId,
