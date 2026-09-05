@@ -47,4 +47,39 @@ public sealed class BankTransactionPersistenceTests
         Assert.Equal(bookingDate, loaded.BookingDate);
         Assert.Equal("REF-42", loaded.Reference);
     }
+
+    [Fact]
+    public async Task Updating_bank_transaction_changes_rowversion()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
+            organizationId,
+            1000m);
+
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        context.BankTransactions.Add(bankTransaction);
+        await context.SaveChangesAsync();
+
+        byte[] insertedRowVersion = GetRowVersion(context, bankTransaction).ToArray();
+        Assert.NotEmpty(insertedRowVersion);
+
+        bankTransaction.Allocate(new Money(150m, PersistenceTestData.Pln));
+        await context.SaveChangesAsync();
+
+        byte[] updatedRowVersion = GetRowVersion(context, bankTransaction);
+        Assert.NotEmpty(updatedRowVersion);
+        Assert.False(insertedRowVersion.SequenceEqual(updatedRowVersion));
+    }
+
+    private static byte[] GetRowVersion(
+        ReconciliationDbContext context,
+        BankTransaction bankTransaction)
+    {
+        byte[]? rowVersion = context.Entry(bankTransaction)
+            .Property<byte[]>("RowVersion")
+            .CurrentValue;
+
+        Assert.NotNull(rowVersion);
+        return rowVersion;
+    }
 }

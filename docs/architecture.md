@@ -79,7 +79,9 @@ The module may be split into multiple assemblies later if it becomes large, has 
 
 Phase 2A introduced the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
 
-Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbContext`, SQL schema `reconciliation`, specialized command repositories, and SQL Server migrations. Optimistic concurrency with `rowversion` is reserved for Phase 2B.2.
+Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbContext`, SQL schema `reconciliation`, specialized command repositories, and SQL Server migrations.
+
+Phase 2B.2 adds SQL Server `rowversion` concurrency tokens as EF Core shadow properties on `Invoice` and `BankTransaction`. `IUnitOfWork.SaveChangesAsync` translates `DbUpdateConcurrencyException` into Application `ConcurrencyConflictException`. `ConfirmAllocationHandler` maps that abstraction to `Result.Failure`. There is no automatic retry; a failed DbContext is discarded with its scope. HTTP 409 mapping remains future work.
 
 ## Request flow
 
@@ -151,7 +153,9 @@ The read side uses direct EF Core projections to endpoint-specific DTOs, normall
 
 A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
 
-SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite. `rowversion` is not implemented in Phase 2B.1.
+SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite.
+
+`Invoice` and `BankTransaction` use SQL Server `rowversion` as EF Core shadow properties. ConfirmAllocation updates those aggregates and inserts `Allocation` in one `SaveChangesAsync`. A stale version fails the whole commit. `Allocation` does not have a concurrency token yet; that can be revisited when a persisted reversal updates an existing allocation. Domain entities do not expose `RowVersion`.
 
 ## Authentication direction
 

@@ -275,6 +275,41 @@ public sealed class ConfirmAllocationHandlerTests
         Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
     }
 
+    [Fact]
+    public async Task Handle_should_return_concurrency_conflict_when_unit_of_work_reports_conflict()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m);
+        BankTransaction bankTransaction = CreateBankTransaction(1000m);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+        scenario.UnitOfWork.ExceptionToThrow = new ConcurrencyConflictException(
+            "The persisted data was modified by another operation.");
+
+        var command = new ConfirmAllocationCommand(
+            invoice.Id,
+            bankTransaction.Id,
+            new Money(300m, Pln));
+
+        Result<ConfirmAllocationResult> result = await scenario.Handler.Handle(
+            command,
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationApplicationErrors.ConcurrencyConflict.Code,
+            result.Error?.Code);
+        Assert.Equal("reconciliation.concurrency_conflict", result.Error?.Code);
+        Assert.Equal(1, scenario.Allocations.AddCallCount);
+        Assert.Equal(1, scenario.UnitOfWork.SaveChangesCallCount);
+        Assert.Equal(
+            new Money(300m, Pln),
+            invoice.AllocatedAmount);
+        Assert.Equal(
+            new Money(300m, Pln),
+            bankTransaction.AllocatedAmount);
+    }
+
     private static Scenario CreateScenario()
     {
         var invoices = new FakeInvoiceRepository();
@@ -402,10 +437,18 @@ public sealed class ConfirmAllocationHandlerTests
 
         public CancellationToken LastCancellationToken { get; private set; }
 
+        public Exception? ExceptionToThrow { get; set; }
+
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {
             SaveChangesCallCount++;
             LastCancellationToken = cancellationToken;
+
+            if (ExceptionToThrow is not null)
+            {
+                throw ExceptionToThrow;
+            }
+
             return Task.CompletedTask;
         }
     }

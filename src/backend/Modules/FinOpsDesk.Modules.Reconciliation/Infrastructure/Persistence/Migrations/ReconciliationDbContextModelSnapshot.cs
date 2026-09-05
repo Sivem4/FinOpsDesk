@@ -91,6 +91,12 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<string>("Reference")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
                     b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.AllocatedAmount#Money", b1 =>
                         {
                             b1.IsRequired();
@@ -143,6 +149,12 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
                     b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.AllocatedAmount#Money", b1 =>
                         {

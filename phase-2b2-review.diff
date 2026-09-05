@@ -1,0 +1,863 @@
+diff --git a/docs/adr/0002-module-owned-reconciliation-dbcontext.md b/docs/adr/0002-module-owned-reconciliation-dbcontext.md
+index 68267f3..7b4a999 100644
+--- a/docs/adr/0002-module-owned-reconciliation-dbcontext.md
++++ b/docs/adr/0002-module-owned-reconciliation-dbcontext.md
+@@ -50,4 +50,4 @@ Negative:
+ - multiple module DbContexts will eventually migrate the same physical database;
+ - internal Domain/Application/Infrastructure boundaries inside the module assembly still rely on convention and review.
+ 
+-Optimistic concurrency with SQL Server `rowversion` is reserved for Phase 2B.2.
++Optimistic concurrency with SQL Server `rowversion` is recorded in ADR 0003.
+diff --git a/docs/adr/0003-optimistic-concurrency-for-reconciliation.md b/docs/adr/0003-optimistic-concurrency-for-reconciliation.md
+new file mode 100644
+index 0000000..7728bd4
+--- /dev/null
++++ b/docs/adr/0003-optimistic-concurrency-for-reconciliation.md
+@@ -0,0 +1,57 @@
++# ADR 0003: Optimistic concurrency for Reconciliation
++
++- Status: Accepted
++- Date: 2026-09-05
++
++## Context
++
++ConfirmAllocation loads an Invoice and BankTransaction, applies domain allocate operations, inserts an Allocation, and commits once through `IUnitOfWork.SaveChangesAsync`. Two requests can load the same financial state, both pass domain invariants in memory, and only one should commit against that original state.
++
++Phase 2B.1 deferred SQL Server `rowversion` to this decision.
++
++## Decision
++
++Use SQL Server `rowversion` as EF Core shadow properties on `Invoice` and `BankTransaction` only.
++
++`ReconciliationDbContext` implements `IUnitOfWork` directly. The explicit `SaveChangesAsync` port catches `DbUpdateConcurrencyException` and throws Application `ConcurrencyConflictException`, preserving the EF exception as the inner exception. `ConfirmAllocationHandler` maps that abstraction to `Result.Failure` with `reconciliation.concurrency_conflict`.
++
++`IUnitOfWork` remains a `Task` commit port. It does not return `Result` and does not expose EF types.
++
++A concurrency failure does not retry `SaveChangesAsync`, reload tracked entities, or reuse the current DbContext. The scoped context is discarded.
++
++`Allocation` does not receive a concurrency token. ConfirmAllocation inserts Allocation; token protection is needed on the aggregates it updates. Allocation concurrency can be revisited when a persisted reversal updates an existing allocation.
++
++HTTP 409 mapping is not part of this decision.
++
++## Alternatives considered
++
++### Domain `RowVersion` properties
++
++Rejected. Repositories already load tracked aggregates. The token can stay in the EF change tracker until a client ETag or similar use case exists.
++
++### `Result` on `IUnitOfWork`
++
++Rejected. That would mix a generic commit port with use-case error handling.
++
++### Automatic retry
++
++Rejected. A correct retry needs a new DbContext, fresh reads, and re-execution of domain invariants. Blindly retrying `SaveChanges` on the failed context would reuse stale original versions or persist a lost update.
++
++### Allocation `rowversion`
++
++Deferred. There is no persisted Allocation update use case yet.
++
++## Consequences
++
++Positive:
++
++- stale ConfirmAllocation commits fail instead of overwriting newer financial state;
++- Application stays EF-agnostic at the `IUnitOfWork` boundary;
++- Domain entities stay free of persistence tokens;
++- the implicit single-`SaveChanges` transaction still rolls back the losing attempt.
++
++Negative:
++
++- Domain and Application remain in the same assembly as Infrastructure, so EF isolation stays a convention and review concern;
++- a future HTTP layer must map `reconciliation.concurrency_conflict` deliberately;
++- callers must reload and re-run the use case after a conflict.
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 8978e3f..65dfd24 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -79,7 +79,9 @@ The module may be split into multiple assemblies later if it becomes large, has
+ 
+ Phase 2A introduced the first Reconciliation Application command slice: `ConfirmAllocation`. The handler coordinates existing domain allocate operations and creates a confirmed allocation. It commits once through an Application `IUnitOfWork` port (`SaveChangesAsync` only) after those domain operations succeed. `IUnitOfWork` does not expose EF Core types, transactions, or affected-row counts.
+ 
+-Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbContext`, SQL schema `reconciliation`, specialized command repositories, and SQL Server migrations. Optimistic concurrency with `rowversion` is reserved for Phase 2B.2.
++Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbContext`, SQL schema `reconciliation`, specialized command repositories, and SQL Server migrations.
++
++Phase 2B.2 adds SQL Server `rowversion` concurrency tokens as EF Core shadow properties on `Invoice` and `BankTransaction`. `IUnitOfWork.SaveChangesAsync` translates `DbUpdateConcurrencyException` into Application `ConcurrencyConflictException`. `ConfirmAllocationHandler` maps that abstraction to `Result.Failure`. There is no automatic retry; a failed DbContext is discarded with its scope. HTTP 409 mapping remains future work.
+ 
+ ## Request flow
+ 
+@@ -151,7 +153,9 @@ The read side uses direct EF Core projections to endpoint-specific DTOs, normall
+ 
+ A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
+ 
+-SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite. `rowversion` is not implemented in Phase 2B.1.
++SQL Server-specific behaviour, including `rowversion`, provider constraints, and locking, must be tested against SQL Server rather than replaced with SQLite.
++
++`Invoice` and `BankTransaction` use SQL Server `rowversion` as EF Core shadow properties. ConfirmAllocation updates those aggregates and inserts `Allocation` in one `SaveChangesAsync`. A stale version fails the whole commit. `Allocation` does not have a concurrency token yet; that can be revisited when a persisted reversal updates an existing allocation. Domain entities do not expose `RowVersion`.
+ 
+ ## Authentication direction
+ 
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 826cffa..7280dbe 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -74,7 +74,16 @@ ConfirmAllocation remains the first persisted write use case. One `SaveChangesAs
+ 
+ ## Phase 2B.2: Optimistic concurrency
+ 
+-Add SQL Server `rowversion` and concurrency-conflict handling for mutable financial records.
++Status: complete.
++
++Add:
++
++- SQL Server `rowversion` shadow properties on `Invoice` and `BankTransaction`;
++- `ConcurrencyConflictException` at the Application `IUnitOfWork` boundary;
++- ConfirmAllocation mapping of that conflict to `Result.Failure`;
++- SQL Server integration coverage for stale-version detection and atomic rollback.
++
++HTTP 409 mapping remains Phase 2B.3 or later. Allocation concurrency and automatic retry are out of scope.
+ 
+ ## Phase 2B.3: First HTTP vertical slice
+ 
+@@ -122,7 +131,8 @@ Implement:
+ - atomic financial state updates;
+ - reversal with reason;
+ - audit entry in the same transaction;
+-- optimistic concurrency conflict handling;
++- HTTP mapping of concurrency conflicts;
++- optimistic concurrency for persisted reversal;
+ - idempotency for selected commands.
+ 
+ 
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/ConcurrencyConflictException.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/ConcurrencyConflictException.cs
+new file mode 100644
+index 0000000..17615c4
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/ConcurrencyConflictException.cs
+@@ -0,0 +1,14 @@
++namespace FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++
++public sealed class ConcurrencyConflictException : Exception
++{
++    public ConcurrencyConflictException(string message)
++        : base(message)
++    {
++    }
++
++    public ConcurrencyConflictException(string message, Exception innerException)
++        : base(message, innerException)
++    {
++    }
++}
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/IUnitOfWork.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/IUnitOfWork.cs
+index 33fd72e..028d741 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/IUnitOfWork.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Abstractions/IUnitOfWork.cs
+@@ -2,5 +2,11 @@ namespace FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
+ 
+ public interface IUnitOfWork
+ {
++    /// <summary>
++    /// Commits tracked changes for the current business operation.
++    /// </summary>
++    /// <exception cref="ConcurrencyConflictException">
++    /// Thrown when persisted row versions no longer match the loaded state.
++    /// </exception>
+     Task SaveChangesAsync(CancellationToken cancellationToken);
+ }
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Allocations/ConfirmAllocationHandler.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Allocations/ConfirmAllocationHandler.cs
+index 315697d..0fd518c 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Allocations/ConfirmAllocationHandler.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/Allocations/ConfirmAllocationHandler.cs
+@@ -1,6 +1,7 @@
+ using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
+ using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+ using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++
+ using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
+ using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+ using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+@@ -94,7 +95,15 @@ public sealed class ConfirmAllocationHandler
+ 
+         _allocationRepository.Add(allocation);
+ 
+-        await _unitOfWork.SaveChangesAsync(cancellationToken);
++        try
++        {
++            await _unitOfWork.SaveChangesAsync(cancellationToken);
++        }
++        catch (ConcurrencyConflictException)
++        {
++            return Result<ConfirmAllocationResult>.Failure(
++                ReconciliationApplicationErrors.ConcurrencyConflict);
++        }
+ 
+         return Result<ConfirmAllocationResult>.Success(
+             new ConfirmAllocationResult(allocation.Id));
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/ReconciliationApplicationErrors.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/ReconciliationApplicationErrors.cs
+index 0dfc0c1..8408b50 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/ReconciliationApplicationErrors.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Application/ReconciliationApplicationErrors.cs
+@@ -13,4 +13,9 @@ public static class ReconciliationApplicationErrors
+         new(
+             "reconciliation.bank_transaction.not_found",
+             "Bank transaction was not found.");
++
++    public static Error ConcurrencyConflict { get; } =
++        new(
++            "reconciliation.concurrency_conflict",
++            "The invoice or bank transaction was modified by another operation.");
+ }
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs
+index 0813940..aea1201 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/BankTransactionConfiguration.cs
+@@ -43,5 +43,9 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
+             "AllocatedCurrency");
+ 
+         builder.Ignore(bankTransaction => bankTransaction.UnappliedAmount);
++
++        builder.Property<byte[]>("RowVersion")
++            .IsRowVersion()
++            .IsRequired();
+     }
+ }
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs
+index 7683704..7bde8ed 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Configurations/InvoiceConfiguration.cs
+@@ -41,5 +41,9 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
+             "AllocatedCurrency");
+ 
+         builder.Ignore(invoice => invoice.OutstandingAmount);
++
++        builder.Property<byte[]>("RowVersion")
++            .IsRowVersion()
++            .IsRequired();
+     }
+ }
+\ No newline at end of file
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260905133501_AddReconciliationConcurrencyTokens.Designer.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260905133501_AddReconciliationConcurrencyTokens.Designer.cs
+new file mode 100644
+index 0000000..cc525a8
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260905133501_AddReconciliationConcurrencyTokens.Designer.cs
+@@ -0,0 +1,222 @@
++﻿// <auto-generated />
++using System;
++using System.Collections.Generic;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Metadata;
++using Microsoft.EntityFrameworkCore.Migrations;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++
++#nullable disable
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migrations
++{
++    [DbContext(typeof(ReconciliationDbContext))]
++    [Migration("20260905133501_AddReconciliationConcurrencyTokens")]
++    partial class AddReconciliationConcurrencyTokens
++    {
++        /// <inheritdoc />
++        protected override void BuildTargetModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasDefaultSchema("reconciliation")
++                .HasAnnotation("ProductVersion", "10.0.11")
++                .HasAnnotation("Relational:MaxIdentifierLength", 128);
++
++            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<Guid>("BankTransactionId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<DateTimeOffset>("ConfirmedAt")
++                        .HasColumnType("datetimeoffset");
++
++                    b.Property<Guid>("InvoiceId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("ReversalReason")
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<DateTimeOffset?>("ReversedAt")
++                        .HasColumnType("datetimeoffset");
++
++                    b.Property<int>("Status")
++                        .HasColumnType("int");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation.Amount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("Amount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("Currency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("OrganizationId", "BankTransactionId");
++
++                    b.HasIndex("OrganizationId", "InvoiceId");
++
++                    b.ToTable("Allocations", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<DateOnly>("BookingDate")
++                        .HasColumnType("date");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("Reference")
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<byte[]>("RowVersion")
++                        .IsConcurrencyToken()
++                        .IsRequired()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("rowversion");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.AllocatedAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("AllocatedAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("AllocatedCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.Amount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("Amount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("Currency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.ToTable("BankTransactions", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<string>("InvoiceNumber")
++                        .IsRequired()
++                        .HasColumnType("nvarchar(max)");
++
++                    b.Property<Guid>("OrganizationId")
++                        .HasColumnType("uniqueidentifier");
++
++                    b.Property<byte[]>("RowVersion")
++                        .IsConcurrencyToken()
++                        .IsRequired()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("rowversion");
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.AllocatedAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("AllocatedAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("AllocatedCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.ComplexProperty(typeof(Dictionary<string, object>), "TotalAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.TotalAmount#Money", b1 =>
++                        {
++                            b1.IsRequired();
++
++                            b1.Property<decimal>("Amount")
++                                .HasPrecision(19, 4)
++                                .HasColumnType("decimal(19,4)")
++                                .HasColumnName("TotalAmount");
++
++                            b1.Property<string>("Currency")
++                                .IsRequired()
++                                .HasMaxLength(3)
++                                .IsUnicode(false)
++                                .HasColumnType("char(3)")
++                                .HasColumnName("TotalCurrency")
++                                .IsFixedLength();
++                        });
++
++                    b.HasKey("Id");
++
++                    b.ToTable("Invoices", "reconciliation");
++                });
++
++            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
++                {
++                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
++                        .WithMany()
++                        .HasForeignKey("OrganizationId", "BankTransactionId")
++                        .HasPrincipalKey("OrganizationId", "Id")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++
++                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
++                        .WithMany()
++                        .HasForeignKey("OrganizationId", "InvoiceId")
++                        .HasPrincipalKey("OrganizationId", "Id")
++                        .OnDelete(DeleteBehavior.Restrict)
++                        .IsRequired();
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260905133501_AddReconciliationConcurrencyTokens.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260905133501_AddReconciliationConcurrencyTokens.cs
+new file mode 100644
+index 0000000..32906c0
+--- /dev/null
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/20260905133501_AddReconciliationConcurrencyTokens.cs
+@@ -0,0 +1,44 @@
++﻿using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migrations
++{
++    /// <inheritdoc />
++    public partial class AddReconciliationConcurrencyTokens : Migration
++    {
++        /// <inheritdoc />
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.AddColumn<byte[]>(
++                name: "RowVersion",
++                schema: "reconciliation",
++                table: "Invoices",
++                type: "rowversion",
++                rowVersion: true,
++                nullable: false);
++
++            migrationBuilder.AddColumn<byte[]>(
++                name: "RowVersion",
++                schema: "reconciliation",
++                table: "BankTransactions",
++                type: "rowversion",
++                rowVersion: true,
++                nullable: false);
++        }
++
++        /// <inheritdoc />
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropColumn(
++                name: "RowVersion",
++                schema: "reconciliation",
++                table: "Invoices");
++
++            migrationBuilder.DropColumn(
++                name: "RowVersion",
++                schema: "reconciliation",
++                table: "BankTransactions");
++        }
++    }
++}
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs
+index 66f8335..78f74e1 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/Migrations/ReconciliationDbContextModelSnapshot.cs
+@@ -91,6 +91,12 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
+                     b.Property<string>("Reference")
+                         .HasColumnType("nvarchar(max)");
+ 
++                    b.Property<byte[]>("RowVersion")
++                        .IsConcurrencyToken()
++                        .IsRequired()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("rowversion");
++
+                     b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.AllocatedAmount#Money", b1 =>
+                         {
+                             b1.IsRequired();
+@@ -144,6 +150,12 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
+                     b.Property<Guid>("OrganizationId")
+                         .HasColumnType("uniqueidentifier");
+ 
++                    b.Property<byte[]>("RowVersion")
++                        .IsConcurrencyToken()
++                        .IsRequired()
++                        .ValueGeneratedOnAddOrUpdate()
++                        .HasColumnType("rowversion");
++
+                     b.ComplexProperty(typeof(Dictionary<string, object>), "AllocatedAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.AllocatedAmount#Money", b1 =>
+                         {
+                             b1.IsRequired();
+diff --git a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs
+index 915eb47..42ec797 100644
+--- a/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs
++++ b/src/backend/Modules/FinOpsDesk.Modules.Reconciliation/Infrastructure/Persistence/ReconciliationDbContext.cs
+@@ -23,7 +23,16 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
+ 
+     async Task IUnitOfWork.SaveChangesAsync(CancellationToken cancellationToken)
+     {
+-        await SaveChangesAsync(cancellationToken);
++        try
++        {
++            await SaveChangesAsync(cancellationToken);
++        }
++        catch (DbUpdateConcurrencyException exception)
++        {
++            throw new ConcurrencyConflictException(
++                "The persisted data was modified by another operation.",
++                exception);
++        }
+     }
+ 
+     protected override void OnModelCreating(ModelBuilder modelBuilder)
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs
+index 91c66c8..574290b 100644
+--- a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/BankTransactionPersistenceTests.cs
+@@ -47,4 +47,39 @@ public sealed class BankTransactionPersistenceTests
+         Assert.Equal(bookingDate, loaded.BookingDate);
+         Assert.Equal("REF-42", loaded.Reference);
+     }
++
++    [Fact]
++    public async Task Updating_bank_transaction_changes_rowversion()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
++            organizationId,
++            1000m);
++
++        await using ReconciliationDbContext context = _fixture.CreateContext();
++        context.BankTransactions.Add(bankTransaction);
++        await context.SaveChangesAsync();
++
++        byte[] insertedRowVersion = GetRowVersion(context, bankTransaction).ToArray();
++        Assert.NotEmpty(insertedRowVersion);
++
++        bankTransaction.Allocate(new Money(150m, PersistenceTestData.Pln));
++        await context.SaveChangesAsync();
++
++        byte[] updatedRowVersion = GetRowVersion(context, bankTransaction);
++        Assert.NotEmpty(updatedRowVersion);
++        Assert.False(insertedRowVersion.SequenceEqual(updatedRowVersion));
++    }
++
++    private static byte[] GetRowVersion(
++        ReconciliationDbContext context,
++        BankTransaction bankTransaction)
++    {
++        byte[]? rowVersion = context.Entry(bankTransaction)
++            .Property<byte[]>("RowVersion")
++            .CurrentValue;
++
++        Assert.NotNull(rowVersion);
++        return rowVersion;
++    }
+ }
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationConcurrencyTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationConcurrencyTests.cs
+new file mode 100644
+index 0000000..ec9f9cb
+--- /dev/null
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/ConfirmAllocationConcurrencyTests.cs
+@@ -0,0 +1,132 @@
++using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
++using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Domain;
++using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
++using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
++using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
++using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
++using FinOpsDesk.SharedKernel.Tenancy;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.DependencyInjection;
++
++namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
++
++[Collection(SqlServerCollection.Name)]
++public sealed class ConfirmAllocationConcurrencyTests
++{
++    private static readonly DateTimeOffset ConfirmedAt =
++        new(2026, 9, 5, 14, 0, 0, TimeSpan.Zero);
++
++    private readonly SqlServerFixture _fixture;
++
++    public ConfirmAllocationConcurrencyTests(SqlServerFixture fixture)
++    {
++        _fixture = fixture;
++    }
++
++    [Fact]
++    public async Task Stale_confirm_allocation_conflicts_and_does_not_partially_commit()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice seededInvoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++        BankTransaction seededBankTransaction =
++            PersistenceTestData.CreateBankTransaction(organizationId, 1000m);
++        var amountA = new Money(300m, PersistenceTestData.Pln);
++        var amountB = new Money(400m, PersistenceTestData.Pln);
++        var allocationA = new Allocation(
++            AllocationId.New(),
++            organizationId,
++            seededInvoice.Id,
++            seededBankTransaction.Id,
++            amountA,
++            ConfirmedAt);
++        var allocationB = new Allocation(
++            AllocationId.New(),
++            organizationId,
++            seededInvoice.Id,
++            seededBankTransaction.Id,
++            amountB,
++            ConfirmedAt);
++
++        await using (ReconciliationDbContext seedContext = _fixture.CreateContext())
++        {
++            seedContext.Invoices.Add(seededInvoice);
++            seedContext.BankTransactions.Add(seededBankTransaction);
++            await seedContext.SaveChangesAsync();
++        }
++
++        await using ServiceProvider provider = _fixture.CreateServiceProvider();
++        await using AsyncServiceScope scopeA = provider.CreateAsyncScope();
++        await using AsyncServiceScope scopeB = provider.CreateAsyncScope();
++
++        Invoice invoiceA = await LoadInvoiceAsync(scopeA.ServiceProvider, organizationId, seededInvoice.Id);
++        BankTransaction bankTransactionA = await LoadBankTransactionAsync(
++            scopeA.ServiceProvider,
++            organizationId,
++            seededBankTransaction.Id);
++        Invoice invoiceB = await LoadInvoiceAsync(scopeB.ServiceProvider, organizationId, seededInvoice.Id);
++        BankTransaction bankTransactionB = await LoadBankTransactionAsync(
++            scopeB.ServiceProvider,
++            organizationId,
++            seededBankTransaction.Id);
++
++        Assert.True(invoiceA.Allocate(amountA).IsSuccess);
++        Assert.True(bankTransactionA.Allocate(amountA).IsSuccess);
++        scopeA.ServiceProvider.GetRequiredService<IAllocationRepository>().Add(allocationA);
++
++        Assert.True(invoiceB.Allocate(amountB).IsSuccess);
++        Assert.True(bankTransactionB.Allocate(amountB).IsSuccess);
++        scopeB.ServiceProvider.GetRequiredService<IAllocationRepository>().Add(allocationB);
++
++        await scopeA.ServiceProvider.GetRequiredService<IUnitOfWork>()
++            .SaveChangesAsync(CancellationToken.None);
++
++        await Assert.ThrowsAsync<ConcurrencyConflictException>(
++            () => scopeB.ServiceProvider.GetRequiredService<IUnitOfWork>()
++                .SaveChangesAsync(CancellationToken.None));
++
++        await using ReconciliationDbContext reloadContext = _fixture.CreateContext();
++        Invoice loadedInvoice = await reloadContext.Invoices.SingleAsync(
++            stored => stored.Id == seededInvoice.Id);
++        BankTransaction loadedBankTransaction =
++            await reloadContext.BankTransactions.SingleAsync(
++                stored => stored.Id == seededBankTransaction.Id);
++        List<Allocation> allocations = await reloadContext.Allocations
++            .Where(allocation => allocation.InvoiceId == seededInvoice.Id)
++            .ToListAsync();
++
++        Assert.Equal(amountA, loadedInvoice.AllocatedAmount);
++        Assert.Equal(amountA, loadedBankTransaction.AllocatedAmount);
++        Allocation persistedAllocation = Assert.Single(allocations);
++        Assert.Equal(allocationA.Id, persistedAllocation.Id);
++        Assert.DoesNotContain(allocations, allocation => allocation.Id == allocationB.Id);
++    }
++
++    private static async Task<Invoice> LoadInvoiceAsync(
++        IServiceProvider services,
++        OrganizationId organizationId,
++        InvoiceId invoiceId)
++    {
++        Invoice? invoice = await services.GetRequiredService<IInvoiceRepository>()
++            .GetByIdAsync(organizationId, invoiceId, CancellationToken.None);
++
++        Assert.NotNull(invoice);
++        return invoice;
++    }
++
++    private static async Task<BankTransaction> LoadBankTransactionAsync(
++        IServiceProvider services,
++        OrganizationId organizationId,
++        BankTransactionId bankTransactionId)
++    {
++        BankTransaction? bankTransaction = await services
++            .GetRequiredService<IBankTransactionRepository>()
++            .GetByIdAsync(organizationId, bankTransactionId, CancellationToken.None);
++
++        Assert.NotNull(bankTransaction);
++        return bankTransaction;
++    }
++}
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs
+index 79cd706..d666c68 100644
+--- a/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs
++++ b/tests/FinOpsDesk.IntegrationTests/Reconciliation/Persistence/InvoicePersistenceTests.cs
+@@ -41,4 +41,35 @@ public sealed class InvoicePersistenceTests
+         Assert.Equal(new Money(300.1250m, PersistenceTestData.Pln), loaded.AllocatedAmount);
+         Assert.Equal(new Money(700.1250m, PersistenceTestData.Pln), loaded.OutstandingAmount);
+     }
++
++    [Fact]
++    public async Task Updating_invoice_changes_rowversion()
++    {
++        OrganizationId organizationId = OrganizationId.New();
++        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
++
++        await using ReconciliationDbContext context = _fixture.CreateContext();
++        context.Invoices.Add(invoice);
++        await context.SaveChangesAsync();
++
++        byte[] insertedRowVersion = GetRowVersion(context, invoice).ToArray();
++        Assert.NotEmpty(insertedRowVersion);
++
++        invoice.Allocate(new Money(150m, PersistenceTestData.Pln));
++        await context.SaveChangesAsync();
++
++        byte[] updatedRowVersion = GetRowVersion(context, invoice);
++        Assert.NotEmpty(updatedRowVersion);
++        Assert.False(insertedRowVersion.SequenceEqual(updatedRowVersion));
++    }
++
++    private static byte[] GetRowVersion(ReconciliationDbContext context, Invoice invoice)
++    {
++        byte[]? rowVersion = context.Entry(invoice)
++            .Property<byte[]>("RowVersion")
++            .CurrentValue;
++
++        Assert.NotNull(rowVersion);
++        return rowVersion;
++    }
+ }
+\ No newline at end of file
+diff --git a/tests/FinOpsDesk.UnitTests/Application/Allocations/ConfirmAllocationHandlerTests.cs b/tests/FinOpsDesk.UnitTests/Application/Allocations/ConfirmAllocationHandlerTests.cs
+index 4566694..6673fe2 100644
+--- a/tests/FinOpsDesk.UnitTests/Application/Allocations/ConfirmAllocationHandlerTests.cs
++++ b/tests/FinOpsDesk.UnitTests/Application/Allocations/ConfirmAllocationHandlerTests.cs
+@@ -275,6 +275,41 @@ public sealed class ConfirmAllocationHandlerTests
+         Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
+     }
+ 
++    [Fact]
++    public async Task Handle_should_return_concurrency_conflict_when_unit_of_work_reports_conflict()
++    {
++        Scenario scenario = CreateScenario();
++        Invoice invoice = CreateInvoice(1000m);
++        BankTransaction bankTransaction = CreateBankTransaction(1000m);
++        scenario.Invoices.InvoiceToReturn = invoice;
++        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
++        scenario.UnitOfWork.ExceptionToThrow = new ConcurrencyConflictException(
++            "The persisted data was modified by another operation.");
++
++        var command = new ConfirmAllocationCommand(
++            invoice.Id,
++            bankTransaction.Id,
++            new Money(300m, Pln));
++
++        Result<ConfirmAllocationResult> result = await scenario.Handler.Handle(
++            command,
++            CancellationToken.None);
++
++        Assert.True(result.IsFailure);
++        Assert.Equal(
++            ReconciliationApplicationErrors.ConcurrencyConflict.Code,
++            result.Error?.Code);
++        Assert.Equal("reconciliation.concurrency_conflict", result.Error?.Code);
++        Assert.Equal(1, scenario.Allocations.AddCallCount);
++        Assert.Equal(1, scenario.UnitOfWork.SaveChangesCallCount);
++        Assert.Equal(
++            new Money(300m, Pln),
++            invoice.AllocatedAmount);
++        Assert.Equal(
++            new Money(300m, Pln),
++            bankTransaction.AllocatedAmount);
++    }
++
+     private static Scenario CreateScenario()
+     {
+         var invoices = new FakeInvoiceRepository();
+@@ -402,10 +437,18 @@ public sealed class ConfirmAllocationHandlerTests
+ 
+         public CancellationToken LastCancellationToken { get; private set; }
+ 
++        public Exception? ExceptionToThrow { get; set; }
++
+         public Task SaveChangesAsync(CancellationToken cancellationToken)
+         {
+             SaveChangesCallCount++;
+             LastCancellationToken = cancellationToken;
++
++            if (ExceptionToThrow is not null)
++            {
++                throw ExceptionToThrow;
++            }
++
+             return Task.CompletedTask;
+         }
+     }

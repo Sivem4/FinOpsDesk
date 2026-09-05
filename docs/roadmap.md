@@ -74,7 +74,16 @@ ConfirmAllocation remains the first persisted write use case. One `SaveChangesAs
 
 ## Phase 2B.2: Optimistic concurrency
 
-Add SQL Server `rowversion` and concurrency-conflict handling for mutable financial records.
+Status: complete.
+
+Add:
+
+- SQL Server `rowversion` shadow properties on `Invoice` and `BankTransaction`;
+- `ConcurrencyConflictException` at the Application `IUnitOfWork` boundary;
+- ConfirmAllocation mapping of that conflict to `Result.Failure`;
+- SQL Server integration coverage for stale-version detection and atomic rollback.
+
+HTTP 409 mapping remains Phase 2B.3 or later. Allocation concurrency and automatic retry are out of scope.
 
 ## Phase 2B.3: First HTTP vertical slice
 
@@ -122,7 +131,8 @@ Implement:
 - atomic financial state updates;
 - reversal with reason;
 - audit entry in the same transaction;
-- optimistic concurrency conflict handling;
+- HTTP mapping of concurrency conflicts;
+- optimistic concurrency for persisted reversal;
 - idempotency for selected commands.
 
 

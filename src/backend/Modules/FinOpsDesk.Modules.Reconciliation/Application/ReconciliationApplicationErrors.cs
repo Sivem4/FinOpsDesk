@@ -13,4 +13,9 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.bank_transaction.not_found",
             "Bank transaction was not found.");
+
+    public static Error ConcurrencyConflict { get; } =
+        new(
+            "reconciliation.concurrency_conflict",
+            "The invoice or bank transaction was modified by another operation.");
 }
