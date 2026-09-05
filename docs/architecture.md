@@ -135,6 +135,10 @@ The effective organization is derived from authenticated server-side membership 
 
 A client-supplied organization identifier is never authoritative.
 
+Entity identifiers such as `InvoiceId`, `BankTransactionId`, and `AllocationId` are globally unique within FinOpsDesk and represent entity identity `OrganizationId` represents tenant ownership and is not part of entity identity.
+
+Persistence operations are nevertheless scoped by `OrganizationId` to enforce tenant isolation. Composite `(OrganizationId, Id)` keys and foreign keys provide database-level defence in depth for tenant-owned relationships.
+
 ## Persistence
 
 The write side uses tracked aggregates and explicit business transaction boundaries.
