@@ -43,5 +43,9 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
             "AllocatedCurrency");
 
         builder.Ignore(bankTransaction => bankTransaction.UnappliedAmount);
+
+        builder.Property<byte[]>("RowVersion")
+            .IsRowVersion()
+            .IsRequired();
     }
 }

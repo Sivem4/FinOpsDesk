@@ -41,5 +41,9 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
             "AllocatedCurrency");
 
         builder.Ignore(invoice => invoice.OutstandingAmount);
+
+        builder.Property<byte[]>("RowVersion")
+            .IsRowVersion()
+            .IsRequired();
     }
 }

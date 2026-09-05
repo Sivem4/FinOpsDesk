@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
+
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
@@ -94,7 +95,15 @@ public sealed class ConfirmAllocationHandler
 
         _allocationRepository.Add(allocation);
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (ConcurrencyConflictException)
+        {
+            return Result<ConfirmAllocationResult>.Failure(
+                ReconciliationApplicationErrors.ConcurrencyConflict);
+        }
 
         return Result<ConfirmAllocationResult>.Success(
             new ConfirmAllocationResult(allocation.Id));

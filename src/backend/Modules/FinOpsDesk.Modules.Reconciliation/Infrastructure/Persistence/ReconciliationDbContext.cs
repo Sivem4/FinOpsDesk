@@ -23,7 +23,16 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
 
     async Task IUnitOfWork.SaveChangesAsync(CancellationToken cancellationToken)
     {
-        await SaveChangesAsync(cancellationToken);
+        try
+        {
+            await SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            throw new ConcurrencyConflictException(
+                "The persisted data was modified by another operation.",
+                exception);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

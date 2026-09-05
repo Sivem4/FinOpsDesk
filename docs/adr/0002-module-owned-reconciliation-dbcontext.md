@@ -50,4 +50,4 @@ Negative:
 - multiple module DbContexts will eventually migrate the same physical database;
 - internal Domain/Application/Infrastructure boundaries inside the module assembly still rely on convention and review.
 
-Optimistic concurrency with SQL Server `rowversion` is reserved for Phase 2B.2.
+Optimistic concurrency with SQL Server `rowversion` is recorded in ADR 0003.

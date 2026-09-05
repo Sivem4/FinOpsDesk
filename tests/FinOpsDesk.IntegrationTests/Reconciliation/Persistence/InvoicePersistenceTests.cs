@@ -41,4 +41,35 @@ public sealed class InvoicePersistenceTests
         Assert.Equal(new Money(300.1250m, PersistenceTestData.Pln), loaded.AllocatedAmount);
         Assert.Equal(new Money(700.1250m, PersistenceTestData.Pln), loaded.OutstandingAmount);
     }
+
+    [Fact]
+    public async Task Updating_invoice_changes_rowversion()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1000m);
+
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        context.Invoices.Add(invoice);
+        await context.SaveChangesAsync();
+
+        byte[] insertedRowVersion = GetRowVersion(context, invoice).ToArray();
+        Assert.NotEmpty(insertedRowVersion);
+
+        invoice.Allocate(new Money(150m, PersistenceTestData.Pln));
+        await context.SaveChangesAsync();
+
+        byte[] updatedRowVersion = GetRowVersion(context, invoice);
+        Assert.NotEmpty(updatedRowVersion);
+        Assert.False(insertedRowVersion.SequenceEqual(updatedRowVersion));
+    }
+
+    private static byte[] GetRowVersion(ReconciliationDbContext context, Invoice invoice)
+    {
+        byte[]? rowVersion = context.Entry(invoice)
+            .Property<byte[]>("RowVersion")
+            .CurrentValue;
+
+        Assert.NotNull(rowVersion);
+        return rowVersion;
+    }
 }
