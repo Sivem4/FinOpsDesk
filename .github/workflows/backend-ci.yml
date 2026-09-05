@@ -20,7 +20,7 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-  FINOPSDESK_TEST_SQLSERVER: Server=localhost,1433;User Id=sa;Password=FinOpsDesk_CI_Sql#2026;TrustServerCertificate=True;Encrypt=True
+  FINOPSDESK_TEST_SQLSERVER: Server=localhost,1433;User Id=sa;Password=FinOpsDesk_CI_TestOnly#2026;TrustServerCertificate=True;Encrypt=True
 
 jobs:
   build-and-test:
@@ -34,7 +34,7 @@ jobs:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: Y
-          MSSQL_SA_PASSWORD: FinOpsDesk_CI_Sql#2026
+          MSSQL_SA_PASSWORD: FinOpsDesk_CI_TestOnly#2026
         ports:
           - 1433:1433
         options: >-
