@@ -29,6 +29,25 @@ Server=(localdb)\mssqllocaldb;Database=FinOpsDesk;Trusted_Connection=True;TrustS
 
 Override the connection string with configuration or environment variables. Do not commit production secrets.
 
+### API authentication
+
+The API validates JWT access tokens. It does not issue them.
+
+`Authentication:JwtBearer` is required before the host will start:
+
+- Production: set `Authority` and `Audience`. The authority's OpenID Connect metadata supplies signing keys. `RequireHttpsMetadata` defaults to `true`. An optional `Issuer` overrides the issuer published by that metadata.
+- Local or test validation without an identity provider: set `Issuer`, `Audience`, and `SigningKey` (at least 32 UTF-8 bytes). Do not set `Authority` in that mode, and do not commit the signing key.
+
+`OrganizationClaimType` defaults to `org_id`. The trusted issuer must place the caller's organization id in that claim. Query strings, route values, bodies, and headers such as `X-Organization-Id` are not tenant selectors.
+
+Example production environment variables:
+
+```text
+Authentication__JwtBearer__Authority=https://login.example.com
+Authentication__JwtBearer__Audience=finopsdesk-api
+Authentication__JwtBearer__OrganizationClaimType=org_id
+```
+
 ### Migrations
 
 Restore the local EF tool, then add a migration with the cmd helper:
