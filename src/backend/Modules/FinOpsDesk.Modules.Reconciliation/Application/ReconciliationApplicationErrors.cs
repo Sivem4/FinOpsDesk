@@ -18,4 +18,9 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.concurrency_conflict",
             "The invoice or bank transaction was modified by another operation.");
+
+    public static Error InvalidInvoicePagination { get; } =
+        new(
+            "reconciliation.invoices.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
 }

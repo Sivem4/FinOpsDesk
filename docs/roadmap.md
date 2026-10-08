@@ -83,9 +83,11 @@ Add:
 - ConfirmAllocation mapping of that conflict to `Result.Failure`;
 - SQL Server integration coverage for stale-version detection and atomic rollback.
 
-HTTP 409 mapping remains Phase 2B.3 or later. Allocation concurrency and automatic retry are out of scope.
+HTTP 409 mapping remains later work, with the allocation workflow in Phase 5. Allocation concurrency and automatic retry are out of scope.
 
 ## Phase 2B.3: First HTTP vertical slice
+
+Status: complete.
 
 First complete HTTP use case:
 
@@ -93,7 +95,16 @@ First complete HTTP use case:
 GET /api/invoices
 ```
 
-It should include a paginated DTO projection, organization scope, HTTP mapping, and integration test.
+Delivered:
+
+- JWT Bearer access-token validation in the API host, without token issuance;
+- separate general authentication and `TenantMember` authorization;
+- production `ICurrentOrganizationContext` from the authenticated organization claim;
+- paginated, organization-scoped invoice list projection;
+- HTTP 200 and invalid-pagination HTTP 400;
+- SQL Server query tests and JWT HTTP integration tests.
+
+ConfirmAllocation over HTTP, HTTP 409, roles, and the browser BFF remain later work. See ADR 0004.
 
 ## Phase 3: Imports and idempotency
 
@@ -158,6 +169,8 @@ Add:
 
 
 ## Phase 7: Authentication, authorization, and tenant isolation
+
+Phase 2B.3 already validates access tokens and requires an organization claim on Reconciliation routes. This phase still adds the browser session and finer authorization.
 
 Add:
 

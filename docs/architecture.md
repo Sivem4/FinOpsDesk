@@ -15,6 +15,7 @@ FinOpsDesk.Api
 FinOpsDesk.SharedKernel
 FinOpsDesk.Modules.Reconciliation
 FinOpsDesk.UnitTests
+FinOpsDesk.IntegrationTests
 FinOpsDesk.ArchitectureTests
 ```
 
@@ -83,6 +84,8 @@ Phase 2B.1 adds the first persistence adapter: module-owned `ReconciliationDbCon
 
 Phase 2B.2 adds SQL Server `rowversion` concurrency tokens as EF Core shadow properties on `Invoice` and `BankTransaction`. `IUnitOfWork.SaveChangesAsync` translates `DbUpdateConcurrencyException` into Application `ConcurrencyConflictException`. `ConfirmAllocationHandler` maps that abstraction to `Result.Failure`. There is no automatic retry; a failed DbContext is discarded with its scope. HTTP 409 mapping remains future work.
 
+Phase 2B.3 adds the first HTTP read slice, `GET /api/invoices`. The API host validates JWT Bearer access tokens and does not issue them. A fallback authorization policy requires an authenticated user. The Reconciliation route group uses a separate `TenantMember` policy: an authenticated user plus a configured organization claim that parses to a non-empty Guid. `/health` stays anonymous. The API host implements `ICurrentOrganizationContext` from that claim. `ListInvoicesHandler` reads the organization once and passes it to `IInvoiceQueries`. The query is an organization-scoped, no-tracking DTO projection with bounded pagination. The invoice endpoint maps invalid pagination to HTTP 400. See ADR 0004.
+
 ## Request flow
 
 A command should follow this conceptual flow:
@@ -124,7 +127,7 @@ The MVP uses shared-database multi-tenancy. Tenant-owned rows share tables and a
 
 The `reconciliation` SQL schema is module ownership of Reconciliation tables, not tenant isolation.
 
-The effective organization is derived from authenticated server-side membership and is applied to:
+The effective organization is the organization claim on the authenticated `ClaimsPrincipal`. The configured token issuer is trusted to issue that claim only for an organization the caller may act within. A client-supplied organization selector is never authoritative. The API host adapts the claim to `ICurrentOrganizationContext`. Application commands and queries receive `OrganizationId` explicitly. That identifier is applied to:
 
 - queries;
 - commands;
@@ -149,7 +152,7 @@ Reconciliation persistence is owned by `ReconciliationDbContext` in the Reconcil
 
 Command repositories load aggregates tracked by the scoped `ReconciliationDbContext`. `ReconciliationDbContext` implements Application `IUnitOfWork`. ConfirmAllocation persists invoice, bank transaction, and allocation changes with one `SaveChangesAsync` call. EF Core/SQL Server supplies the transaction for that single SaveChanges. Explicit `BeginTransaction` is not used for this use case.
 
-The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`.
+The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`. `GET /api/invoices` is the first such query: tenant-scoped, ordered by invoice id, and limited to a page size of 1 through 100.
 
 A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
 
@@ -159,9 +162,11 @@ SQL Server-specific behaviour, including `rowversion`, provider constraints, and
 
 ## Authentication direction
 
-The planned browser architecture is a backend-for-frontend pattern with OpenID Connect.
+The API currently validates JWT Bearer access tokens. It does not issue tokens, refresh tokens, or manage users. The host configures issuer or authority, audience, signing credentials or OpenID Connect metadata, lifetime, and HTTPS metadata. `MapInboundClaims` is disabled. The organization claim type defaults to `org_id`.
 
-The backend acts as the confidential OIDC client and maintains the authenticated browser session in a secure HTTP-only cookie. The React application calls same-origin API endpoints. Mutating cookie-authenticated requests require CSRF protection.
+The planned browser architecture is still a backend-for-frontend pattern with OpenID Connect. That can replace token transport without changing the tenant port: the host still implements `ICurrentOrganizationContext`, and modules still receive `OrganizationId` explicitly.
+
+In that future browser flow, the backend acts as the confidential OIDC client and maintains the authenticated browser session in a secure HTTP-only cookie. The React application calls same-origin API endpoints. Mutating cookie-authenticated requests require CSRF protection.
 
 Future machine-to-machine endpoints may use a separate JWT bearer scheme with narrow scopes.
 

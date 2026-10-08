@@ -3,6 +3,7 @@ using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Queries;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositories;
 
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,8 @@ public static class ReconciliationModule
                     "reconciliation")));
 
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+        services.AddScoped<IInvoiceQueries, InvoiceQueries>();
+        services.AddScoped<ListInvoicesHandler>();
         services.AddScoped<IBankTransactionRepository, BankTransactionRepository>();
         services.AddScoped<IAllocationRepository, AllocationRepository>();
         services.AddScoped<IUnitOfWork>(
