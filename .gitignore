@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# FinOpsDesk local/review artifacts
+*-review.diff
+
 # User-specific files
 *.rsuser
 *.suo
