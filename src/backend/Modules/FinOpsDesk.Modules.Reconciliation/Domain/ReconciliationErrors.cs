@@ -38,4 +38,29 @@ public static class ReconciliationErrors
         new(
             "reconciliation.currency_mismatch",
             "The amount currency must match the aggregate currency.");
+
+    public static Error ImportSourceConflict { get; } =
+        new(
+            "reconciliation.import.source_conflict",
+            "An existing record with this source identity has different business data and was not updated.");
+
+    public static Error ImportBatchNotProcessing { get; } =
+        new(
+            "reconciliation.import.batch_not_processing",
+            "The import batch is not accepting row outcomes.");
+
+    public static Error ImportDataRowAlreadyClassified { get; } =
+        new(
+            "reconciliation.import.data_row_already_classified",
+            "The logical data row has already been classified.");
+
+    public static Error ImportIncompleteClassification { get; } =
+        new(
+            "reconciliation.import.incomplete_classification",
+            "Every logical data row must be classified before the import batch can be completed.");
+
+    public static Error ImportCompletionPrecedesCreation { get; } =
+        new(
+            "reconciliation.import.completion_precedes_creation",
+            "Completion time cannot precede creation time.");
 }

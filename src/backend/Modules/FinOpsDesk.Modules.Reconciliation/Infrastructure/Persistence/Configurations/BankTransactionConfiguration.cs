@@ -44,6 +44,9 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
 
         builder.Ignore(bankTransaction => bankTransaction.UnappliedAmount);
 
+        // Ignored until Phase 3B maps source identity explicitly.
+        builder.Ignore(bankTransaction => bankTransaction.SourceIdentity);
+
         builder.Property<byte[]>("RowVersion")
             .IsRowVersion()
             .IsRequired();

@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -9,6 +10,8 @@ public sealed class BankTransaction
     public BankTransactionId Id { get; }
 
     public OrganizationId OrganizationId { get; }
+
+    public SourceIdentity? SourceIdentity { get; }
 
     public Money Amount { get; }
 
@@ -48,11 +51,46 @@ public sealed class BankTransaction
 
         Id = id;
         OrganizationId = organizationId;
+        SourceIdentity = null;
         Amount = amount;
         BookingDate = bookingDate;
         Reference = NormalizeReference(reference);
 
         AllocatedAmount = Money.Zero(amount.Currency);
+    }
+
+    public BankTransaction(
+        BankTransactionId id,
+        OrganizationId organizationId,
+        Money amount,
+        DateOnly bookingDate,
+        string? reference,
+        SourceIdentity sourceIdentity)
+        : this(
+            id,
+            organizationId,
+            amount,
+            bookingDate,
+            reference)
+    {
+        ArgumentNullException.ThrowIfNull(sourceIdentity);
+
+        SourceIdentity = sourceIdentity;
+    }
+
+    public bool HasEquivalentImportedBusinessData(
+        Money amount,
+        DateOnly bookingDate,
+        string? reference)
+    {
+        ArgumentNullException.ThrowIfNull(amount);
+
+        return Amount == amount
+            && BookingDate == bookingDate
+            && string.Equals(
+                Reference,
+                NormalizeReference(reference),
+                StringComparison.Ordinal);
     }
 
     public Result Allocate(Money amount)

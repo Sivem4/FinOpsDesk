@@ -42,6 +42,9 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
 
         builder.Ignore(invoice => invoice.OutstandingAmount);
 
+        // Ignored until Phase 3B maps source identity explicitly.
+        builder.Ignore(invoice => invoice.SourceIdentity);
+
         builder.Property<byte[]>("RowVersion")
             .IsRowVersion()
             .IsRequired();
