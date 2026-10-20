@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -9,6 +10,8 @@ public sealed class Invoice
     public InvoiceId Id { get; }
 
     public OrganizationId OrganizationId { get; }
+
+    public SourceIdentity? SourceIdentity { get; }
 
     public string InvoiceNumber { get; }
 
@@ -46,10 +49,42 @@ public sealed class Invoice
 
         Id = id;
         OrganizationId = organizationId;
+        SourceIdentity = null;
         InvoiceNumber = invoiceNumber.Trim();
         TotalAmount = totalAmount;
 
         AllocatedAmount = Money.Zero(totalAmount.Currency);
+    }
+
+    public Invoice(
+        InvoiceId id,
+        OrganizationId organizationId,
+        string invoiceNumber,
+        Money totalAmount,
+        SourceIdentity sourceIdentity)
+        : this(
+            id,
+            organizationId,
+            invoiceNumber,
+            totalAmount)
+    {
+        ArgumentNullException.ThrowIfNull(sourceIdentity);
+
+        SourceIdentity = sourceIdentity;
+    }
+
+    public bool HasEquivalentImportedBusinessData(
+        string invoiceNumber,
+        Money totalAmount)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(invoiceNumber);
+        ArgumentNullException.ThrowIfNull(totalAmount);
+
+        return string.Equals(
+                InvoiceNumber,
+                invoiceNumber.Trim(),
+                StringComparison.Ordinal)
+            && TotalAmount == totalAmount;
     }
 
     public Result Allocate(Money amount)
