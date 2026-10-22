@@ -10,7 +10,12 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
 {
     public void Configure(EntityTypeBuilder<BankTransaction> builder)
     {
-        builder.ToTable("BankTransactions");
+        builder.ToTable("BankTransactions", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_BankTransactions_SourceIdentity_NullPair",
+                SourceIdentityPropertyConfiguration.NullPairConstraintSql);
+        });
 
         builder.HasKey(bankTransaction => bankTransaction.Id);
 
@@ -44,8 +49,8 @@ internal sealed class BankTransactionConfiguration : IEntityTypeConfiguration<Ba
 
         builder.Ignore(bankTransaction => bankTransaction.UnappliedAmount);
 
-        // Ignored until Phase 3B maps source identity explicitly.
-        builder.Ignore(bankTransaction => bankTransaction.SourceIdentity);
+        SourceIdentityPropertyConfiguration.Configure(
+            builder.ComplexProperty(bankTransaction => bankTransaction.SourceIdentity));
 
         builder.Property<byte[]>("RowVersion")
             .IsRowVersion()

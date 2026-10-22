@@ -71,10 +71,17 @@ public sealed class SqlServerFixture : IAsyncLifetime
 
     public ReconciliationDbContext CreateContext()
     {
+        return CreateContext(ConnectionString);
+    }
+
+    public ReconciliationDbContext CreateContext(string connectionString)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
         DbContextOptions<ReconciliationDbContext> options =
             new DbContextOptionsBuilder<ReconciliationDbContext>()
                 .UseSqlServer(
-                    ConnectionString,
+                    connectionString,
                     sqlServer => sqlServer.MigrationsHistoryTable(
                         "__EFMigrationsHistory",
                         "reconciliation"))

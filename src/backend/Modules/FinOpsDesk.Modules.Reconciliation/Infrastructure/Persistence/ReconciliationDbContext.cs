@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 
@@ -20,6 +21,8 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
     public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
 
     public DbSet<Allocation> Allocations => Set<Allocation>();
+
+    public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
 
     async Task IUnitOfWork.SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -42,5 +45,6 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new InvoiceConfiguration());
         modelBuilder.ApplyConfiguration(new BankTransactionConfiguration());
         modelBuilder.ApplyConfiguration(new AllocationConfiguration());
+        modelBuilder.ApplyConfiguration(new ImportBatchConfiguration());
     }
 }
