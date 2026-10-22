@@ -10,7 +10,12 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
 {
     public void Configure(EntityTypeBuilder<Invoice> builder)
     {
-        builder.ToTable("Invoices");
+        builder.ToTable("Invoices", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_Invoices_SourceIdentity_NullPair",
+                SourceIdentityPropertyConfiguration.NullPairConstraintSql);
+        });
 
         builder.HasKey(invoice => invoice.Id);
 
@@ -42,8 +47,8 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
 
         builder.Ignore(invoice => invoice.OutstandingAmount);
 
-        // Ignored until Phase 3B maps source identity explicitly.
-        builder.Ignore(invoice => invoice.SourceIdentity);
+        SourceIdentityPropertyConfiguration.Configure(
+            builder.ComplexProperty(invoice => invoice.SourceIdentity));
 
         builder.Property<byte[]>("RowVersion")
             .IsRowVersion()

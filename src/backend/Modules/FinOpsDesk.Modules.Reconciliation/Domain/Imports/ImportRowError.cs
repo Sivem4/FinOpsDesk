@@ -20,6 +20,36 @@ public sealed record ImportRowError
         int? sourceLineNumber = null,
         string? columnName = null)
     {
+        ArgumentNullException.ThrowIfNull(error);
+
+        DataRowIndex = RequireDataRowIndex(dataRowIndex);
+        SourceLineNumber = RequireSourceLineNumber(sourceLineNumber);
+        ErrorCode = error.Code;
+        Message = error.Message;
+        ColumnName = NormalizeColumnName(columnName);
+    }
+
+    // EF Core binds constructor parameters to properties by name.
+    // The public constructor's Error argument does not match a stored column.
+    private ImportRowError(
+        int dataRowIndex,
+        string errorCode,
+        string message,
+        int? sourceLineNumber,
+        string? columnName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(errorCode);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+
+        DataRowIndex = RequireDataRowIndex(dataRowIndex);
+        SourceLineNumber = RequireSourceLineNumber(sourceLineNumber);
+        ErrorCode = errorCode;
+        Message = message;
+        ColumnName = NormalizeColumnName(columnName);
+    }
+
+    private static int RequireDataRowIndex(int dataRowIndex)
+    {
         if (dataRowIndex < 1)
         {
             throw new ArgumentOutOfRangeException(
@@ -27,8 +57,11 @@ public sealed record ImportRowError
                 "Data row index must be at least 1.");
         }
 
-        ArgumentNullException.ThrowIfNull(error);
+        return dataRowIndex;
+    }
 
+    private static int? RequireSourceLineNumber(int? sourceLineNumber)
+    {
         if (sourceLineNumber is < 1)
         {
             throw new ArgumentOutOfRangeException(
@@ -36,11 +69,7 @@ public sealed record ImportRowError
                 "Source line number must be at least 1.");
         }
 
-        DataRowIndex = dataRowIndex;
-        SourceLineNumber = sourceLineNumber;
-        ErrorCode = error.Code;
-        Message = error.Message;
-        ColumnName = NormalizeColumnName(columnName);
+        return sourceLineNumber;
     }
 
     private static string? NormalizeColumnName(string? columnName)

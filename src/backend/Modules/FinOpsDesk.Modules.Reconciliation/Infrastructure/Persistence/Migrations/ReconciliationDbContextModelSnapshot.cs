@@ -133,9 +133,100 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                                 .IsFixedLength();
                         });
 
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "SourceIdentity", "FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction.SourceIdentity#SourceIdentity", b1 =>
+                        {
+                            b1.Property<string>("ExternalId")
+                                .IsRequired()
+                                .HasMaxLength(128)
+                                .HasColumnType("nvarchar(128)")
+                                .HasColumnName("ExternalId")
+                                .UseCollation("Latin1_General_100_BIN2");
+
+                            b1.Property<string>("SourceSystem")
+                                .IsRequired()
+                                .HasMaxLength(64)
+                                .HasColumnType("nvarchar(64)")
+                                .HasColumnName("SourceSystem")
+                                .UseCollation("Latin1_General_100_BIN2");
+                        });
+
                     b.HasKey("Id");
 
-                    b.ToTable("BankTransactions", "reconciliation");
+                    b.ToTable("BankTransactions", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_BankTransactions_SourceIdentity_NullPair", "([SourceSystem] IS NULL AND [ExternalId] IS NULL) OR ([SourceSystem] IS NOT NULL AND [ExternalId] IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Imports.ImportBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AlreadyExistsRows")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("FileHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("char(64)")
+                        .HasColumnName("FileHash")
+                        .IsFixedLength()
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("nvarchar(260)");
+
+                    b.Property<int>("ImportType")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ImportedRows")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("RejectedRows")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSystem")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("SourceSystem")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("TotalRows")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "ImportType", "SourceSystem", "FileHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ImportBatches_OrganizationId_ImportType_SourceSystem_FileHash");
+
+                    b.ToTable("ImportBatches", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_ImportBatches_CompletedAt", "[CompletedAt] >= [CreatedAt]");
+
+                            t.HasCheckConstraint("CK_ImportBatches_Counters", "[TotalRows] >= 1 AND [ImportedRows] >= 0 AND [AlreadyExistsRows] >= 0 AND [RejectedRows] >= 0 AND [TotalRows] = ([ImportedRows] + [AlreadyExistsRows] + [RejectedRows])");
+
+                            t.HasCheckConstraint("CK_ImportBatches_StatusMatchesCounters", "([Status] = 2 AND [RejectedRows] = 0) OR ([Status] = 3 AND ([ImportedRows] + [AlreadyExistsRows]) > 0 AND [RejectedRows] > 0) OR ([Status] = 4 AND [ImportedRows] = 0 AND [AlreadyExistsRows] = 0 AND [RejectedRows] = [TotalRows])");
+
+                            t.HasCheckConstraint("CK_ImportBatches_TerminalStatus", "[Status] IN (2, 3, 4)");
+                        });
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", b =>
@@ -174,6 +265,23 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                                 .IsFixedLength();
                         });
 
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "SourceIdentity", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.SourceIdentity#SourceIdentity", b1 =>
+                        {
+                            b1.Property<string>("ExternalId")
+                                .IsRequired()
+                                .HasMaxLength(128)
+                                .HasColumnType("nvarchar(128)")
+                                .HasColumnName("ExternalId")
+                                .UseCollation("Latin1_General_100_BIN2");
+
+                            b1.Property<string>("SourceSystem")
+                                .IsRequired()
+                                .HasMaxLength(64)
+                                .HasColumnType("nvarchar(64)")
+                                .HasColumnName("SourceSystem")
+                                .UseCollation("Latin1_General_100_BIN2");
+                        });
+
                     b.ComplexProperty(typeof(Dictionary<string, object>), "TotalAmount", "FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice.TotalAmount#Money", b1 =>
                         {
                             b1.IsRequired();
@@ -194,7 +302,10 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.HasKey("Id");
 
-                    b.ToTable("Invoices", "reconciliation");
+                    b.ToTable("Invoices", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_Invoices_SourceIdentity_NullPair", "([SourceSystem] IS NULL AND [ExternalId] IS NULL) OR ([SourceSystem] IS NOT NULL AND [ExternalId] IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
@@ -212,6 +323,56 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Imports.ImportBatch", b =>
+                {
+                    b.OwnsMany("FinOpsDesk.Modules.Reconciliation.Domain.Imports.ImportRowError", "RowErrors", b1 =>
+                        {
+                            b1.Property<Guid>("ImportBatchId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<int>("DataRowIndex")
+                                .HasColumnType("int");
+
+                            b1.Property<string>("ColumnName")
+                                .HasMaxLength(128)
+                                .HasColumnType("nvarchar(128)");
+
+                            b1.Property<string>("ErrorCode")
+                                .IsRequired()
+                                .HasMaxLength(200)
+                                .HasColumnType("nvarchar(200)");
+
+                            b1.Property<string>("Message")
+                                .IsRequired()
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<Guid>("OrganizationId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<int?>("SourceLineNumber")
+                                .HasColumnType("int");
+
+                            b1.HasKey("ImportBatchId", "DataRowIndex")
+                                .HasName("PK_ImportRowErrors");
+
+                            b1.HasIndex("OrganizationId", "ImportBatchId");
+
+                            b1.ToTable("ImportRowErrors", "reconciliation", t =>
+                                {
+                                    t.HasCheckConstraint("CK_ImportRowErrors_DataRowIndex", "[DataRowIndex] >= 1");
+
+                                    t.HasCheckConstraint("CK_ImportRowErrors_SourceLineNumber", "[SourceLineNumber] IS NULL OR [SourceLineNumber] >= 1");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("OrganizationId", "ImportBatchId")
+                                .HasPrincipalKey("OrganizationId", "Id")
+                                .HasConstraintName("FK_ImportRowErrors_ImportBatches_OrganizationId_ImportBatchId");
+                        });
+
+                    b.Navigation("RowErrors");
                 });
 #pragma warning restore 612, 618
         }

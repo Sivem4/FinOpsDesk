@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -19,9 +20,21 @@ internal static class ReconciliationValueConverters
     public static ValueConverter<AllocationId, Guid> AllocationId { get; } =
         new(id => id.Value, value => new AllocationId(value));
 
+    public static ValueConverter<ImportBatchId, Guid> ImportBatchId { get; } =
+        new(id => id.Value, value => new ImportBatchId(value));
+
     public static ValueConverter<OrganizationId, Guid> OrganizationId { get; } =
         new(id => id.Value, value => new OrganizationId(value));
 
     public static ValueConverter<CurrencyCode, string> CurrencyCode { get; } =
         new(code => code.Value, value => new CurrencyCode(value));
+
+    public static ValueConverter<SourceSystem, string> SourceSystem { get; } =
+        new(system => system.Value, value => new SourceSystem(value));
+
+    public static ValueConverter<ExternalId, string> ExternalId { get; } =
+        new(id => id.Value, value => new ExternalId(value));
+
+    public static ValueConverter<FileHash, string> FileHash { get; } =
+        new(hash => hash.Value, value => new FileHash(value));
 }
