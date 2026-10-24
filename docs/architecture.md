@@ -86,6 +86,8 @@ Phase 2B.2 adds SQL Server `rowversion` concurrency tokens as EF Core shadow pro
 
 Phase 2B.3 adds the first HTTP read slice, `GET /api/invoices`. The API host validates JWT Bearer access tokens and does not issue them. A fallback authorization policy requires an authenticated user. The Reconciliation route group uses a separate `TenantMember` policy: an authenticated user plus a configured organization claim that parses to a non-empty Guid. `/health` stays anonymous. The API host implements `ICurrentOrganizationContext` from that claim. `ListInvoicesHandler` reads the organization once and passes it to `IInvoiceQueries`. The query is an organization-scoped, no-tracking DTO projection with bounded pagination. The invoice endpoint maps invalid pagination to HTTP 400. See ADR 0004.
 
+Phase 3C adds synchronous CSV import at `POST /api/imports/invoices` and `POST /api/imports/bank-transactions`. Both require `TenantMember`. The client sends `file` and `sourceSystem`. Organization id comes only from the authenticated claim. A structurally valid file commits one `ImportBatch` with its accepted financial rows and row errors. An exact file-hash replay returns the stored batch. Unique-key collisions retry on a fresh persistence context. The database uniqueness constraints remain the final authority.
+
 ## Request flow
 
 A command should follow this conceptual flow:

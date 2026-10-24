@@ -23,4 +23,34 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.invoices.invalid_pagination",
             "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
+    public static Error ImportFileRequired { get; } =
+        new(
+            "reconciliation.import.file_required",
+            "A CSV file is required.");
+
+    public static Error ImportInvalidSourceSystem { get; } =
+        new(
+            "reconciliation.import.invalid_source_system",
+            "Source system is missing or invalid.");
+
+    public static Error ImportInvalidFile { get; } =
+        new(
+            "reconciliation.import.invalid_file",
+            "The CSV file is empty, malformed, or does not match the expected header.");
+
+    public static Error ImportTooManyRows { get; } =
+        new(
+            "reconciliation.import.too_many_rows",
+            "The CSV file contains more than 2000 data rows.");
+
+    public static Error ImportFileTooLarge { get; } =
+        new(
+            "reconciliation.import.file_too_large",
+            "The CSV file is larger than 2 MiB.");
+
+    public static Error ImportConflictUnresolved { get; } =
+        new(
+            "reconciliation.import.conflict_unresolved",
+            "The import could not be completed because a concurrent import kept changing the same records.");
 }

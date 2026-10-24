@@ -1,3 +1,4 @@
+using FinOpsDesk.Modules.Reconciliation.Presentation.Imports;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Invoices;
 
 using Microsoft.AspNetCore.Builder;
@@ -12,6 +13,7 @@ public static class ReconciliationEndpoints
         ArgumentNullException.ThrowIfNull(group);
 
         group.MapInvoiceEndpoints();
+        group.MapImportEndpoints();
 
         return group;
     }
