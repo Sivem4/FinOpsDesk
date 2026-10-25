@@ -53,4 +53,14 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.import.conflict_unresolved",
             "The import could not be completed because a concurrent import kept changing the same records.");
+
+    public static Error MatchCandidateLimitExceeded { get; } =
+        new(
+            "reconciliation.matches.candidate_limit_exceeded",
+            "Exact matching was not run because the open book exceeds 5000 invoices or 5000 bank transactions.");
+
+    public static Error InconsistentMatchMoney { get; } =
+        new(
+            "reconciliation.matches.inconsistent_money",
+            "Exact matching was not run because stored invoice or bank transaction amounts are inconsistent.");
 }

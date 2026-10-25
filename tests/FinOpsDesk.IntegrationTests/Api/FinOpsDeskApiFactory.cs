@@ -6,11 +6,12 @@ using Microsoft.Extensions.Configuration;
 
 namespace FinOpsDesk.IntegrationTests.Api;
 
-internal sealed class FinOpsDeskApiFactory : WebApplicationFactory<Program>
+internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
 {
     private const string ConnectionStringVariable = "ConnectionStrings__FinOpsDesk";
 
     private readonly string _connectionString;
+    private readonly string? _previousConnectionString;
 
     public FinOpsDeskApiFactory(string connectionString)
     {
@@ -21,7 +22,9 @@ internal sealed class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         // Program reads the connection string while the host is composed.
         // Environment variables are already loaded then and override appsettings.
         // ConfigureAppConfiguration runs later, in time for JWT options but not
-        // for that earlier read.
+        // for that earlier read. Dispose restores the value captured here so a
+        // nested factory does not clear the string an outer factory still needs.
+        _previousConnectionString = Environment.GetEnvironmentVariable(ConnectionStringVariable);
         Environment.SetEnvironmentVariable(ConnectionStringVariable, connectionString);
     }
 
@@ -61,7 +64,7 @@ internal sealed class FinOpsDeskApiFactory : WebApplicationFactory<Program>
 
     protected override void Dispose(bool disposing)
     {
-        Environment.SetEnvironmentVariable(ConnectionStringVariable, null);
         base.Dispose(disposing);
+        Environment.SetEnvironmentVariable(ConnectionStringVariable, _previousConnectionString);
     }
 }
