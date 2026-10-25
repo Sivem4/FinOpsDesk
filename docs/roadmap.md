@@ -121,17 +121,37 @@ Keep imports synchronous while deliberately small. Introduce background processi
 
 ## Phase 4: Deterministic matching
 
-Implement:
+Approved sequence. Phase 4A is the domain contract. Later sub-phases are not implemented.
 
-- normalized references;
-- deterministic rules;
-- weighted score;
-- reason codes;
-- algorithm version;
-- suggestion generation;
-- accept and reject decisions.
+### 4A: Domain Rules & Matching Contract
 
-Do not add AI before the deterministic decision path is observable and testable.
+Status: complete.
+
+Strict `exact-1` reference normalization, exact 1:1 classification, and unit tests. Results are not persisted. See ADR 0005.
+
+### 4B: Exact Matching Engine
+
+Organization-scoped candidate query that calls `ExactMatchRules`. A read-only HTTP API may be included. Candidate limits are decided in this phase.
+
+### 4C: Safe Match Confirmation
+
+Confirm only after reloading current financial state and using `ConfirmAllocationHandler`. Before that endpoint exists:
+
+- remove the tracked invoice mutation when bank allocation fails;
+- cover concurrent allocation of the same invoice to different transactions;
+- define confirmation idempotency.
+
+### 4D: Partial & Multi-Allocation
+
+### 4E: Smart Matching & Explainability
+
+Aggressive reference normalization, weighted scoring, and richer explanations.
+
+### 4F: Exception & Review Workflow
+
+### 4G: Batch Auto-Matching & Hardening
+
+Do not add AI before the deterministic decision path is observable and testable. AI must not confirm allocations.
 
 ## Phase 5: Allocation workflow and audit
 

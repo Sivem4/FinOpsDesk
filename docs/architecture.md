@@ -88,6 +88,10 @@ Phase 2B.3 adds the first HTTP read slice, `GET /api/invoices`. The API host val
 
 Phase 3C adds synchronous CSV import at `POST /api/imports/invoices` and `POST /api/imports/bank-transactions`. Both require `TenantMember`. The client sends `file` and `sourceSystem`. Organization id comes only from the authenticated claim. A structurally valid file commits one `ImportBatch` with its accepted financial rows and row errors. An exact file-hash replay returns the stored batch. Unique-key collisions retry on a fresh persistence context. The database uniqueness constraints remain the final authority.
 
+Phase 4A adds pure exact-match rules in `ExactMatchRules`. The match key is the `exact-1` normalized payment reference, currency, and open balance: invoice outstanding amount against bank-transaction unapplied amount. `InvoiceNumber` is compared with `BankTransaction.Reference`. Normalization trims and applies invariant uppercase; internal spaces and punctuation stay in place. The operation does not load, save, or modify aggregates. Results are not persisted. A snapshot whose organization differs from the organization passed to `Evaluate` throws `ArgumentException` and is not classified. Phase 4B still has to filter by organization in SQL. See ADR 0005.
+
+Phase 4C must confirm a match only after reloading current financial state through `ConfirmAllocationHandler`. Before that workflow is exposed, the handler's in-memory invoice mutation on a failed bank allocation has to be removed or undone, concurrency coverage has to include the same invoice with different transactions, and confirmation needs an idempotency decision. Those changes are outside Phase 4A. `ConfirmAllocationHandler` is unchanged.
+
 ## Request flow
 
 A command should follow this conceptual flow:
