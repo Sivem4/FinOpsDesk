@@ -39,6 +39,21 @@ public static class ReconciliationErrors
             "reconciliation.currency_mismatch",
             "The amount currency must match the aggregate currency.");
 
+    public static Error MatchReferenceMismatch { get; } =
+        new(
+            "reconciliation.match.reference_mismatch",
+            "The invoice number and bank transaction reference are not an exact match.");
+
+    public static Error MatchCurrencyMismatch { get; } =
+        new(
+            "reconciliation.match.currency_mismatch",
+            "The invoice and bank transaction currencies do not match.");
+
+    public static Error MatchStale { get; } =
+        new(
+            "reconciliation.match.stale",
+            "The invoice and bank transaction are no longer an exact open-amount match.");
+
     public static Error ImportSourceConflict { get; } =
         new(
             "reconciliation.import.source_conflict",

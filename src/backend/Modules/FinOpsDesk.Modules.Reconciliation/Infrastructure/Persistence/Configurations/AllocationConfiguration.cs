@@ -34,6 +34,17 @@ internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocat
         builder.Property(allocation => allocation.ConfirmedAt)
             .HasColumnType("datetimeoffset");
 
+        builder.Property(allocation => allocation.IdempotencyKey);
+
+        builder.HasIndex(allocation => new
+        {
+            allocation.OrganizationId,
+            allocation.IdempotencyKey,
+        })
+            .IsUnique()
+            .HasFilter("[IdempotencyKey] IS NOT NULL")
+            .HasDatabaseName("UX_Allocations_OrganizationId_IdempotencyKey");
+
         builder.Property(allocation => allocation.ReversedAt)
             .HasColumnType("datetimeoffset");
 

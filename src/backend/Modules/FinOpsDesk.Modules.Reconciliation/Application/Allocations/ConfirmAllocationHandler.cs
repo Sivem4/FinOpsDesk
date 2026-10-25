@@ -72,17 +72,14 @@ public sealed class ConfirmAllocationHandler
                 ReconciliationApplicationErrors.BankTransactionNotFound);
         }
 
-        Result invoiceAllocation = invoice.Allocate(command.Amount);
-        if (invoiceAllocation.IsFailure)
-        {
-            return Result<ConfirmAllocationResult>.Failure(invoiceAllocation.Error);
-        }
+        Result applied = AllocationConfirmation.Apply(
+            invoice,
+            bankTransaction,
+            command.Amount);
 
-        Result bankTransactionAllocation = bankTransaction.Allocate(command.Amount);
-        if (bankTransactionAllocation.IsFailure)
+        if (applied.IsFailure)
         {
-            return Result<ConfirmAllocationResult>.Failure(
-                bankTransactionAllocation.Error);
+            return Result<ConfirmAllocationResult>.Failure(applied.Error);
         }
 
         var allocation = new Allocation(

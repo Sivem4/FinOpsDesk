@@ -35,6 +35,9 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<DateTimeOffset>("ConfirmedAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<Guid?>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid>("InvoiceId")
                         .HasColumnType("uniqueidentifier");
 
@@ -71,6 +74,11 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.HasKey("Id");
 
                     b.HasIndex("OrganizationId", "BankTransactionId");
+
+                    b.HasIndex("OrganizationId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasFilter("[IdempotencyKey] IS NOT NULL")
+                        .HasDatabaseName("UX_Allocations_OrganizationId_IdempotencyKey");
 
                     b.HasIndex("OrganizationId", "InvoiceId");
 

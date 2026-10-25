@@ -93,7 +93,7 @@ public sealed class BankTransaction
                 StringComparison.Ordinal);
     }
 
-    public Result Allocate(Money amount)
+    public Result CanAllocate(Money amount)
     {
         ArgumentNullException.ThrowIfNull(amount);
 
@@ -113,6 +113,18 @@ public sealed class BankTransaction
         {
             return Result.Failure(
                 ReconciliationErrors.BankTransactionAllocationExceedsUnapplied);
+        }
+
+        return Result.Success();
+    }
+
+    public Result Allocate(Money amount)
+    {
+        Result canAllocate = CanAllocate(amount);
+
+        if (canAllocate.IsFailure)
+        {
+            return canAllocate;
         }
 
         AllocatedAmount = AllocatedAmount.Add(amount);

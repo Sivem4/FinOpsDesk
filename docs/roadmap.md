@@ -121,7 +121,7 @@ Keep imports synchronous while deliberately small. Introduce background processi
 
 ## Phase 4: Deterministic matching
 
-Approved sequence. Phase 4A is complete. Phase 4B is implemented, pending review. Phases 4C through 4G are not implemented.
+Approved sequence. Phases 4A and 4B are complete. Phase 4C is implemented, pending final review. Phases 4D through 4G are not implemented.
 
 ### 4A: Domain Rules & Matching Contract
 
@@ -137,11 +137,9 @@ Status: complete.
 
 ### 4C: Safe Match Confirmation
 
-Confirm only after reloading current financial state and using `ConfirmAllocationHandler`. Before that endpoint exists:
+Status: complete.
 
-- remove the tracked invoice mutation when bank allocation fails;
-- cover concurrent allocation of the same invoice to different transactions;
-- define confirmation idempotency.
+`POST /api/matches/confirm` confirms one named invoice and bank transaction for the authenticated organization. The amount is the shared current open amount. The pair must still match on `exact-1` reference, currency, and positive open amount. The match query is not an authorization token, and competing rows are not locked. A required `Idempotency-Key` UUID is stored on the allocation and enforced by `UX_Allocations_OrganizationId_IdempotencyKey`. See ADR 0006.
 
 ### 4D: Partial & Multi-Allocation
 
@@ -164,9 +162,9 @@ Implement:
 - atomic financial state updates;
 - reversal with reason;
 - audit entry in the same transaction;
-- HTTP mapping of concurrency conflicts;
+- HTTP mapping of concurrency conflicts for commands other than exact-match confirmation;
 - optimistic concurrency for persisted reversal;
-- idempotency for selected commands.
+- idempotency for commands other than exact-match confirmation.
 
 
 

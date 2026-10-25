@@ -5,6 +5,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
@@ -36,6 +37,12 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
                 "The persisted data was modified by another operation.",
                 exception);
         }
+        catch (DbUpdateException exception) when (IsUniqueViolation(exception))
+        {
+            throw new UniqueConstraintConflictException(
+                "A unique constraint rejected the commit.",
+                exception);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -46,5 +53,18 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new BankTransactionConfiguration());
         modelBuilder.ApplyConfiguration(new AllocationConfiguration());
         modelBuilder.ApplyConfiguration(new ImportBatchConfiguration());
+    }
+
+    private static bool IsUniqueViolation(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqlException sqlException)
+            {
+                return sqlException.Number is 2601 or 2627;
+            }
+        }
+
+        return false;
     }
 }
