@@ -88,9 +88,17 @@ Phase 2B.3 adds the first HTTP read slice, `GET /api/invoices`. The API host val
 
 Phase 3C adds synchronous CSV import at `POST /api/imports/invoices` and `POST /api/imports/bank-transactions`. Both require `TenantMember`. The client sends `file` and `sourceSystem`. Organization id comes only from the authenticated claim. A structurally valid file commits one `ImportBatch` with its accepted financial rows and row errors. An exact file-hash replay returns the stored batch. Unique-key collisions retry on a fresh persistence context. The database uniqueness constraints remain the final authority.
 
-Phase 4A adds pure exact-match rules in `ExactMatchRules`. The match key is the `exact-1` normalized payment reference, currency, and open balance: invoice outstanding amount against bank-transaction unapplied amount. `InvoiceNumber` is compared with `BankTransaction.Reference`. Normalization trims and applies invariant uppercase; internal spaces and punctuation stay in place. The operation does not load, save, or modify aggregates. Results are not persisted. A snapshot whose organization differs from the organization passed to `Evaluate` throws `ArgumentException` and is not classified. Phase 4B still has to filter by organization in SQL. See ADR 0005.
+Phase 4A adds pure exact-match rules in `ExactMatchRules`. The match key is the `exact-1` normalized payment reference, currency, and open balance: invoice outstanding amount against bank-transaction unapplied amount. `InvoiceNumber` is compared with `BankTransaction.Reference`. Normalization trims and applies invariant uppercase; internal spaces and punctuation stay in place. The operation does not load, save, or modify aggregates. Results are not persisted. A snapshot whose organization differs from the organization passed to `Evaluate` throws `ArgumentException` and is not classified. See ADR 0005.
 
-Phase 4C must confirm a match only after reloading current financial state through `ConfirmAllocationHandler`. Before that workflow is exposed, the handler's in-memory invoice mutation on a failed bank allocation has to be removed or undone, concurrency coverage has to include the same invoice with different transactions, and confirmation needs an idempotency decision. Those changes are outside Phase 4A. `ConfirmAllocationHandler` is unchanged.
+Phase 4B adds read-only `GET /api/matches` on the existing `TenantMember` route group. `GetExactMatchesHandler` reads `OrganizationId` from `ICurrentOrganizationContext` and loads candidates through `IExactMatchCandidateQueries`. Each statement filters `OrganizationId`. The integrity checks are no-tracking EF queries. The candidate reads are scalar SQL projections, and the currency column is selected as text so a non-letter `char(3)` value can be rejected before a snapshot is built. Open invoices are rows whose `TotalAmount` exceeds `AllocatedAmount`. Open bank transactions are rows whose `Amount` exceeds `AllocatedAmount`. Null and blank references stay in that set; `ExactMatchRules` classifies them. The handler then calls `ExactMatchRules.Evaluate` and maps the result to HTTP DTOs. The endpoint does not save, allocate, or persist suggestions.
+
+The open book is capped at 5,000 invoices and 5,000 bank transactions per organization (`ExactMatchCandidateLimits.MaxPerSide`). The query reads at most one extra row on each side, ordered by id. When either side is larger, the handler returns `reconciliation.matches.candidate_limit_exceeded` and the endpoint responds with HTTP 409. A truncated set is not matched. The limit is not a request parameter. The endpoint is not paginated, because a page could hide an ambiguous counterpart.
+
+Before the candidate reads, each table is checked with an organization-scoped `EXISTS`. A row fails that check when its original amount is less than or equal to zero, its allocated amount is negative, its allocated amount exceeds the original amount, or its original and allocated currency codes differ. Invoice columns are `TotalAmount`, `TotalCurrency`, `AllocatedAmount`, and `AllocatedCurrency`. Bank-transaction columns are `Amount`, `Currency`, `AllocatedAmount`, and `AllocatedCurrency`. One violating row fails the request with `reconciliation.matches.inconsistent_money` and HTTP 500, and the handler does not call `ExactMatchRules.Evaluate`. The check does not scan allocation history and does not repair rows. Currency equality on the same row is this stored-money invariant. Comparing an invoice with a bank transaction stays inside `exact-1`. Those currency columns are non-null `char(3)` and have no check that the value is three letters. A projected code that is not three letters fails the same inconsistent-money result when the snapshots are built, before `Evaluate`.
+
+Those statements are separate reads. Phase 4B does not open a transaction and does not set an isolation level, so the statements are not one transaction-wide snapshot. SQL Server's default for such a statement is read committed. Locking read committed releases shared locks as each statement reads. Read committed snapshot, when a database has that option on, still versions each statement separately. Holding one view across both statements requires snapshot isolation and the database option that allows it. Migrations do not set `READ_COMMITTED_SNAPSHOT` or `ALLOW_SNAPSHOT_ISOLATION`. The test setup creates a database and does not alter those options, so the test database keeps the server model database's settings. Production database options are not defined in this repository. The invoice read and the bank-transaction read can observe different committed states. The response can be stale as soon as it is produced. It is advisory. The integrity `EXISTS` queries can use the `(OrganizationId, Id)` index and then look up amount columns. No extra index is added for this read. On a clean organization the request runs two existence checks and two bounded candidate queries.
+
+Phase 4C must confirm a match only after reloading current financial state through `ConfirmAllocationHandler`. The `GET /api/matches` result is not an authorization to allocate. Before that workflow is exposed, the handler's in-memory invoice mutation on a failed bank allocation has to be removed or undone, concurrency coverage has to include the same invoice with different transactions, and confirmation needs an idempotency decision. Those changes are outside Phase 4B. `ConfirmAllocationHandler` is unchanged.
 
 ## Request flow
 
@@ -119,6 +127,8 @@ HTTP endpoint
   -> paginated response
 ```
 
+`GET /api/matches` uses the same authorization and organization path. Its response is the advisory exact-match result for the open book, bounded by the fixed candidate limit.
+
 ## Data consistency
 
 A transaction boundary follows one business operation.
@@ -126,6 +136,8 @@ A transaction boundary follows one business operation.
 Confirming an allocation must update the invoice financial state, bank transaction financial state, allocation record, relevant suggestion state, and audit record atomically.
 
 Confirmed financial operations are reversed rather than deleted.
+
+`GET /api/matches` does not open a transaction or request an isolation level. Invoice candidates and bank-transaction candidates are separate statements, so they are not one transaction-wide snapshot. Locking read committed releases shared locks as each statement reads. A database with read committed snapshot enabled still gives each statement its own versioned view. Phase 4B does not request snapshot isolation. Migrations and the test database setup do not enable `READ_COMMITTED_SNAPSHOT` or `ALLOW_SNAPSHOT_ISOLATION`, and production database options are not defined in this repository. The advisory result can be stale as soon as it is returned. Phase 4C reloads both aggregates before allocating.
 
 ## Multi-tenancy
 
@@ -158,7 +170,7 @@ Reconciliation persistence is owned by `ReconciliationDbContext` in the Reconcil
 
 Command repositories load aggregates tracked by the scoped `ReconciliationDbContext`. `ReconciliationDbContext` implements Application `IUnitOfWork`. ConfirmAllocation persists invoice, bank transaction, and allocation changes with one `SaveChangesAsync` call. EF Core/SQL Server supplies the transaction for that single SaveChanges. Explicit `BeginTransaction` is not used for this use case.
 
-The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`. `GET /api/invoices` is the first such query: tenant-scoped, ordered by invoice id, and limited to a page size of 1 through 100.
+The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`. `GET /api/invoices` is the first such query: tenant-scoped, ordered by invoice id, and limited to a page size of 1 through 100. `GET /api/matches` reads open invoices and open bank transactions for the authenticated organization. Its integrity checks are no-tracking EF queries. Its candidate rows are scalar SQL projections of the stored amount and currency columns, capped at 5,000 rows on each side. Those candidate rows are not tracked.
 
 A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
 

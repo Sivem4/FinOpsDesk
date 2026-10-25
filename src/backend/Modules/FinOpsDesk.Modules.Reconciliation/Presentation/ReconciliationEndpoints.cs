@@ -1,5 +1,6 @@
 using FinOpsDesk.Modules.Reconciliation.Presentation.Imports;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Invoices;
+using FinOpsDesk.Modules.Reconciliation.Presentation.Matching;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
@@ -14,6 +15,7 @@ public static class ReconciliationEndpoints
 
         group.MapInvoiceEndpoints();
         group.MapImportEndpoints();
+        group.MapMatchEndpoints();
 
         return group;
     }

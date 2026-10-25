@@ -121,7 +121,7 @@ Keep imports synchronous while deliberately small. Introduce background processi
 
 ## Phase 4: Deterministic matching
 
-Approved sequence. Phase 4A is the domain contract. Later sub-phases are not implemented.
+Approved sequence. Phase 4A is complete. Phase 4B is implemented, pending review. Phases 4C through 4G are not implemented.
 
 ### 4A: Domain Rules & Matching Contract
 
@@ -131,7 +131,9 @@ Strict `exact-1` reference normalization, exact 1:1 classification, and unit tes
 
 ### 4B: Exact Matching Engine
 
-Organization-scoped candidate query that calls `ExactMatchRules`. A read-only HTTP API may be included. Candidate limits are decided in this phase.
+Status: complete.
+
+`GET /api/matches` returns advisory `exact-1` results for the authenticated organization's open invoices and open bank transactions. Each side is limited to 5,000 open rows. A larger open book returns HTTP 409 `reconciliation.matches.candidate_limit_exceeded` and does not match a partial set. Stored amounts that break the invoice or bank-transaction money invariants return HTTP 500 `reconciliation.matches.inconsistent_money`. Results are not persisted. Confirmation remains Phase 4C.
 
 ### 4C: Safe Match Confirmation
 
