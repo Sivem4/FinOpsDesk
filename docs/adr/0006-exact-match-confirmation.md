@@ -43,7 +43,7 @@ Rejected for this phase. Uniqueness is a predicate over every eligible competito
 
 ### Accepting a client amount on this route
 
-Rejected. That would turn exact confirmation into partial allocation. Partial and multi-allocation remain Phase 4D. `ConfirmAllocationHandler` keeps its amount argument for that later work.
+Rejected. That would turn exact confirmation into partial allocation. Explicit-amount allocation is `POST /api/allocations`, recorded in ADR 0007. `ConfirmAllocationHandler` keeps its amount argument and is not an HTTP command.
 
 ### Undoing a failed bank allocation with `ReverseAllocation`
 
@@ -65,7 +65,7 @@ Positive:
 - a lost HTTP response can be retried without a second allocation;
 - the same key in another organization is a different operation;
 - balance races still fail the whole `SaveChanges`, including the allocation insert;
-- partial allocation is not exposed by this endpoint.
+- partial allocation is not exposed by this endpoint. Explicit-amount allocation is the separate route `POST /api/allocations`, recorded in ADR 0007.
 
 Negative:
 

@@ -1,3 +1,4 @@
+using FinOpsDesk.Modules.Reconciliation.Presentation.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Imports;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Matching;
@@ -16,6 +17,7 @@ public static class ReconciliationEndpoints
         group.MapInvoiceEndpoints();
         group.MapImportEndpoints();
         group.MapMatchEndpoints();
+        group.MapAllocationEndpoints();
 
         return group;
     }

@@ -13,6 +13,9 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CsvHelper" Version="33.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+    <!-- OpenApi 10.0.9 pulls Microsoft.OpenApi 2.0.0, which NuGet audit rejects. The host already pins 2.10.0. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
     <!-- SqlClient 6.1.6 requests Pkcs 9.0.11. No current SqlClient release depends on the patched 9.0.21 build. -->
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.21" />

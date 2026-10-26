@@ -94,7 +94,11 @@ public sealed class ConfirmExactMatchHandler
 
         if (amount.IsFailure)
         {
-            return Result<ConfirmExactMatchResponse>.Failure(amount.Error);
+            return await FailOrReplayAsync(
+                amount.Error,
+                command,
+                organizationId,
+                cancellationToken);
         }
 
         Result applied = AllocationConfirmation.Apply(
@@ -104,7 +108,11 @@ public sealed class ConfirmExactMatchHandler
 
         if (applied.IsFailure)
         {
-            return Result<ConfirmExactMatchResponse>.Failure(applied.Error);
+            return await FailOrReplayAsync(
+                applied.Error,
+                command,
+                organizationId,
+                cancellationToken);
         }
 
         var allocation = new Allocation(
@@ -114,7 +122,8 @@ public sealed class ConfirmExactMatchHandler
             bankTransaction.Id,
             amount.Value,
             _timeProvider.GetUtcNow(),
-            command.IdempotencyKey);
+            command.IdempotencyKey,
+            AllocationIdempotencyOperation.ExactMatch);
 
         _allocationRepository.Add(allocation);
 
@@ -135,6 +144,30 @@ public sealed class ConfirmExactMatchHandler
                 bankTransaction.Id,
                 amount.Value,
                 replayed: false));
+    }
+
+    private async Task<Result<ConfirmExactMatchResponse>> FailOrReplayAsync(
+        Error error,
+        ConfirmExactMatchCommand command,
+        OrganizationId organizationId,
+        CancellationToken cancellationToken)
+    {
+        if (!IdempotencyBalanceConflict.IsPossibleLostRace(error))
+        {
+            return Result<ConfirmExactMatchResponse>.Failure(error);
+        }
+
+        ConfirmedAllocationRecord? committed = await _idempotencyLookup.FindAsync(
+            organizationId,
+            command.IdempotencyKey,
+            cancellationToken);
+
+        if (committed is null)
+        {
+            return Result<ConfirmExactMatchResponse>.Failure(error);
+        }
+
+        return Classify(committed, command);
     }
 
     private async Task<Result<ConfirmExactMatchResponse>> RecoverAsync(
@@ -160,7 +193,8 @@ public sealed class ConfirmExactMatchHandler
         ConfirmedAllocationRecord existing,
         ConfirmExactMatchCommand command)
     {
-        if (existing.InvoiceId != command.InvoiceId
+        if (existing.IdempotencyOperation != AllocationIdempotencyOperation.ExactMatch
+            || existing.InvoiceId != command.InvoiceId
             || existing.BankTransactionId != command.BankTransactionId)
         {
             return Result<ConfirmExactMatchResponse>.Failure(

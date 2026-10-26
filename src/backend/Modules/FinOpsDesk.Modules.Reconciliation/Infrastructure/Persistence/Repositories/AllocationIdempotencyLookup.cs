@@ -53,6 +53,7 @@ internal sealed class AllocationIdempotencyLookup : IAllocationIdempotencyLookup
             allocation.Id,
             allocation.InvoiceId,
             allocation.BankTransactionId,
-            allocation.Amount);
+            allocation.Amount,
+            allocation.IdempotencyOperation);
     }
 }

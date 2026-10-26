@@ -24,6 +24,8 @@ public sealed class Allocation
 
     public Guid? IdempotencyKey { get; }
 
+    public AllocationIdempotencyOperation? IdempotencyOperation { get; }
+
     public DateTimeOffset? ReversedAt { get; private set; }
 
     public string? ReversalReason { get; private set; }
@@ -42,7 +44,8 @@ public sealed class Allocation
         BankTransactionId bankTransactionId,
         Money amount,
         DateTimeOffset confirmedAt,
-        Guid? idempotencyKey = null)
+        Guid? idempotencyKey = null,
+        AllocationIdempotencyOperation? idempotencyOperation = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(organizationId);
@@ -71,6 +74,23 @@ public sealed class Allocation
                 nameof(idempotencyKey));
         }
 
+        if (idempotencyKey is null)
+        {
+            if (idempotencyOperation is not null)
+            {
+                throw new ArgumentException(
+                    "An idempotency operation requires an idempotency key.",
+                    nameof(idempotencyOperation));
+            }
+        }
+        else if (idempotencyOperation is null
+            || !Enum.IsDefined(idempotencyOperation.Value))
+        {
+            throw new ArgumentException(
+                "An idempotency key requires a valid idempotency operation.",
+                nameof(idempotencyOperation));
+        }
+
         Id = id;
         OrganizationId = organizationId;
         InvoiceId = invoiceId;
@@ -78,6 +98,7 @@ public sealed class Allocation
         Amount = amount;
         ConfirmedAt = confirmedAt;
         IdempotencyKey = idempotencyKey;
+        IdempotencyOperation = idempotencyOperation;
         Status = AllocationStatus.Confirmed;
     }
 

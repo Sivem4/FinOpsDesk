@@ -52,6 +52,7 @@ public sealed class ConfirmExactMatchHandlerTests
         Assert.Equal(cancellationToken, scenario.UnitOfWork.LastCancellationToken);
         Allocation added = Assert.IsType<Allocation>(scenario.Allocations.Added);
         Assert.Equal(IdempotencyKey, added.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.ExactMatch, added.IdempotencyOperation);
         Assert.Equal(new Money(1000m, Pln), added.Amount);
         Assert.Equal(new Money(1000m, Pln), invoice.AllocatedAmount);
         Assert.Equal(new Money(1000m, Pln), bankTransaction.AllocatedAmount);
@@ -69,7 +70,8 @@ public sealed class ConfirmExactMatchHandlerTests
             allocationId,
             invoice.Id,
             bankTransaction.Id,
-            new Money(1000m, Pln));
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
 
         Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
             new ConfirmExactMatchCommand(invoice.Id, bankTransaction.Id, IdempotencyKey),
@@ -93,7 +95,8 @@ public sealed class ConfirmExactMatchHandlerTests
             AllocationId.New(),
             InvoiceId.New(),
             BankTransactionId.New(),
-            new Money(1000m, Pln));
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
 
         Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
             new ConfirmExactMatchCommand(InvoiceId.New(), BankTransactionId.New(), IdempotencyKey),
@@ -120,7 +123,8 @@ public sealed class ConfirmExactMatchHandlerTests
             allocationId,
             invoice.Id,
             bankTransaction.Id,
-            new Money(1000m, Pln));
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
 
         Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
             new ConfirmExactMatchCommand(invoice.Id, bankTransaction.Id, IdempotencyKey),
@@ -183,6 +187,7 @@ public sealed class ConfirmExactMatchHandlerTests
             CancellationToken.None);
 
         Assert.Equal(ReconciliationErrors.MatchStale.Code, result.Error?.Code);
+        Assert.Equal(2, scenario.Lookup.FindCallCount);
         Assert.Equal(new Money(0m, Pln), invoice.AllocatedAmount);
         Assert.Equal(new Money(0m, Pln), bankTransaction.AllocatedAmount);
         Assert.Equal(0, scenario.Allocations.AddCallCount);
@@ -203,6 +208,7 @@ public sealed class ConfirmExactMatchHandlerTests
             CancellationToken.None);
 
         Assert.Equal(ReconciliationErrors.MatchReferenceMismatch.Code, result.Error?.Code);
+        Assert.Equal(1, scenario.Lookup.FindCallCount);
         Assert.Equal(new Money(0m, Pln), invoice.AllocatedAmount);
         Assert.Equal(new Money(0m, Pln), bankTransaction.AllocatedAmount);
         Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
@@ -222,8 +228,93 @@ public sealed class ConfirmExactMatchHandlerTests
             CancellationToken.None);
 
         Assert.Equal(ReconciliationErrors.MatchCurrencyMismatch.Code, result.Error?.Code);
+        Assert.Equal(1, scenario.Lookup.FindCallCount);
         Assert.Equal(new Money(0m, Pln), invoice.AllocatedAmount);
         Assert.Equal(new Money(0m, Eur), bankTransaction.AllocatedAmount);
+        Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_replay_when_the_same_key_commits_before_validation()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m, "INV-001", Pln);
+        BankTransaction bankTransaction = CreateBankTransaction(1000m, "INV-001", Pln);
+        Assert.True(invoice.Allocate(new Money(1000m, Pln)).IsSuccess);
+        Assert.True(bankTransaction.Allocate(new Money(1000m, Pln)).IsSuccess);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+        var allocationId = AllocationId.New();
+        scenario.Lookup.RecordAfterSave = new ConfirmedAllocationRecord(
+            allocationId,
+            invoice.Id,
+            bankTransaction.Id,
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoice.Id, bankTransaction.Id, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Value);
+        Assert.True(result.Value.Replayed);
+        Assert.Equal(allocationId.Value, result.Value.AllocationId);
+        Assert.Equal(1000m, result.Value.Amount.Amount);
+        Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
+        Assert.Equal(0, scenario.Allocations.AddCallCount);
+        Assert.Equal(2, scenario.Lookup.FindCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_conflict_when_a_different_operation_commits_before_validation()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m, "INV-001", Pln);
+        BankTransaction bankTransaction = CreateBankTransaction(1000m, "INV-001", Pln);
+        Assert.True(invoice.Allocate(new Money(1000m, Pln)).IsSuccess);
+        Assert.True(bankTransaction.Allocate(new Money(1000m, Pln)).IsSuccess);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+        scenario.Lookup.RecordAfterSave = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoice.Id,
+            bankTransaction.Id,
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExplicitAmount);
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoice.Id, bankTransaction.Id, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.IdempotencyPayloadConflict.Code,
+            result.Error?.Code);
+        Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
+        Assert.Equal(2, scenario.Lookup.FindCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_an_explicit_amount_key_for_the_same_pair()
+    {
+        Scenario scenario = CreateScenario();
+        InvoiceId invoiceId = InvoiceId.New();
+        BankTransactionId bankTransactionId = BankTransactionId.New();
+        scenario.Lookup.Record = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoiceId,
+            bankTransactionId,
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExplicitAmount);
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoiceId, bankTransactionId, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.IdempotencyPayloadConflict.Code,
+            result.Error?.Code);
+        Assert.Equal(0, scenario.Invoices.GetByIdCallCount);
         Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
     }
 
