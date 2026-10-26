@@ -64,6 +64,11 @@ public static class ReconciliationApplicationErrors
             "reconciliation.matches.inconsistent_money",
             "Exact matching was not run because stored invoice or bank transaction amounts are inconsistent.");
 
+    public static Error SmartMatchUnsupportedQuery { get; } =
+        new(
+            "reconciliation.matches.smart.unsupported_query",
+            "Smart matching does not accept query parameters.");
+
     public static Error IdempotencyKeyRequired { get; } =
         new(
             "reconciliation.confirmation.idempotency_key_required",

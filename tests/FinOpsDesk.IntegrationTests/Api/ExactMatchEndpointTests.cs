@@ -204,7 +204,9 @@ public sealed class ExactMatchEndpointTests : IDisposable
         Assert.Equal(
             ReconciliationApplicationErrors.MatchCandidateLimitExceeded.Code,
             root.GetProperty("code").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("detail").GetString()));
+        Assert.Equal(
+            ReconciliationApplicationErrors.MatchCandidateLimitExceeded.Message,
+            root.GetProperty("detail").GetString());
         Assert.False(root.TryGetProperty("exactMatches", out _));
         Assert.DoesNotContain("INV-LIMIT", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("42.5", body, StringComparison.Ordinal);
@@ -256,7 +258,9 @@ public sealed class ExactMatchEndpointTests : IDisposable
         Assert.Equal(
             ReconciliationApplicationErrors.InconsistentMatchMoney.Code,
             root.GetProperty("code").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("detail").GetString()));
+        Assert.Equal(
+            ReconciliationApplicationErrors.InconsistentMatchMoney.Message,
+            root.GetProperty("detail").GetString());
         Assert.False(root.TryGetProperty("exactMatches", out _));
         Assert.False(root.TryGetProperty("exception", out _));
         Assert.DoesNotContain("CORRUPT-ROW", body, StringComparison.OrdinalIgnoreCase);
