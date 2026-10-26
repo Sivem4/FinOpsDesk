@@ -22,6 +22,8 @@ public sealed class Allocation
 
     public DateTimeOffset ConfirmedAt { get; }
 
+    public Guid? IdempotencyKey { get; }
+
     public DateTimeOffset? ReversedAt { get; private set; }
 
     public string? ReversalReason { get; private set; }
@@ -39,7 +41,8 @@ public sealed class Allocation
         InvoiceId invoiceId,
         BankTransactionId bankTransactionId,
         Money amount,
-        DateTimeOffset confirmedAt)
+        DateTimeOffset confirmedAt,
+        Guid? idempotencyKey = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(organizationId);
@@ -61,12 +64,20 @@ public sealed class Allocation
                 "Confirmation time cannot be the default value.");
         }
 
+        if (idempotencyKey == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Idempotency key cannot be empty.",
+                nameof(idempotencyKey));
+        }
+
         Id = id;
         OrganizationId = organizationId;
         InvoiceId = invoiceId;
         BankTransactionId = bankTransactionId;
         Amount = amount;
         ConfirmedAt = confirmedAt;
+        IdempotencyKey = idempotencyKey;
         Status = AllocationStatus.Confirmed;
     }
 

@@ -64,6 +64,7 @@ public sealed class ConfirmAllocationHandlerTests
         Assert.Equal(bankTransaction.Id, added.BankTransactionId);
         Assert.Equal(amount, added.Amount);
         Assert.Equal(ConfirmedAt, added.ConfirmedAt);
+        Assert.Null(added.IdempotencyKey);
         Assert.Equal(AllocationStatus.Confirmed, added.Status);
 
         Assert.Equal(1, scenario.UnitOfWork.SaveChangesCallCount);
@@ -217,7 +218,7 @@ public sealed class ConfirmAllocationHandlerTests
     }
 
     [Fact]
-    public async Task Handle_should_return_bank_transaction_failure_after_invoice_is_mutated_in_memory()
+    public async Task Handle_should_return_bank_transaction_failure_without_mutating_the_invoice()
     {
         Scenario scenario = CreateScenario();
         Invoice invoice = CreateInvoice(1000m);
@@ -239,10 +240,47 @@ public sealed class ConfirmAllocationHandlerTests
             ReconciliationErrors.BankTransactionAllocationExceedsUnapplied.Code,
             result.Error?.Code);
         Assert.Equal(
-            new Money(300m, Pln),
+            new Money(0m, Pln),
             invoice.AllocatedAmount);
         Assert.Equal(
             new Money(0m, Pln),
+            bankTransaction.AllocatedAmount);
+        Assert.Equal(0, scenario.Allocations.AddCallCount);
+        Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_return_bank_currency_mismatch_without_mutating_the_invoice()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m);
+        var bankTransaction = new BankTransaction(
+            BankTransactionId.New(),
+            TestOrganizationId,
+            new Money(1000m, Eur),
+            BookingDate,
+            "INV-001");
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+
+        var command = new ConfirmAllocationCommand(
+            invoice.Id,
+            bankTransaction.Id,
+            new Money(300m, Pln));
+
+        Result<ConfirmAllocationResult> result = await scenario.Handler.Handle(
+            command,
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationErrors.CurrencyMismatch.Code,
+            result.Error?.Code);
+        Assert.Equal(
+            new Money(0m, Pln),
+            invoice.AllocatedAmount);
+        Assert.Equal(
+            new Money(0m, Eur),
             bankTransaction.AllocatedAmount);
         Assert.Equal(0, scenario.Allocations.AddCallCount);
         Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);

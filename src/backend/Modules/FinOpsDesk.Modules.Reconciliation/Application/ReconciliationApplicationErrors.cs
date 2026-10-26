@@ -63,4 +63,24 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.matches.inconsistent_money",
             "Exact matching was not run because stored invoice or bank transaction amounts are inconsistent.");
+
+    public static Error IdempotencyKeyRequired { get; } =
+        new(
+            "reconciliation.confirmation.idempotency_key_required",
+            "An Idempotency-Key header with a UUID is required.");
+
+    public static Error IdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.confirmation.idempotency_key_invalid",
+            "Idempotency-Key must be a non-empty UUID.");
+
+    public static Error ConfirmationInvalidRequest { get; } =
+        new(
+            "reconciliation.confirmation.invalid_request",
+            "The confirmation body must contain only non-empty invoice and bank transaction ids.");
+
+    public static Error IdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.confirmation.idempotency_payload_conflict",
+            "This idempotency key was already used for a different invoice and bank transaction pair.");
 }

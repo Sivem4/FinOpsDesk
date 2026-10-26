@@ -38,6 +38,7 @@ public sealed class AllocationTests
         Assert.Equal(amount, allocation.Amount);
         Assert.Equal(AllocationStatus.Confirmed, allocation.Status);
         Assert.Equal(ConfirmedAt, allocation.ConfirmedAt);
+        Assert.Null(allocation.IdempotencyKey);
         Assert.Null(allocation.ReversedAt);
         Assert.Null(allocation.ReversalReason);
     }
@@ -199,6 +200,37 @@ public sealed class AllocationTests
         Assert.Equal(AllocationStatus.Confirmed, allocation.Status);
         Assert.Null(allocation.ReversedAt);
         Assert.Null(allocation.ReversalReason);
+    }
+
+    [Fact]
+    public void New_allocation_should_keep_a_non_empty_idempotency_key()
+    {
+        Guid idempotencyKey = Guid.NewGuid();
+
+        var allocation = new Allocation(
+            AllocationId.New(),
+            TestOrganizationId,
+            InvoiceId.New(),
+            BankTransactionId.New(),
+            new Money(300m, Pln),
+            ConfirmedAt,
+            idempotencyKey);
+
+        Assert.Equal(idempotencyKey, allocation.IdempotencyKey);
+    }
+
+    [Fact]
+    public void New_allocation_should_reject_an_empty_idempotency_key()
+    {
+        Assert.Throws<ArgumentException>(
+            () => new Allocation(
+                AllocationId.New(),
+                TestOrganizationId,
+                InvoiceId.New(),
+                BankTransactionId.New(),
+                new Money(300m, Pln),
+                ConfirmedAt,
+                Guid.Empty));
     }
 
     private static Allocation CreateAllocation()
