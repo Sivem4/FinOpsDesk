@@ -140,7 +140,7 @@ Status: Complete.
 
 Status: In progress.
 
-Approved sequence. Phase 4A, Phase 4B, Phase 4C, and Phase 4D are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`). Phases 4E through 4G are planned. Overall Phase 4 remains in progress.
+Approved sequence. Phase 4A, Phase 4B, Phase 4C, Phase 4D, and Phase 4E are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`). Phases 4F and 4G are planned. Overall Phase 4 remains in progress.
 
 ### 4A: Domain Rules & Matching Contract
 
@@ -170,9 +170,9 @@ Exact full-open-amount confirmation stays on `POST /api/matches/confirm`. `Confi
 
 ### 4E: Smart Matching & Explainability
 
-Status: Planned.
+Status: Complete.
 
-Additional matching strategies may add more aggressive reference normalization, weighted scoring, and richer explanations. `exact-1` remains the current strategy. A later strategy should be versioned or separate so `exact-1` is not replaced in place.
+`GET /api/matches/smart` returns advisory `smart-1` suggestions for the authenticated organization's open book. It reuses the exact-match candidate query, including the 5,000-row limit and the stored-money checks. Reference signals do not stack. `ReferenceExact` is 70. A qualified reference signal is 60. An equal open amount adds 25. Currency is a hard filter. The suggested amount is the smaller open amount and does not authorize an allocation. `contested` and `exactMatchAmbiguous` are indicators. `coverageLimited` and `truncated` report incomplete candidate generation or output. Scores are points, not probabilities. `exact-1`, `POST /api/matches/confirm`, and `POST /api/allocations` are unchanged. A later change to scoring or normalization must use a new version such as `smart-2`. Review queues and automatic confirmation remain later phases. See ADR 0008.
 
 ### 4F: Exception & Review Workflow
 
@@ -236,7 +236,8 @@ Add:
 - policies;
 - resource-based authorization;
 - cross-organization integration tests;
-- BOLA/IDOR tests.
+- BOLA/IDOR tests;
+- OpenAPI Bearer security metadata for existing `TenantMember` routes, including `GET /api/matches` and `GET /api/matches/smart`. Those routes already enforce `TenantMember` at runtime. The generated document does not yet describe that requirement.
 
 ## Phase 8: Disputes and dashboards
 

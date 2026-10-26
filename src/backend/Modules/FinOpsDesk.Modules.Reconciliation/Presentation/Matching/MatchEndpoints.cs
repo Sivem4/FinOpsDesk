@@ -24,6 +24,22 @@ internal static class MatchEndpoints
         ArgumentNullException.ThrowIfNull(group);
 
         group.MapGet("/matches", GetMatchesAsync);
+        group.MapGet("/matches/smart", GetSmartMatchesAsync)
+            .WithName("GetSmartMatches")
+            .WithSummary("Return advisory smart-1 suggestions for the authenticated organization.")
+            .WithDescription(
+                "Scores are deterministic points, not probabilities. "
+                + "suggestedAmount is advisory and is not an authorized allocation. "
+                + "contested false does not prove uniqueness when coverageLimited is true. "
+                + "truncated true means scored suggestions were omitted. "
+                + "An empty suggestions array with coverageLimited true does not prove that no match exists. "
+                + "Suggestions can be stale before confirmation. Query parameters are not accepted.")
+            .Produces<SmartMatchResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
         group.MapPost("/matches/confirm", ConfirmMatchAsync)
             .Accepts<ConfirmMatchRequest>("application/json");
 
@@ -59,6 +75,48 @@ internal static class MatchEndpoints
 
         throw new InvalidOperationException(
             $"Unexpected match failure '{result.Error.Code}'.");
+    }
+
+    private static async Task<Results<Ok<SmartMatchResponse>, ProblemHttpResult>> GetSmartMatchesAsync(
+        HttpRequest httpRequest,
+        GetSmartMatchesHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (httpRequest.Query.Count > 0)
+        {
+            return Problem(
+                ReconciliationApplicationErrors.SmartMatchUnsupportedQuery,
+                StatusCodes.Status400BadRequest,
+                "Smart matching request is invalid.");
+        }
+
+        Result<SmartMatchResponse> result = await handler.Handle(cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            return TypedResults.Ok(result.Value);
+        }
+
+        if (result.Error.Code == ReconciliationApplicationErrors.MatchCandidateLimitExceeded.Code)
+        {
+            return Problem(
+                result.Error,
+                StatusCodes.Status409Conflict,
+                "Open-book matching limit exceeded.",
+                "Smart matching was not run because the open book exceeds 5000 invoices or 5000 bank transactions.");
+        }
+
+        if (result.Error.Code == ReconciliationApplicationErrors.InconsistentMatchMoney.Code)
+        {
+            return Problem(
+                result.Error,
+                StatusCodes.Status500InternalServerError,
+                "Stored financial amounts are inconsistent.",
+                "Smart matching was not run because stored invoice or bank transaction amounts are inconsistent.");
+        }
+
+        throw new InvalidOperationException(
+            $"Unexpected smart match failure '{result.Error.Code}'.");
     }
 
     private static async Task<Results<JsonHttpResult<ConfirmExactMatchResponse>, ProblemHttpResult>> ConfirmMatchAsync(
@@ -226,10 +284,14 @@ internal static class MatchEndpoints
             $"Unexpected confirmation failure '{error.Code}'.");
     }
 
-    private static ProblemHttpResult Problem(Error error, int statusCode, string title)
+    private static ProblemHttpResult Problem(
+        Error error,
+        int statusCode,
+        string title,
+        string? detail = null)
     {
         return TypedResults.Problem(
-            detail: error.Message,
+            detail: detail ?? error.Message,
             statusCode: statusCode,
             title: title,
             extensions: new Dictionary<string, object?>

@@ -114,6 +114,8 @@ The allocation stores `IdempotencyOperation`: `ExactMatch` is 1 and `ExplicitAmo
 
 After the first idempotency lookup misses, a concurrent commit can still win. A balance failure or a unique-key/`rowversion` failure reads the key again on a new context. A matching fingerprint returns the original allocation. A different fingerprint returns the payload conflict. The second read can also miss while the winner has not committed. That response does not store the key. A retry of the original key and payload, once the winner is visible, returns the original allocation id and does not allocate again. There is no lock and no automatic retry. See ADR 0007.
 
+Phase 4E adds read-only `GET /api/matches/smart` on the same `TenantMember` route group. `GetSmartMatchesHandler` uses the same `IExactMatchCandidateQueries` as exact matching, including the organization filter, the 5,000-row probe, and the stored-money checks. It then calls `SmartMatchRules.Evaluate`. The algorithm version is `smart-1`. A suggestion score is a sum of points. It is not a probability. The winning reference signal is `ReferenceExact` at 70 or one qualified signal at 60. Qualified signals do not stack: token-set equality, then compact form, then a shared numeric identifier of at least six digits. An equal open amount adds 25. A different open amount adds nothing. Currency mismatch produces no suggestion. The suggested amount is the smaller positive open amount and is not an allocation. `GET /api/matches`, `POST /api/matches/confirm`, and `POST /api/allocations` are unchanged. A smart suggestion cannot confirm an allocation. Query parameters are rejected with HTTP 400 `reconciliation.matches.smart.unsupported_query`. The candidate-limit and inconsistent-money codes stay `reconciliation.matches.candidate_limit_exceeded` and `reconciliation.matches.inconsistent_money`. On this route their ProblemDetails text says smart matching was not run. The exact-match route keeps the original text. See ADR 0008.
+
 ## Request flow
 
 A command should follow this conceptual flow:
@@ -141,7 +143,7 @@ HTTP endpoint
   -> paginated response
 ```
 
-`GET /api/matches` uses the same authorization and organization path. Its response is the advisory exact-match result for the open book, bounded by the fixed candidate limit. `POST /api/matches/confirm` uses that same authorization. It reloads the named invoice and bank transaction and confirms only the current exact open amount. `POST /api/allocations` uses that same authorization and confirms one caller-supplied amount. It does not derive the amount from the open balances and it does not require the references to match.
+`GET /api/matches` uses the same authorization and organization path. Its response is the advisory exact-match result for the open book, bounded by the fixed candidate limit. `GET /api/matches/smart` uses that same authorization and the same open-book query. Its response is the advisory `smart-1` ranking. It accepts no query parameters. `POST /api/matches/confirm` uses that same authorization. It reloads the named invoice and bank transaction and confirms only the current exact open amount. `POST /api/allocations` uses that same authorization and confirms one caller-supplied amount. It does not derive the amount from the open balances and it does not require the references to match. None of these reads is an authorization token for a later write.
 
 ## Data consistency
 
@@ -151,7 +153,7 @@ Confirming an allocation must update the invoice financial state, bank transacti
 
 Confirmed financial operations are reversed rather than deleted.
 
-`GET /api/matches` does not open a transaction or request an isolation level. Invoice candidates and bank-transaction candidates are separate statements, so they are not one transaction-wide snapshot. Locking read committed releases shared locks as each statement reads. A database with read committed snapshot enabled still gives each statement its own versioned view. Phase 4B does not request snapshot isolation. Migrations and the test database setup do not enable `READ_COMMITTED_SNAPSHOT` or `ALLOW_SNAPSHOT_ISOLATION`, and production database options are not defined in this repository. The advisory result can be stale as soon as it is returned. Phase 4C reloads both aggregates and checks the current reference, currency, and open amounts before allocating. It does not take a serializable lock over other rows that might share the match key.
+`GET /api/matches` and `GET /api/matches/smart` do not open a transaction or request an isolation level. Invoice candidates and bank-transaction candidates are separate statements, so they are not one transaction-wide snapshot. The smart response can be stale for the same reason as the exact response. Locking read committed releases shared locks as each statement reads. A database with read committed snapshot enabled still gives each statement its own versioned view. Phase 4B does not request snapshot isolation. Migrations and the test database setup do not enable `READ_COMMITTED_SNAPSHOT` or `ALLOW_SNAPSHOT_ISOLATION`, and production database options are not defined in this repository. The advisory result can be stale as soon as it is returned. Phase 4C reloads both aggregates and checks the current reference, currency, and open amounts before allocating. It does not take a serializable lock over other rows that might share the match key.
 
 ## Multi-tenancy
 
@@ -184,7 +186,7 @@ Reconciliation persistence is owned by `ReconciliationDbContext` in the Reconcil
 
 Command repositories load aggregates tracked by the scoped `ReconciliationDbContext`. `ReconciliationDbContext` implements Application `IUnitOfWork`. Confirming an allocation persists invoice, bank transaction, and allocation changes with one `SaveChangesAsync` call. EF Core/SQL Server supplies the transaction for that single SaveChanges. Explicit `BeginTransaction` is not used for this use case. Exact-match confirmation and explicit-amount allocation both store the client idempotency key on that same allocation insert, together with `IdempotencyOperation`. `IAllocationIdempotencyLookup` reads a committed key from a separate context so a failed `SaveChanges` is not queried through the tracked context that just rolled back.
 
-The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`. `GET /api/invoices` is the first such query: tenant-scoped, ordered by invoice id, and limited to a page size of 1 through 100. `GET /api/matches` reads open invoices and open bank transactions for the authenticated organization. Its integrity checks are no-tracking EF queries. Its candidate rows are scalar SQL projections of the stored amount and currency columns, capped at 5,000 rows on each side. Those candidate rows are not tracked.
+The read side uses direct EF Core projections to endpoint-specific DTOs, normally with `AsNoTracking`. `GET /api/invoices` is the first such query: tenant-scoped, ordered by invoice id, and limited to a page size of 1 through 100. `GET /api/matches` and `GET /api/matches/smart` read open invoices and open bank transactions for the authenticated organization through `IExactMatchCandidateQueries`. The integrity checks are no-tracking EF queries. The candidate rows are scalar SQL projections of the stored amount and currency columns, capped at 5,000 rows on each side. Those candidate rows are not tracked. Smart matching does not add a table, a column, or an index.
 
 A generic repository is not planned. A second unit-of-work wrapper over `DbContext` is not planned.
 
@@ -194,7 +196,7 @@ SQL Server-specific behaviour, including `rowversion`, provider constraints, and
 
 ## Authentication direction
 
-The API currently validates JWT Bearer access tokens. It does not issue tokens, refresh tokens, or manage users. The host configures issuer or authority, audience, signing credentials or OpenID Connect metadata, lifetime, and HTTPS metadata. `MapInboundClaims` is disabled. The organization claim type defaults to `org_id`.
+The API currently validates JWT Bearer access tokens. It does not issue tokens, refresh tokens, or manage users. The generated OpenAPI document does not yet include Bearer security metadata for `GET /api/matches` or `GET /api/matches/smart`. Both routes still require `TenantMember` at runtime. Adding that metadata is a follow-up for authentication and API documentation hardening, not a matching change. The host configures issuer or authority, audience, signing credentials or OpenID Connect metadata, lifetime, and HTTPS metadata. `MapInboundClaims` is disabled. The organization claim type defaults to `org_id`.
 
 The planned browser architecture is still a backend-for-frontend pattern with OpenID Connect. That can replace token transport without changing the tenant port: the host still implements `ICurrentOrganizationContext`, and modules still receive `OrganizationId` explicitly.
 
