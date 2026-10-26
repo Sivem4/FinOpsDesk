@@ -82,5 +82,25 @@ public static class ReconciliationApplicationErrors
     public static Error IdempotencyPayloadConflict { get; } =
         new(
             "reconciliation.confirmation.idempotency_payload_conflict",
-            "This idempotency key was already used for a different invoice and bank transaction pair.");
+            "This idempotency key was already used for a different allocation request.");
+
+    public static Error ExplicitAmountInvalid { get; } =
+        new(
+            "reconciliation.allocation.invalid_amount",
+            "The allocation amount must be greater than zero and representable as decimal(19,4) without rounding.");
+
+    public static Error AllocationInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation.invalid_request",
+            "The allocation body must contain non-empty invoice and bank transaction ids and an amount object with a three-letter currency.");
+
+    public static Error AllocationUnsupportedMediaType { get; } =
+        new(
+            "reconciliation.allocation.unsupported_media_type",
+            "The allocation request must use Content-Type application/json.");
+
+    public static Error AllocationRequestTooLarge { get; } =
+        new(
+            "reconciliation.allocation.request_too_large",
+            "The allocation request body must be at most 4096 bytes.");
 }

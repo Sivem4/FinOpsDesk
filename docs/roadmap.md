@@ -89,7 +89,7 @@ Delivered:
 - ConfirmAllocation mapping of that conflict to `Result.Failure`;
 - SQL Server integration coverage for stale-version detection and atomic rollback.
 
-Phase 4C maps `rowversion` and idempotency conflicts to HTTP 409 for `POST /api/matches/confirm`. Other allocation commands, including a persisted reversal, still need their own HTTP conflict mapping in Phase 5. Automatic retry remains out of scope.
+Phase 4C maps `rowversion` and idempotency conflicts to HTTP 409 for `POST /api/matches/confirm`. Phase 4D does the same for `POST /api/allocations`. A persisted reversal still needs its own HTTP conflict mapping in Phase 5. Automatic retry remains out of scope.
 
 ## Phase 2B.3: First HTTP vertical slice
 
@@ -110,7 +110,7 @@ Delivered:
 - HTTP 200 and invalid-pagination HTTP 400;
 - SQL Server query tests and JWT HTTP integration tests.
 
-Exact-match confirmation over HTTP, including HTTP 409 for that endpoint, followed in Phase 4C. Broader manual and partial-allocation HTTP workflows remain Phase 4D and Phase 5. Roles and the browser BFF remain Phase 7. See ADR 0004.
+Exact-match confirmation over HTTP, including HTTP 409 for that endpoint, followed in Phase 4C. Explicit-amount allocation followed in Phase 4D. Persisted reversal, audit, and other manual allocation workflows remain Phase 5. Roles and the browser BFF remain Phase 7. See ADR 0004.
 
 ## Phase 3: Imports and idempotency
 
@@ -140,7 +140,7 @@ Status: Complete.
 
 Status: In progress.
 
-Approved sequence. Phases 4A and 4B are complete. Phase 4C is committed, pending merge. Phases 4D through 4G are planned.
+Approved sequence. Phase 4A, Phase 4B, Phase 4C, and Phase 4D are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`). Phases 4E through 4G are planned. Overall Phase 4 remains in progress.
 
 ### 4A: Domain Rules & Matching Contract
 
@@ -158,13 +158,15 @@ Status: Complete.
 
 Status: Complete.
 
-`POST /api/matches/confirm` confirms one explicitly selected invoice and bank transaction for the authenticated organization. It is not automatic reconciliation. The amount is the full shared current open amount. The pair must still match on `exact-1` reference, currency, and positive open amount. The body accepts only `invoiceId` and `bankTransactionId`. Global uniqueness is not guaranteed, competing rows are not locked, and an explicitly named ambiguous pair can be confirmed. A required `Idempotency-Key` UUID is stored on the allocation and enforced by `UX_Allocations_OrganizationId_IdempotencyKey`. `rowversion` conflicts are returned as HTTP 409. The implementation is committed on `feature/phase-4c-safe-match-confirmation` and is not yet on `main`. See ADR 0006.
+`POST /api/matches/confirm` confirms one explicitly selected invoice and bank transaction for the authenticated organization. It is not automatic reconciliation. The amount is the full shared current open amount. The pair must still match on `exact-1` reference, currency, and positive open amount. The body accepts only `invoiceId` and `bankTransactionId`. Global uniqueness is not guaranteed, competing rows are not locked, and an explicitly named ambiguous pair can be confirmed. A required `Idempotency-Key` UUID is stored on the allocation and enforced by `UX_Allocations_OrganizationId_IdempotencyKey`. `rowversion` conflicts are returned as HTTP 409. The implementation is on `main` (pull request 21, `fb96d4d`). See ADR 0006.
 
 ### 4D: Partial & Multi-Allocation
 
-Status: Planned.
+Status: Complete.
 
-HTTP workflows for partial allocation and for two distinct multi-allocation cases: one invoice paid by multiple bank transactions, and one bank transaction allocated across multiple invoices. Phase 4D tests cover that end-to-end multi-invoice scenario. Exact full-open-amount confirmation stays in Phase 4C. `ConfirmAllocationHandler` remains an internal application command.
+`POST /api/allocations` confirms one explicit amount between one invoice and one bank transaction for the authenticated organization. References do not need to match. Each request is its own atomic commit. One invoice can be paid by several bank transactions, and one bank transaction can be allocated across several invoices, by repeating that request. Those calls are not an atomic batch. There is no batch endpoint and no automatic reconciliation. The amount must be a positive JSON number that fits `decimal(19,4)` without rounding. Idempotency is organization-scoped and operation-aware: exact match is `ExactMatch` and this route is `ExplicitAmount`. See ADR 0007.
+
+Exact full-open-amount confirmation stays on `POST /api/matches/confirm`. `ConfirmAllocationHandler` remains an internal application command. Persisted reversal, immutable audit attribution, and finer authorization are not part of this phase.
 
 ### 4E: Smart Matching & Explainability
 
@@ -186,7 +188,7 @@ Do not add AI before the deterministic decision path is observable and testable.
 
 Status: Planned.
 
-Phase 4C already confirms one exact pair, commits that allocation and both balances atomically, stores an idempotency key for that command, and maps that endpoint's conflicts to HTTP 409. Phase 4D is the planned HTTP scope for partial and multi-allocation.
+Phase 4C confirms one exact pair. Phase 4D confirms one explicit amount at `POST /api/allocations`, including sequential multi-allocation, and maps that endpoint's conflicts to HTTP 409. Neither phase writes an audit record or attributes the change to a user.
 
 This phase covers the remaining allocation lifecycle:
 
@@ -195,7 +197,7 @@ This phase covers the remaining allocation lifecycle:
 - manual allocation workflows that Phase 4D does not cover;
 - persisted confirmation of a `MatchSuggestion`, which remains a domain model only;
 - optimistic concurrency for persisted reversal;
-- idempotency for financial commands other than exact-match confirmation;
+- idempotency for financial commands other than exact-match and explicit-amount confirmation;
 - HTTP conflict mapping for those remaining allocation commands.
 
 ## Phase 6: React operations workspace

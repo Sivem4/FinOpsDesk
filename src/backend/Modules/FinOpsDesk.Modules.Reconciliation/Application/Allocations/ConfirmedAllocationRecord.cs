@@ -9,4 +9,5 @@ public sealed record ConfirmedAllocationRecord(
     AllocationId AllocationId,
     InvoiceId InvoiceId,
     BankTransactionId BankTransactionId,
-    Money Amount);
+    Money Amount,
+    AllocationIdempotencyOperation? IdempotencyOperation);

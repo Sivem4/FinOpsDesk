@@ -38,6 +38,9 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<Guid?>("IdempotencyKey")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<int?>("IdempotencyOperation")
+                        .HasColumnType("int");
+
                     b.Property<Guid>("InvoiceId")
                         .HasColumnType("uniqueidentifier");
 
@@ -77,12 +80,15 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.HasIndex("OrganizationId", "IdempotencyKey")
                         .IsUnique()
-                        .HasFilter("[IdempotencyKey] IS NOT NULL")
-                        .HasDatabaseName("UX_Allocations_OrganizationId_IdempotencyKey");
+                        .HasDatabaseName("UX_Allocations_OrganizationId_IdempotencyKey")
+                        .HasFilter("[IdempotencyKey] IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "InvoiceId");
 
-                    b.ToTable("Allocations", "reconciliation");
+                    b.ToTable("Allocations", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_Allocations_IdempotencyOperation", "([IdempotencyKey] IS NULL AND [IdempotencyOperation] IS NULL) OR ([IdempotencyKey] IS NOT NULL AND [IdempotencyOperation] IS NOT NULL AND [IdempotencyOperation] IN (1, 2))");
+                        });
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", b =>

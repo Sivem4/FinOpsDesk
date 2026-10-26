@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 
 using Microsoft.EntityFrameworkCore;
 
@@ -143,6 +144,35 @@ public sealed class ReconciliationSchemaCatalogTests
         Assert.Equal(
             BinaryCollation,
             await SqlServerCatalog.FindColumnCollationAsync(context, "ImportBatches", "FileHash"));
+    }
+
+    [Fact]
+    public async Task Allocation_idempotency_index_and_operation_check_exist()
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        SqlIndex? index = await SqlServerCatalog.FindIndexAsync(
+            context,
+            "Allocations",
+            "UX_Allocations_OrganizationId_IdempotencyKey");
+
+        Assert.NotNull(index);
+        Assert.True(index.IsUnique);
+        Assert.True(index.HasFilter);
+        Assert.NotNull(index.FilterDefinition);
+        Assert.Contains("IdempotencyKey", index.FilterDefinition, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("IS NOT NULL", index.FilterDefinition, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new[] { "OrganizationId", "IdempotencyKey" }, index.Columns);
+
+        string? definition = await SqlServerCatalog.FindCheckDefinitionAsync(
+            context,
+            "Allocations",
+            AllocationConfiguration.IdempotencyOperationCheckName);
+
+        Assert.False(string.IsNullOrWhiteSpace(definition));
+        Assert.Contains("IdempotencyKey", definition, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("IdempotencyOperation", definition, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("(1)", definition, StringComparison.Ordinal);
+        Assert.Contains("(2)", definition, StringComparison.Ordinal);
     }
 
     private static async Task AssertUniqueIndexAsync(

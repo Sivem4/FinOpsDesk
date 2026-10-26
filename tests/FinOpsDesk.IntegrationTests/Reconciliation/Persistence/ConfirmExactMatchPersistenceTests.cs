@@ -62,6 +62,7 @@ public sealed class ConfirmExactMatchPersistenceTests
 
         Assert.Equal(result.Value.AllocationId, stored.Id.Value);
         Assert.Equal(idempotencyKey, stored.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.ExactMatch, stored.IdempotencyOperation);
         Assert.Equal(new Money(1000m, PersistenceTestData.Pln), stored.Amount);
         Assert.Equal(new Money(1000m, PersistenceTestData.Pln), storedInvoice.AllocatedAmount);
         Assert.Equal(new Money(1000m, PersistenceTestData.Pln), storedBankTransaction.AllocatedAmount);
@@ -658,7 +659,8 @@ public sealed class ConfirmExactMatchPersistenceTests
             bankTransactionId,
             amount,
             ConfirmedAt,
-            idempotencyKey);
+            idempotencyKey,
+            AllocationIdempotencyOperation.ExactMatch);
     }
 
     private static bool IsUniqueViolation(Exception exception)

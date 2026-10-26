@@ -39,6 +39,7 @@ public sealed class AllocationTests
         Assert.Equal(AllocationStatus.Confirmed, allocation.Status);
         Assert.Equal(ConfirmedAt, allocation.ConfirmedAt);
         Assert.Null(allocation.IdempotencyKey);
+        Assert.Null(allocation.IdempotencyOperation);
         Assert.Null(allocation.ReversedAt);
         Assert.Null(allocation.ReversalReason);
     }
@@ -214,9 +215,54 @@ public sealed class AllocationTests
             BankTransactionId.New(),
             new Money(300m, Pln),
             ConfirmedAt,
-            idempotencyKey);
+            idempotencyKey,
+            AllocationIdempotencyOperation.ExplicitAmount);
 
         Assert.Equal(idempotencyKey, allocation.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.ExplicitAmount, allocation.IdempotencyOperation);
+    }
+
+    [Fact]
+    public void New_allocation_should_reject_a_key_without_an_operation()
+    {
+        Assert.Throws<ArgumentException>(
+            () => new Allocation(
+                AllocationId.New(),
+                TestOrganizationId,
+                InvoiceId.New(),
+                BankTransactionId.New(),
+                new Money(300m, Pln),
+                ConfirmedAt,
+                Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void New_allocation_should_reject_an_operation_without_a_key()
+    {
+        Assert.Throws<ArgumentException>(
+            () => new Allocation(
+                AllocationId.New(),
+                TestOrganizationId,
+                InvoiceId.New(),
+                BankTransactionId.New(),
+                new Money(300m, Pln),
+                ConfirmedAt,
+                idempotencyOperation: AllocationIdempotencyOperation.ExplicitAmount));
+    }
+
+    [Fact]
+    public void New_allocation_should_reject_an_undefined_operation()
+    {
+        Assert.Throws<ArgumentException>(
+            () => new Allocation(
+                AllocationId.New(),
+                TestOrganizationId,
+                InvoiceId.New(),
+                BankTransactionId.New(),
+                new Money(300m, Pln),
+                ConfirmedAt,
+                Guid.NewGuid(),
+                (AllocationIdempotencyOperation)99));
     }
 
     [Fact]

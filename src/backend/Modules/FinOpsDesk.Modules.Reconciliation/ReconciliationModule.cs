@@ -41,6 +41,7 @@ public static class ReconciliationModule
         services.AddScoped<IAllocationRepository, AllocationRepository>();
         services.AddScoped<IAllocationIdempotencyLookup, AllocationIdempotencyLookup>();
         services.AddScoped<ConfirmExactMatchHandler>();
+        services.AddScoped<ConfirmExplicitAmountHandler>();
         services.AddScoped<IUnitOfWork>(
             serviceProvider => serviceProvider.GetRequiredService<ReconciliationDbContext>());
         services.AddSingleton<IImportFileReader, CsvHelperImportFileReader>();
