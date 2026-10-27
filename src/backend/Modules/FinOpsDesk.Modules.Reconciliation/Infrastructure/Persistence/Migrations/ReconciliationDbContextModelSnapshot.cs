@@ -87,7 +87,7 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.ToTable("Allocations", "reconciliation", t =>
                         {
-                            t.HasCheckConstraint("CK_Allocations_IdempotencyOperation", "([IdempotencyKey] IS NULL AND [IdempotencyOperation] IS NULL) OR ([IdempotencyKey] IS NOT NULL AND [IdempotencyOperation] IS NOT NULL AND [IdempotencyOperation] IN (1, 2))");
+                            t.HasCheckConstraint("CK_Allocations_IdempotencyOperation", "([IdempotencyKey] IS NULL AND [IdempotencyOperation] IS NULL) OR ([IdempotencyKey] IS NOT NULL AND [IdempotencyOperation] IS NOT NULL AND [IdempotencyOperation] IN (1, 2, 3))");
                         });
                 });
 
@@ -169,6 +169,50 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.ToTable("BankTransactions", "reconciliation", t =>
                         {
                             t.HasCheckConstraint("CK_BankTransactions_SourceIdentity_NullPair", "([SourceSystem] IS NULL AND [ExternalId] IS NULL) OR ([SourceSystem] IS NOT NULL AND [ExternalId] IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions.BatchExecution", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("binary(32)")
+                        .IsFixedLength();
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ResultPayload")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("ResultVersion")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BatchExecutions_OrganizationId_IdempotencyKey");
+
+                    b.ToTable("BatchExecutions", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_BatchExecutions_Shape", "([Status] = 1 AND [ResultVersion] IS NULL AND [ResultPayload] IS NULL AND [CompletedAt] IS NULL) OR ([Status] = 2 AND [ResultVersion] IS NOT NULL AND [ResultVersion] = 1 AND [ResultPayload] IS NOT NULL AND LEN([ResultPayload]) > 0 AND [CompletedAt] IS NOT NULL AND [CompletedAt] >= [CreatedAt])");
                         });
                 });
 

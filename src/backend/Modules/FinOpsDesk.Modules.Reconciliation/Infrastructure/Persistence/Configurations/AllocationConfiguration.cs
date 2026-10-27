@@ -10,10 +10,12 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configura
 
 internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocation>
 {
+    internal const string IdempotencyIndexName = "UX_Allocations_OrganizationId_IdempotencyKey";
+
     internal const string IdempotencyOperationCheckName = "CK_Allocations_IdempotencyOperation";
 
     internal const string IdempotencyOperationCheckSql =
-        "([IdempotencyKey] IS NULL AND [IdempotencyOperation] IS NULL) OR ([IdempotencyKey] IS NOT NULL AND [IdempotencyOperation] IS NOT NULL AND [IdempotencyOperation] IN (1, 2))";
+        "([IdempotencyKey] IS NULL AND [IdempotencyOperation] IS NULL) OR ([IdempotencyKey] IS NOT NULL AND [IdempotencyOperation] IS NOT NULL AND [IdempotencyOperation] IN (1, 2, 3))";
 
     public void Configure(EntityTypeBuilder<Allocation> builder)
     {
@@ -55,7 +57,7 @@ internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocat
         })
             .IsUnique()
             .HasFilter("[IdempotencyKey] IS NOT NULL")
-            .HasDatabaseName("UX_Allocations_OrganizationId_IdempotencyKey");
+            .HasDatabaseName(IdempotencyIndexName);
 
         builder.Property(allocation => allocation.ReversedAt)
             .HasColumnType("datetimeoffset");

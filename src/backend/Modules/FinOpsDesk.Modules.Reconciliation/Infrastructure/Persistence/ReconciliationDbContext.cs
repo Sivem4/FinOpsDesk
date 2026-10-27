@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
@@ -27,6 +28,8 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
     public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
 
     public DbSet<ReviewCase> ReviewCases => Set<ReviewCase>();
+
+    public DbSet<BatchExecution> BatchExecutions => Set<BatchExecution>();
 
     async Task IUnitOfWork.SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -57,6 +60,7 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new AllocationConfiguration());
         modelBuilder.ApplyConfiguration(new ImportBatchConfiguration());
         modelBuilder.ApplyConfiguration(new ReviewCaseConfiguration());
+        modelBuilder.ApplyConfiguration(new BatchExecutionConfiguration());
     }
 
     private static bool IsUniqueViolation(Exception exception)
