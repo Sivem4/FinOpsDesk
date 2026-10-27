@@ -2,7 +2,9 @@ using System.Net.Http.Headers;
 
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FinOpsDesk.IntegrationTests.Api;
 
@@ -12,12 +14,16 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
 
     private readonly string _connectionString;
     private readonly string? _previousConnectionString;
+    private readonly Action<IServiceCollection>? _configureServices;
 
-    public FinOpsDeskApiFactory(string connectionString)
+    public FinOpsDeskApiFactory(
+        string connectionString,
+        Action<IServiceCollection>? configureServices = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         _connectionString = connectionString;
+        _configureServices = configureServices;
 
         // Program reads the connection string while the host is composed.
         // Environment variables are already loaded then and override appsettings.
@@ -60,6 +66,11 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
                 ["Authentication:JwtBearer:OrganizationClaimType"] = TestAccessTokens.OrganizationClaimType,
             });
         });
+
+        if (_configureServices is not null)
+        {
+            builder.ConfigureTestServices(_configureServices);
+        }
     }
 
     protected override void Dispose(bool disposing)

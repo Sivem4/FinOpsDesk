@@ -138,9 +138,9 @@ Status: Complete.
 
 ## Phase 4: Deterministic matching
 
-Status: In progress.
+Status: Complete.
 
-Approved sequence. Phase 4A, Phase 4B, Phase 4C, Phase 4D, Phase 4E, and Phase 4F are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`). Phase 4G is planned. Overall Phase 4 remains in progress.
+Approved sequence. Phase 4A, Phase 4B, Phase 4C, Phase 4D, Phase 4E, Phase 4F, and Phase 4G are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`).
 
 ### 4A: Domain Rules & Matching Contract
 
@@ -182,7 +182,9 @@ Manual review cases are persisted for the authenticated organization. `POST /api
 
 ### 4G: Batch Auto-Matching & Hardening
 
-Status: Planned.
+Status: Complete.
+
+`GET /api/matches/batch/preview` is a read-only `exact-1` classification of the authenticated organization's open book. Eligible pairs are paged after that classification. The preview is not stored and does not authorize an allocation. `POST /api/matches/batch/execute` is operator-approved: the caller submits 1 to 25 invoice and bank-transaction pairs with one `Idempotency-Key`. The server revalidates each pair and confirms only a unique exact-1 full current remainder. A completed receipt freezes the result. Replay does not allocate again. Each item commits in its own transaction. `smart-1` stays advisory and cannot allocate. `TenantMember` can start a batch. Finer financial authorization and complete OpenAPI Bearer metadata remain Phase 7. There is no background worker and no immutable financial audit trail. See ADR 0010.
 
 Do not add AI before the deterministic decision path is observable and testable. AI must not confirm allocations.
 
@@ -199,7 +201,7 @@ This phase covers the remaining allocation lifecycle:
 - manual allocation workflows that Phase 4D does not cover;
 - persisted confirmation of a `MatchSuggestion`, which remains a domain model only;
 - optimistic concurrency for persisted reversal;
-- idempotency for financial commands other than exact-match and explicit-amount confirmation;
+- idempotency for financial commands other than exact-match confirmation, explicit-amount confirmation, and batch exact-match execution;
 - HTTP conflict mapping for those remaining allocation commands.
 
 ## Phase 6: React operations workspace

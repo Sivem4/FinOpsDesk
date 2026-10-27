@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
@@ -26,6 +27,19 @@ internal static class ReconciliationValueConverters
 
     public static ValueConverter<ReviewCaseId, Guid> ReviewCaseId { get; } =
         new(id => id.Value, value => new ReviewCaseId(value));
+
+    public static ValueConverter<BatchExecutionId, Guid> BatchExecutionId { get; } =
+        new(id => id.Value, value => new BatchExecutionId(value));
+
+    public static ValueConverter<BatchExecutionFingerprint, byte[]> BatchExecutionFingerprint { get; } =
+        new(
+            fingerprint => fingerprint.ToArray(),
+            value => new BatchExecutionFingerprint(value));
+
+    public static ValueConverter<BatchExecutionStatus, int> BatchExecutionStatus { get; } =
+        new(
+            status => BatchExecutionStatusCodec.ToInt(status),
+            value => BatchExecutionStatusCodec.ToStatus(value));
 
     public static ValueConverter<OrganizationId, Guid> OrganizationId { get; } =
         new(id => id.Value, value => new OrganizationId(value));

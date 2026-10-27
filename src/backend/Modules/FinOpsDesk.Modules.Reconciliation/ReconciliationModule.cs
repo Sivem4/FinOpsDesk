@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Application.Imports;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Application.Matching;
@@ -42,6 +43,14 @@ public static class ReconciliationModule
         services.AddScoped<IBankTransactionRepository, BankTransactionRepository>();
         services.AddScoped<IAllocationRepository, AllocationRepository>();
         services.AddScoped<IAllocationIdempotencyLookup, AllocationIdempotencyLookup>();
+        services.AddScoped<IBatchExecutionStore, BatchExecutionStore>();
+        services.AddScoped<IBatchExecutionOwner, BatchExecutionOwner>();
+        services.AddScoped<IBatchExactMatchItemExecutor, BatchExactMatchItemExecutor>();
+        services.AddScoped<ICompetitorProbeQueries, CompetitorProbeQueries>();
+        services.AddScoped<IOpenReviewBlockQueries, OpenReviewBlockQueries>();
+        services.TryAddSingleton<IBatchExactMatchItemSynchronization, ImmediateBatchItemSynchronization>();
+        services.AddScoped<PreviewBatchExactMatchesHandler>();
+        services.AddScoped<ExecuteBatchExactMatchesHandler>();
         services.AddScoped<ConfirmExactMatchHandler>();
         services.AddScoped<ConfirmExplicitAmountHandler>();
         services.AddScoped<IReviewCaseRepository, ReviewCaseRepository>();

@@ -158,4 +158,49 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.review_case.request_too_large",
             "The review case request body must be at most 4096 bytes.");
+
+    public static Error BatchInvalidRequest { get; } =
+        new(
+            "reconciliation.batch.invalid_request",
+            "The batch request must contain a non-empty idempotency key and 1 to 25 distinct pairs.");
+
+    public static Error BatchIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.batch.idempotency_payload_conflict",
+            "This idempotency key was already used for a different batch pair set.");
+
+    public static Error BatchExecutionInProgress { get; } =
+        new(
+            "reconciliation.batch.execution_in_progress",
+            "This batch execution is already being processed.");
+
+    public static Error BatchCandidateLimitExceeded { get; } =
+        new(
+            "reconciliation.batch.candidate_limit_exceeded",
+            "Batch execution was not started because the open book exceeds 5000 invoices or 5000 bank transactions.");
+
+    public static Error BatchAllocationIntegrityConflict { get; } =
+        new(
+            "reconciliation.batch.allocation_integrity_conflict",
+            "An allocation with this batch item key does not match the organization, operation, invoice, and bank transaction.");
+
+    public static Error BatchInfrastructureFailure { get; } =
+        new(
+            "reconciliation.batch.infrastructure_failure",
+            "Batch execution stopped because of an unexpected infrastructure failure. Committed allocations remain committed.");
+
+    public static Error BatchInvalidQuery { get; } =
+        new(
+            "reconciliation.batch.invalid_query",
+            "Page must be at least 1, page size must be from 1 through 100, and the page offset must fit in a 32-bit integer.");
+
+    public static Error BatchUnsupportedMediaType { get; } =
+        new(
+            "reconciliation.batch.unsupported_media_type",
+            "The batch execution request must use Content-Type application/json.");
+
+    public static Error BatchRequestTooLarge { get; } =
+        new(
+            "reconciliation.batch.request_too_large",
+            "The batch execution request body must be at most 8192 bytes.");
 }

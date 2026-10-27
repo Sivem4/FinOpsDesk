@@ -18,6 +18,7 @@ public static class ReconciliationEndpoints
         group.MapInvoiceEndpoints();
         group.MapImportEndpoints();
         group.MapMatchEndpoints();
+        group.MapBatchMatchEndpoints();
         group.MapAllocationEndpoints();
         group.MapReviewCaseEndpoints();
 
