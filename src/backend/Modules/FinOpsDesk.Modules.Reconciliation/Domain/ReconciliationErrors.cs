@@ -78,4 +78,19 @@ public static class ReconciliationErrors
         new(
             "reconciliation.import.completion_precedes_creation",
             "Completion time cannot precede creation time.");
+
+    public static Error ReviewCaseTerminalConflict { get; } =
+        new(
+            "reconciliation.review_case.terminal_conflict",
+            "The review case already has a different terminal decision.");
+
+    public static Error ReviewCaseAllocationRequired { get; } =
+        new(
+            "reconciliation.review_case.allocation_required",
+            "Recording an allocation requires an allocation id.");
+
+    public static Error ReviewCaseAllocationForbidden { get; } =
+        new(
+            "reconciliation.review_case.allocation_forbidden",
+            "This review outcome cannot reference an allocation.");
 }

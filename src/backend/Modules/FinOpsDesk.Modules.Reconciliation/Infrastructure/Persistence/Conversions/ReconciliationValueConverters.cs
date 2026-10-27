@@ -3,6 +3,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -22,6 +23,9 @@ internal static class ReconciliationValueConverters
 
     public static ValueConverter<ImportBatchId, Guid> ImportBatchId { get; } =
         new(id => id.Value, value => new ImportBatchId(value));
+
+    public static ValueConverter<ReviewCaseId, Guid> ReviewCaseId { get; } =
+        new(id => id.Value, value => new ReviewCaseId(value));
 
     public static ValueConverter<OrganizationId, Guid> OrganizationId { get; } =
         new(id => id.Value, value => new OrganizationId(value));

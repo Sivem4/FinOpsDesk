@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation.Presentation.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Imports;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Presentation.Matching;
+using FinOpsDesk.Modules.Reconciliation.Presentation.ReviewCases;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
@@ -18,6 +19,7 @@ public static class ReconciliationEndpoints
         group.MapImportEndpoints();
         group.MapMatchEndpoints();
         group.MapAllocationEndpoints();
+        group.MapReviewCaseEndpoints();
 
         return group;
     }
