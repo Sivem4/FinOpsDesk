@@ -108,4 +108,54 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.allocation.request_too_large",
             "The allocation request body must be at most 4096 bytes.");
+
+    public static Error ReviewCaseNotFound { get; } =
+        new(
+            "reconciliation.review_case.not_found",
+            "Review case was not found.");
+
+    public static Error ReviewCaseInvalidRequest { get; } =
+        new(
+            "reconciliation.review_case.invalid_request",
+            "The review case request has an invalid reason, source, note, or financial identifiers.");
+
+    public static Error ReviewCaseInvalidConcurrencyToken { get; } =
+        new(
+            "reconciliation.review_case.invalid_concurrency_token",
+            "The concurrency token must be the Base64 form of the review case row version.");
+
+    public static Error ReviewCaseInvalidPagination { get; } =
+        new(
+            "reconciliation.review_cases.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
+    public static Error ReviewCaseConcurrencyConflict { get; } =
+        new(
+            "reconciliation.review_case.concurrency_conflict",
+            "The review case was modified by another operation.");
+
+    public static Error ReviewCaseAllocationMismatch { get; } =
+        new(
+            "reconciliation.review_case.allocation_mismatch",
+            "The allocation was not found in this organization, is not confirmed, or does not cover the review case.");
+
+    public static Error ReviewCaseSubjectConflict { get; } =
+        new(
+            "reconciliation.review_case.subject_conflict",
+            "An open review case for this subject could not be recovered after a concurrent create.");
+
+    public static Error ReviewCaseInconsistentLinkedMoney { get; } =
+        new(
+            "reconciliation.review_case.inconsistent_linked_money",
+            "Stored amounts for a linked invoice or bank transaction are inconsistent.");
+
+    public static Error ReviewCaseUnsupportedMediaType { get; } =
+        new(
+            "reconciliation.review_case.unsupported_media_type",
+            "The review case request must use Content-Type application/json.");
+
+    public static Error ReviewCaseRequestTooLarge { get; } =
+        new(
+            "reconciliation.review_case.request_too_large",
+            "The review case request body must be at most 4096 bytes.");
 }

@@ -322,6 +322,84 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         });
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AllocationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("BankTransactionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTimeOffset>("OpenedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("Outcome")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Reason")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("SourceLabel")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SubjectKey")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("nvarchar(96)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "BankTransactionId");
+
+                    b.HasIndex("OrganizationId", "InvoiceId");
+
+                    b.HasIndex("OrganizationId", "SubjectKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReviewCases_OrganizationId_SubjectKey_Open")
+                        .HasFilter("[Status] = 1");
+
+                    b.ToTable("ReviewCases", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_ReviewCases_ClosedAt", "[ClosedAt] IS NULL OR [ClosedAt] >= [OpenedAt]");
+
+                            t.HasCheckConstraint("CK_ReviewCases_ReasonShape", "([Reason] IN (1, 2)) AND (([Reason] = 1 AND [InvoiceId] IS NOT NULL AND [BankTransactionId] IS NOT NULL) OR ([Reason] = 2 AND (([InvoiceId] IS NOT NULL AND [BankTransactionId] IS NULL) OR ([InvoiceId] IS NULL AND [BankTransactionId] IS NOT NULL))))");
+
+                            t.HasCheckConstraint("CK_ReviewCases_SourceLabel", "([SourceLabel] IS NULL OR [SourceLabel] IN (N'manual', N'exact-1', N'smart-1'))");
+
+                            t.HasCheckConstraint("CK_ReviewCases_StatusShape", "([Status] IN (1, 2, 3)) AND ([Outcome] IS NULL OR [Outcome] IN (1, 2, 3)) AND (([Status] = 1 AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ResolutionNote] IS NULL AND [ClosedAt] IS NULL) OR ([Status] = 2 AND [Outcome] IS NOT NULL AND [ClosedAt] IS NOT NULL AND (([Outcome] = 1 AND [AllocationId] IS NOT NULL) OR ([Outcome] IN (2, 3) AND [AllocationId] IS NULL))) OR ([Status] = 3 AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ClosedAt] IS NOT NULL))");
+                        });
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
                 {
                     b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
@@ -387,6 +465,21 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         });
 
                     b.Navigation("RowErrors");
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "BankTransactionId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "InvoiceId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 #pragma warning restore 612, 618
         }

@@ -140,7 +140,7 @@ Status: Complete.
 
 Status: In progress.
 
-Approved sequence. Phase 4A, Phase 4B, Phase 4C, Phase 4D, and Phase 4E are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`). Phases 4F and 4G are planned. Overall Phase 4 remains in progress.
+Approved sequence. Phase 4A, Phase 4B, Phase 4C, Phase 4D, Phase 4E, and Phase 4F are complete. Phase 4C is on `main` (pull request 21, `fb96d4d`). Phase 4G is planned. Overall Phase 4 remains in progress.
 
 ### 4A: Domain Rules & Matching Contract
 
@@ -176,7 +176,9 @@ Status: Complete.
 
 ### 4F: Exception & Review Workflow
 
-Status: Planned.
+Status: Complete.
+
+Manual review cases are persisted for the authenticated organization. `POST /api/review-cases` opens a case for `CompetingMatch` or `NeedsInvestigation`. Repeating that request for the same open subject returns the existing case. `GET /api/review-cases` lists the organization's cases with page size 1 through 100, default 50, ordered by opened time descending and then review case id descending. `GET /api/review-cases/{id}` returns the case and the current linked balances. `POST /api/review-cases/{id}/resolve` and `POST /api/review-cases/{id}/dismiss` close an open case when the caller sends the current Base64 `rowversion` token. An identical terminal replay succeeds without changing `ClosedAt` or the token. A different terminal decision conflicts. `AllocationRecorded` requires a confirmed allocation that covers the case. Review endpoints do not confirm allocations, do not run `exact-1` or `smart-1`, and do not persist `MatchSuggestion`. See ADR 0009.
 
 ### 4G: Batch Auto-Matching & Hardening
 
@@ -237,7 +239,7 @@ Add:
 - resource-based authorization;
 - cross-organization integration tests;
 - BOLA/IDOR tests;
-- OpenAPI Bearer security metadata for existing `TenantMember` routes, including `GET /api/matches` and `GET /api/matches/smart`. Those routes already enforce `TenantMember` at runtime. The generated document does not yet describe that requirement.
+- OpenAPI Bearer security metadata for existing `TenantMember` routes, including `GET /api/matches`, `GET /api/matches/smart`, and the Phase 4F review-case routes. Those routes already enforce `TenantMember` at runtime. The generated document does not yet describe that requirement.
 
 ## Phase 8: Disputes and dashboards
 

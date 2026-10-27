@@ -4,6 +4,7 @@ using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Application.Imports;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Application.Matching;
+using FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Imports;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Queries;
@@ -43,6 +44,16 @@ public static class ReconciliationModule
         services.AddScoped<IAllocationIdempotencyLookup, AllocationIdempotencyLookup>();
         services.AddScoped<ConfirmExactMatchHandler>();
         services.AddScoped<ConfirmExplicitAmountHandler>();
+        services.AddScoped<IReviewCaseRepository, ReviewCaseRepository>();
+        services.AddScoped<IReviewCaseSnapshotLookup, ReviewCaseSnapshotLookup>();
+        services.AddScoped<IReviewCaseOpenConflict, ReviewCaseOpenConflict>();
+        services.AddScoped<IAllocationLinkLookup, AllocationLinkLookup>();
+        services.AddScoped<IReviewCaseQueries, ReviewCaseQueries>();
+        services.AddScoped<OpenReviewCaseHandler>();
+        services.AddScoped<ResolveReviewCaseHandler>();
+        services.AddScoped<DismissReviewCaseHandler>();
+        services.AddScoped<ListReviewCasesHandler>();
+        services.AddScoped<GetReviewCaseHandler>();
         services.AddScoped<IUnitOfWork>(
             serviceProvider => serviceProvider.GetRequiredService<ReconciliationDbContext>());
         services.AddSingleton<IImportFileReader, CsvHelperImportFileReader>();
