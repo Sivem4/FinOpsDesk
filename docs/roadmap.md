@@ -184,25 +184,74 @@ Manual review cases are persisted for the authenticated organization. `POST /api
 
 Status: Complete.
 
-`GET /api/matches/batch/preview` is a read-only `exact-1` classification of the authenticated organization's open book. Eligible pairs are paged after that classification. The preview is not stored and does not authorize an allocation. `POST /api/matches/batch/execute` is operator-approved: the caller submits 1 to 25 invoice and bank-transaction pairs with one `Idempotency-Key`. The server revalidates each pair and confirms only a unique exact-1 full current remainder. A completed receipt freezes the result. Replay does not allocate again. Each item commits in its own transaction. `smart-1` stays advisory and cannot allocate. `TenantMember` can start a batch. Finer financial authorization and complete OpenAPI Bearer metadata remain Phase 7. There is no background worker and no immutable financial audit trail. See ADR 0010.
+`GET /api/matches/batch/preview` is a read-only `exact-1` classification of the authenticated organization's open book. Eligible pairs are paged after that classification. The preview is not stored and does not authorize an allocation. `POST /api/matches/batch/execute` is operator-approved: the caller submits 1 to 25 invoice and bank-transaction pairs with one `Idempotency-Key`. The server revalidates each pair and confirms only a unique exact-1 full current remainder. A completed receipt freezes the result. Replay does not allocate again. Each item commits in its own transaction. `smart-1` stays advisory and cannot allocate. `TenantMember` can start a batch. Finer financial authorization and complete OpenAPI Bearer metadata remain Phase 7. There is no background worker. Confirmation audit for these commits was added in Phase 5B. See ADR 0010 and ADR 0011.
 
 Do not add AI before the deterministic decision path is observable and testable. AI must not confirm allocations.
 
 ## Phase 5: Allocation workflow and audit
 
+Status: In progress.
+
+Phase 4C confirms one exact pair. Phase 4D confirms one explicit amount at `POST /api/allocations`, including sequential multi-allocation, and maps that endpoint's conflicts to HTTP 409. Phase 5B adds confirmation audit for those writes and for operator-approved batch exact matching. The phase as a whole is not complete.
+
+### 5B.1: Financial audit persistence
+
+Status: Complete.
+
+`FinancialAuditEntry` is stored in the `reconciliation` schema. A confirmation entry copies the allocation identity, amount, currency, confirmation time, idempotency operation, and idempotency key. `BatchExecutionId` is required only for `BatchExactMatch`. The table has tenant-consistent composite foreign keys, a unique confirmation constraint, and an append-only trigger. There is no historical backfill. See ADR 0011.
+
+### 5B.2: Exact and explicit confirmation audits
+
+Status: Complete.
+
+`ConfirmExactMatchHandler` and `ConfirmExplicitAmountHandler` require a trusted JWT `sub`, append one confirmation audit entry, and commit it with the financial changes. An idempotent replay does not append another entry. A missing or invalid actor returns HTTP 403 `reconciliation.actor.required`.
+
+### 5B.3: Batch exact-match confirmation audits
+
+Status: Complete.
+
+Each newly committed batch item appends one confirmation audit entry in that item's transaction. The actor is the operator who committed the item. `BatchExecutionId` is the persisted receipt id. Recovery of an already committed item, including a historical allocation with no audit row, does not append a confirmation. A completed receipt replay does not write.
+
+### 5B.4: Financial audit read API and documentation
+
+Status: Complete.
+
+`GET /api/allocations/{allocationId}/audit` returns the authenticated organization's audit page for one allocation. Page defaults to 1 and page size defaults to 50, with a maximum of 100. Ordering is `RecordedAt` ascending, then audit entry id ascending. A historical allocation with no audit row returns an empty page. The read does not require `sub`. ADR 0011 records the foundation.
+
+### 5B.5: Final regression and release review
+
+Status: Complete.
+
+Cumulative regression of Phase 5B.1 through 5B.4, financial consistency, tenant isolation, idempotency, batch recovery, and documentation consistency have been reviewed.
+
+Migration `20261028002321_AddFinancialAuditEntries` was verified against isolated pre-audit financial data, including historical allocations and batch execution receipts.
+
+This increment introduces no new financial behavior.
+
+Phase 5B is complete. Phase 5 remains in progress.
+
+### 5C: Allocation reversal
+
 Status: Planned.
 
-Phase 4C confirms one exact pair. Phase 4D confirms one explicit amount at `POST /api/allocations`, including sequential multi-allocation, and maps that endpoint's conflicts to HTTP 409. Neither phase writes an audit record or attributes the change to a user.
+Phase 5C is the planned allocation reversal work. It has not started. It covers:
 
-This phase covers the remaining allocation lifecycle:
+- persisted allocation reversal with a reason;
+- reversal idempotency;
+- optimistic concurrency, including an `Allocation` rowversion;
+- atomic restoration of financial balances;
+- an append-only reversal audit, which is not implemented by the confirmation audit;
+- extension of the audit action database constraint and read mapping;
+- the unresolved semantics of `Running` batch recovery when a previously confirmed allocation has subsequently been reversed.
 
-- persisted reversal with reason;
-- audit records written in the same transaction as the financial change;
+These Phase 5 requirements also remain open:
+
 - manual allocation workflows that Phase 4D does not cover;
 - persisted confirmation of a `MatchSuggestion`, which remains a domain model only;
-- optimistic concurrency for persisted reversal;
-- idempotency for financial commands other than exact-match confirmation, explicit-amount confirmation, and batch exact-match execution;
+- idempotency for financial commands other than exact-match confirmation, explicit-amount confirmation, batch exact-match execution, and the planned reversal command;
 - HTTP conflict mapping for those remaining allocation commands.
+
+Finer authorization, including who may read audit `ActorId`, remains Phase 7.
 
 ## Phase 6: React operations workspace
 

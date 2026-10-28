@@ -216,6 +216,91 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         });
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit.FinancialAuditEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Action")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("AllocationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BankTransactionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("BatchExecutionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("IdempotencyOperation")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Amount", "FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit.FinancialAuditEntry.Amount#Money", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(19, 4)
+                                .HasColumnType("decimal(19,4)")
+                                .HasColumnName("Amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .IsUnicode(false)
+                                .HasColumnType("char(3)")
+                                .HasColumnName("Currency")
+                                .IsFixedLength();
+                        });
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "BankTransactionId");
+
+                    b.HasIndex("OrganizationId", "BatchExecutionId");
+
+                    b.HasIndex("OrganizationId", "InvoiceId");
+
+                    b.HasIndex("OrganizationId", "AllocationId", "Action")
+                        .IsUnique()
+                        .HasDatabaseName("UX_FinancialAuditEntries_OrganizationId_AllocationId_Action");
+
+                    b.ToTable("FinancialAuditEntries", "reconciliation", t =>
+                        {
+                            t.HasTrigger("TR_FinancialAuditEntries_RejectMutation");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_Action", "([Action] = 1)");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_ActorId", "DATALENGTH([ActorId]) = DATALENGTH(LTRIM(RTRIM([ActorId]))) AND DATALENGTH([ActorId]) BETWEEN 2 AND 512");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_Amount", "([Amount] > 0)");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_BatchReference", "(([IdempotencyOperation] = 3 AND [BatchExecutionId] IS NOT NULL) OR ([IdempotencyOperation] IN (1, 2) AND [BatchExecutionId] IS NULL))");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_IdempotencyOperation", "([IdempotencyOperation] IN (1, 2, 3))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Imports.ImportBatch", b =>
                 {
                     b.Property<Guid>("Id")
@@ -452,6 +537,36 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "InvoiceId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit.FinancialAuditEntry", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "AllocationId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "BankTransactionId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions.BatchExecution", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "BatchExecutionId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
                         .WithMany()

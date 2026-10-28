@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
+using FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
@@ -21,6 +22,9 @@ internal static class ReconciliationValueConverters
 
     public static ValueConverter<AllocationId, Guid> AllocationId { get; } =
         new(id => id.Value, value => new AllocationId(value));
+
+    public static ValueConverter<FinancialAuditEntryId, Guid> FinancialAuditEntryId { get; } =
+        new(id => id.Value, value => new FinancialAuditEntryId(value));
 
     public static ValueConverter<ImportBatchId, Guid> ImportBatchId { get; } =
         new(id => id.Value, value => new ImportBatchId(value));

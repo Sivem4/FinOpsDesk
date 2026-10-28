@@ -26,6 +26,12 @@ internal sealed class BatchExecutionConfiguration : IEntityTypeConfiguration<Bat
 
         builder.HasKey(execution => execution.Id);
 
+        builder.HasAlternateKey(execution => new
+        {
+            execution.OrganizationId,
+            execution.Id,
+        });
+
         builder.Property(execution => execution.Id)
             .HasConversion(ReconciliationValueConverters.BatchExecutionId)
             .ValueGeneratedNever();

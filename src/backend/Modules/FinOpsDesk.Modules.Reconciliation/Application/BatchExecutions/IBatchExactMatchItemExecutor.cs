@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -9,6 +10,8 @@ internal interface IBatchExactMatchItemExecutor
     Task<BatchItemAttempt> ExecuteAsync(
         OrganizationId organizationId,
         Guid batchIdempotencyKey,
+        BatchExecutionId batchExecutionId,
+        string actorId,
         InvoiceId invoiceId,
         BankTransactionId bankTransactionId,
         DateTimeOffset confirmedAt,

@@ -2,10 +2,12 @@ using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
@@ -319,6 +321,106 @@ public sealed class ConfirmExactMatchHandlerTests
     }
 
     [Fact]
+    public async Task Handle_should_append_one_confirmation_audit_for_a_new_allocation()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m, "INV-001", Pln);
+        BankTransaction bankTransaction = CreateBankTransaction(1000m, "INV-001", Pln);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoice.Id, bankTransaction.Id, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        (Allocation allocation, string actorId, BatchExecutionId? batchExecutionId) =
+            Assert.Single(scenario.Audit.Calls);
+        Assert.Same(scenario.Allocations.Added, allocation);
+        Assert.Equal("operator-a", actorId);
+        Assert.Null(batchExecutionId);
+        Assert.Equal(AllocationIdempotencyOperation.ExactMatch, allocation.IdempotencyOperation);
+        Assert.Equal(IdempotencyKey, allocation.IdempotencyKey);
+        Assert.Equal(1, scenario.UnitOfWork.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_not_append_audit_when_replaying()
+    {
+        Scenario scenario = CreateScenario();
+        InvoiceId invoiceId = InvoiceId.New();
+        BankTransactionId bankTransactionId = BankTransactionId.New();
+        scenario.Lookup.Record = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoiceId,
+            bankTransactionId,
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoiceId, bankTransactionId, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value?.Replayed);
+        Assert.Empty(scenario.Audit.Calls);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_a_missing_actor_before_idempotency_lookup()
+    {
+        Scenario scenario = CreateScenario();
+        scenario.Actor.ActorId = "   ";
+        InvoiceId invoiceId = InvoiceId.New();
+        BankTransactionId bankTransactionId = BankTransactionId.New();
+        scenario.Lookup.Record = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoiceId,
+            bankTransactionId,
+            new Money(10m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoiceId, bankTransactionId, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired.Code, result.Error?.Code);
+        Assert.Equal(0, scenario.Lookup.FindCallCount);
+        Assert.Empty(scenario.Audit.Calls);
+        Assert.Equal(0, scenario.UnitOfWork.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_not_replay_an_audit_uniqueness_failure()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m, "INV-001", Pln);
+        BankTransaction bankTransaction = CreateBankTransaction(1000m, "INV-001", Pln);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+        scenario.Conflict.Violation = false;
+        scenario.UnitOfWork.ExceptionToThrow = new UniqueConstraintConflictException(
+            "A unique constraint rejected the commit.");
+        scenario.Lookup.RecordAfterSave = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoice.Id,
+            bankTransaction.Id,
+            new Money(1000m, Pln),
+            AllocationIdempotencyOperation.ExactMatch);
+
+        Result<ConfirmExactMatchResponse> result = await scenario.Handler.Handle(
+            new ConfirmExactMatchCommand(invoice.Id, bankTransaction.Id, IdempotencyKey),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.ConcurrencyConflict.Code,
+            result.Error?.Code);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(1, scenario.Lookup.FindCallCount);
+        Assert.Single(scenario.Audit.Calls);
+    }
+
+    [Fact]
     public void Command_should_reject_an_empty_idempotency_key()
     {
         Assert.Throws<ArgumentException>(
@@ -335,13 +437,19 @@ public sealed class ConfirmExactMatchHandlerTests
         var allocations = new FakeAllocationRepository();
         var lookup = new FakeLookup();
         var unitOfWork = new FakeUnitOfWork();
+        var actor = new FakeActorContext();
+        var audit = new FakeAuditWriter();
+        var conflict = new FakeIdempotencyConflict();
         var handler = new ConfirmExactMatchHandler(
             new FakeCurrentOrganizationContext(TestOrganizationId),
+            actor,
             invoices,
             bankTransactions,
             allocations,
             lookup,
             unitOfWork,
+            audit,
+            conflict,
             new FixedTimeProvider(ConfirmedAt));
 
         return new Scenario(
@@ -350,7 +458,10 @@ public sealed class ConfirmExactMatchHandlerTests
             bankTransactions,
             allocations,
             lookup,
-            unitOfWork);
+            unitOfWork,
+            actor,
+            audit,
+            conflict);
     }
 
     private static Invoice CreateInvoice(
@@ -384,7 +495,50 @@ public sealed class ConfirmExactMatchHandlerTests
         FakeBankTransactionRepository BankTransactions,
         FakeAllocationRepository Allocations,
         FakeLookup Lookup,
-        FakeUnitOfWork UnitOfWork);
+        FakeUnitOfWork UnitOfWork,
+        FakeActorContext Actor,
+        FakeAuditWriter Audit,
+        FakeIdempotencyConflict Conflict);
+
+    private sealed class FakeActorContext : ICurrentActorContext
+    {
+        public string? ActorId { get; set; } = "operator-a";
+
+        public bool TryGetActorId(out string actorId)
+        {
+            if (string.IsNullOrWhiteSpace(ActorId))
+            {
+                actorId = string.Empty;
+                return false;
+            }
+
+            actorId = ActorId;
+            return true;
+        }
+    }
+
+    private sealed class FakeAuditWriter : IFinancialAuditWriter
+    {
+        public List<(Allocation Allocation, string ActorId, BatchExecutionId? BatchExecutionId)> Calls { get; } = [];
+
+        public void AppendConfirmation(
+            Allocation allocation,
+            string actorId,
+            BatchExecutionId? batchExecutionId)
+        {
+            Calls.Add((allocation, actorId, batchExecutionId));
+        }
+    }
+
+    private sealed class FakeIdempotencyConflict : IAllocationIdempotencyConflict
+    {
+        public bool Violation { get; set; } = true;
+
+        public bool IsIdempotencyIndexViolation(Exception exception)
+        {
+            return Violation;
+        }
+    }
 
     private sealed class FakeCurrentOrganizationContext : ICurrentOrganizationContext
     {

@@ -3,6 +3,7 @@ using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Application.BatchExecutions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
@@ -28,6 +29,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
     private readonly ICompetitorProbeQueries _competitorProbeQueries;
     private readonly IOpenReviewBlockQueries _openReviewBlockQueries;
     private readonly IAllocationIdempotencyLookup _idempotencyLookup;
+    private readonly IFinancialAuditWriter _financialAuditWriter;
     private readonly IBatchExactMatchItemSynchronization _synchronization;
 
     public BatchExactMatchItemExecutor(
@@ -39,6 +41,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         ICompetitorProbeQueries competitorProbeQueries,
         IOpenReviewBlockQueries openReviewBlockQueries,
         IAllocationIdempotencyLookup idempotencyLookup,
+        IFinancialAuditWriter financialAuditWriter,
         IBatchExactMatchItemSynchronization synchronization)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
@@ -49,6 +52,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         ArgumentNullException.ThrowIfNull(competitorProbeQueries);
         ArgumentNullException.ThrowIfNull(openReviewBlockQueries);
         ArgumentNullException.ThrowIfNull(idempotencyLookup);
+        ArgumentNullException.ThrowIfNull(financialAuditWriter);
         ArgumentNullException.ThrowIfNull(synchronization);
 
         _dbContext = dbContext;
@@ -59,18 +63,23 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         _competitorProbeQueries = competitorProbeQueries;
         _openReviewBlockQueries = openReviewBlockQueries;
         _idempotencyLookup = idempotencyLookup;
+        _financialAuditWriter = financialAuditWriter;
         _synchronization = synchronization;
     }
 
     public async Task<BatchItemAttempt> ExecuteAsync(
         OrganizationId organizationId,
         Guid batchIdempotencyKey,
+        BatchExecutionId batchExecutionId,
+        string actorId,
         InvoiceId invoiceId,
         BankTransactionId bankTransactionId,
         DateTimeOffset confirmedAt,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(organizationId);
+        ArgumentNullException.ThrowIfNull(batchExecutionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actorId);
         ArgumentNullException.ThrowIfNull(invoiceId);
         ArgumentNullException.ThrowIfNull(bankTransactionId);
 
@@ -177,6 +186,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
 
             await _synchronization.OnItemReadyToCommitAsync(itemKey, cancellationToken);
             _allocationRepository.Add(allocation);
+            _financialAuditWriter.AppendConfirmation(allocation, actorId, batchExecutionId);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new BatchItemAttempt.Confirmed(allocation.Id, allocation.Amount);
@@ -185,6 +195,8 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         {
             return new BatchItemAttempt.Rejected(BatchExecutionItemOutcome.Conflict);
         }
+        // Only the allocation idempotency index proves that this item was committed.
+        // An audit uniqueness failure stays outside this recovery path.
         catch (UniqueConstraintConflictException exception)
             when (SqlServerUniqueIndexes.IsViolation(
                 exception,

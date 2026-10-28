@@ -499,6 +499,53 @@ public sealed class BatchExactMatchApplicationTests
         Assert.Equal("stale", value.Items[1].Outcome);
         Assert.Equal(1, candidates.Calls);
         Assert.Equal(RequestPair(3, 4).InvoiceId, Assert.Single(executor.Invoices));
+        (string actorId, BatchExecutionId batchExecutionId) = Assert.Single(executor.Calls);
+        Assert.Equal("operator-a", actorId);
+        Assert.Equal(store.LatestId, batchExecutionId);
+    }
+
+    [Fact]
+    public async Task Missing_actor_is_rejected_before_receipt_lookup_and_completed_replay()
+    {
+        RecordingStore store = new();
+        store.SeedCompleted(
+            Organization,
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            BatchExactMatchIdentity.Create([RequestPair(1, 2)]).Fingerprint,
+            BatchExecutionResultDocument.Write(BatchExecutionResult.FromItems(
+            [
+                new BatchExecutionItem(
+                    RequestPair(1, 2).InvoiceId,
+                    RequestPair(1, 2).BankTransactionId,
+                    BatchExecutionItemOutcome.Confirmed,
+                    new AllocationId(Guid.NewGuid()),
+                    new Money(10m, Pln))
+            ])));
+        RecordingExecutor executor = new();
+        RecordingLookup lookup = new();
+        RecordingOwner owner = new(store);
+        await using ServiceProvider provider = Provider(
+            new RecordingCandidateQueries(EmptyBook()),
+            new RecordingReviewQueries(),
+            owner,
+            store,
+            executor,
+            lookup,
+            actor: new FakeActor(null));
+        ExecuteBatchExactMatchesHandler handler = provider.GetRequiredService<ExecuteBatchExactMatchesHandler>();
+
+        Result<ExecuteBatchExactMatchesResponse> result = await handler.Handle(
+            new ExecuteBatchExactMatchesCommand(
+                Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                [RequestPair(1, 2)]),
+            CancellationToken.None);
+
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired, result.Error);
+        Assert.Equal(0, store.Finds);
+        Assert.Equal(0, store.Inserts);
+        Assert.Equal(0, lookup.Calls);
+        Assert.Equal(0, owner.Acquired);
+        Assert.Empty(executor.Invoices);
     }
 
     [Fact]
@@ -514,10 +561,12 @@ public sealed class BatchExactMatchApplicationTests
         RecordingStore? store,
         RecordingExecutor? executor,
         RecordingLookup? lookup = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ICurrentActorContext? actor = null)
     {
         ServiceCollection services = new();
         services.AddSingleton<ICurrentOrganizationContext>(new FixedOrganization(Organization));
+        services.AddSingleton(actor ?? new FakeActor("operator-a"));
         services.AddSingleton<IExactMatchCandidateQueries>(candidates);
         services.AddSingleton<IOpenReviewBlockQueries>(reviews);
         services.AddSingleton<IAllocationIdempotencyLookup>(lookup ?? new RecordingLookup());
@@ -587,6 +636,21 @@ public sealed class BatchExactMatchApplicationTests
     private static Guid GuidOf(int suffix)
     {
         return Guid.Parse($"00000000-0000-0000-0000-{suffix:000000000000}");
+    }
+
+    private sealed class FakeActor(string? value) : ICurrentActorContext
+    {
+        public bool TryGetActorId(out string actorId)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                actorId = string.Empty;
+                return false;
+            }
+
+            actorId = value;
+            return true;
+        }
     }
 
     private sealed class FixedOrganization(OrganizationId organizationId) : ICurrentOrganizationContext
@@ -664,6 +728,10 @@ public sealed class BatchExactMatchApplicationTests
 
         public int Inserts { get; private set; }
 
+        public int Finds { get; private set; }
+
+        public BatchExecutionId? LatestId { get; private set; }
+
         public OrganizationId? InsertedOrganization { get; private set; }
 
         public byte[]? InsertedFingerprint { get; private set; }
@@ -681,6 +749,7 @@ public sealed class BatchExactMatchApplicationTests
                 BatchExecutionStatus.Completed,
                 payload,
                 Now);
+            LatestId = _rows[(organizationId.Value, key)].Id;
         }
 
         public void SeedRunning(
@@ -696,6 +765,7 @@ public sealed class BatchExactMatchApplicationTests
                 BatchExecutionStatus.Running,
                 null,
                 createdAt ?? Now);
+            LatestId = _rows[(organizationId.Value, key)].Id;
         }
 
         public Task<BatchExecutionSnapshot?> FindAsync(
@@ -703,6 +773,7 @@ public sealed class BatchExactMatchApplicationTests
             Guid idempotencyKey,
             CancellationToken cancellationToken)
         {
+            Finds++;
             _rows.TryGetValue((organizationId.Value, idempotencyKey), out BatchExecutionSnapshot? snapshot);
             return Task.FromResult(snapshot);
         }
@@ -747,6 +818,7 @@ public sealed class BatchExactMatchApplicationTests
                 BatchExecutionStatus.Running,
                 null,
                 execution.CreatedAt);
+            LatestId = _rows[key].Id;
             return Task.FromResult(true);
         }
 
@@ -849,17 +921,22 @@ public sealed class BatchExactMatchApplicationTests
 
         public List<InvoiceId> Invoices { get; } = [];
 
+        public List<(string ActorId, BatchExecutionId BatchExecutionId)> Calls { get; } = [];
+
         public int ThrowOnCall { get; set; }
 
         public Task<BatchItemAttempt> ExecuteAsync(
             OrganizationId organizationId,
             Guid batchIdempotencyKey,
+            BatchExecutionId batchExecutionId,
+            string actorId,
             InvoiceId invoiceId,
             BankTransactionId bankTransactionId,
             DateTimeOffset confirmedAt,
             CancellationToken cancellationToken)
         {
             Invoices.Add(invoiceId);
+            Calls.Add((actorId, batchExecutionId));
 
             if (Invoices.Count == ThrowOnCall)
             {

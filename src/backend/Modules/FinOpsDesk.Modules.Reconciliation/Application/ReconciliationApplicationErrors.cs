@@ -69,6 +69,11 @@ public static class ReconciliationApplicationErrors
             "reconciliation.matches.smart.unsupported_query",
             "Smart matching does not accept query parameters.");
 
+    public static Error ActorRequired { get; } =
+        new(
+            "reconciliation.actor.required",
+            "A valid authenticated actor is required.");
+
     public static Error IdempotencyKeyRequired { get; } =
         new(
             "reconciliation.confirmation.idempotency_key_required",
@@ -103,6 +108,21 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.allocation.unsupported_media_type",
             "The allocation request must use Content-Type application/json.");
+
+    public static Error AllocationNotFound { get; } =
+        new(
+            "reconciliation.allocation.not_found",
+            "Allocation was not found.");
+
+    public static Error AllocationAuditInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation_audit.invalid_request",
+            "The allocation audit request has a malformed allocation id or an unsupported query parameter.");
+
+    public static Error AllocationAuditInvalidPagination { get; } =
+        new(
+            "reconciliation.allocation_audit.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
 
     public static Error AllocationRequestTooLarge { get; } =
         new(

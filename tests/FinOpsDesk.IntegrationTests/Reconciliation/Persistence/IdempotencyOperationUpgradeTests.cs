@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
@@ -105,11 +106,14 @@ public sealed class IdempotencyOperationUpgradeTests
             await using AsyncServiceScope scope = provider.CreateAsyncScope();
             var handler = new ConfirmExactMatchHandler(
                 new TestCurrentOrganizationContext(new OrganizationId(organizationId)),
+                new TestCurrentActorContext(),
                 scope.ServiceProvider.GetRequiredService<IInvoiceRepository>(),
                 scope.ServiceProvider.GetRequiredService<IBankTransactionRepository>(),
                 scope.ServiceProvider.GetRequiredService<IAllocationRepository>(),
                 scope.ServiceProvider.GetRequiredService<IAllocationIdempotencyLookup>(),
                 scope.ServiceProvider.GetRequiredService<IUnitOfWork>(),
+                scope.ServiceProvider.GetRequiredService<IFinancialAuditWriter>(),
+                scope.ServiceProvider.GetRequiredService<IAllocationIdempotencyConflict>(),
                 TimeProvider.System);
             Result<ConfirmExactMatchResponse> replay = await handler.Handle(
                 new ConfirmExactMatchCommand(
