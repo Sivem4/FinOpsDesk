@@ -14,6 +14,7 @@ builder.Services.AddFinOpsDeskJwtBearerAuthentication(builder.Configuration);
 builder.Services.AddFinOpsDeskAuthorization();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentOrganizationContext, HttpContextCurrentOrganizationContext>();
+builder.Services.AddScoped<ICurrentActorContext, HttpContextCurrentActorContext>();
 
 string? connectionString = builder.Configuration.GetConnectionString("FinOpsDesk");
 if (string.IsNullOrWhiteSpace(connectionString))

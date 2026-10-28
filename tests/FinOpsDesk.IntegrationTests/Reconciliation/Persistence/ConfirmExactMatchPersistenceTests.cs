@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
@@ -624,11 +625,14 @@ public sealed class ConfirmExactMatchPersistenceTests
     {
         return new ConfirmExactMatchHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             services.GetRequiredService<IInvoiceRepository>(),
             services.GetRequiredService<IBankTransactionRepository>(),
             services.GetRequiredService<IAllocationRepository>(),
             services.GetRequiredService<IAllocationIdempotencyLookup>(),
             unitOfWork ?? services.GetRequiredService<IUnitOfWork>(),
+            services.GetRequiredService<IFinancialAuditWriter>(),
+            services.GetRequiredService<IAllocationIdempotencyConflict>(),
             new FixedTimeProvider(ConfirmedAt));
     }
 

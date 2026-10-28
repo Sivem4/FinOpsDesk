@@ -427,6 +427,11 @@ internal static class BatchMatchEndpoints
 
     private static int StatusCodeFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return StatusCodes.Status403Forbidden;
+        }
+
         if (error.Code == ReconciliationApplicationErrors.BatchInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.BatchInvalidQuery.Code
             || error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code
@@ -465,6 +470,11 @@ internal static class BatchMatchEndpoints
 
     private static string TitleFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return "Actor is required.";
+        }
+
         if (error.Code == ReconciliationApplicationErrors.BatchInvalidQuery.Code)
         {
             return "Batch preview query is invalid.";

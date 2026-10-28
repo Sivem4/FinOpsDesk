@@ -202,6 +202,11 @@ internal static class MatchEndpoints
 
     private static int StatusCodeFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return StatusCodes.Status403Forbidden;
+        }
+
         if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code
             || error.Code == ReconciliationApplicationErrors.IdempotencyKeyInvalid.Code
             || error.Code == ReconciliationApplicationErrors.ConfirmationInvalidRequest.Code)
@@ -230,6 +235,11 @@ internal static class MatchEndpoints
 
     private static string TitleFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return "Actor is required.";
+        }
+
         if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code)
         {
             return "Idempotency key is required.";

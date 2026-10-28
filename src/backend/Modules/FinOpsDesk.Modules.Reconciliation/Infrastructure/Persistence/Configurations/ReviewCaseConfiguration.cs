@@ -141,10 +141,10 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
             .HasFilter($"[Status] = {(int)ReviewCaseStatus.Open}")
             .HasDatabaseName(OpenSubjectIndexName);
 
-        // Invoice and BankTransaction expose (OrganizationId, Id). Allocation's primary key
-        // is Id alone, so a tenant composite foreign key to Allocation is not available
-        // without a new alternate key on Allocations. AllocationId stays a reference.
-        // Phase 4F.2 checks that the allocation exists in the case's organization.
+        // Invoice and BankTransaction expose (OrganizationId, Id). Allocation now has that
+        // alternate key for financial audit. Review cases still store AllocationId without
+        // a composite foreign key. Phase 4F.2 checks that the allocation exists in the
+        // case's organization.
         builder.HasOne<Invoice>()
             .WithMany()
             .HasForeignKey(reviewCase => new

@@ -35,6 +35,15 @@ internal static class TestAccessTokens
             organizationClaimValue: organizationClaimValue);
     }
 
+    public static string CreateForActor(Guid organizationId, string? subject)
+    {
+        return Create(
+            includeOrganizationClaim: true,
+            organizationClaimValue: organizationId.ToString(),
+            subject: subject,
+            includeSubject: subject is not null);
+    }
+
     public static string CreateSignedWithOtherKey(Guid organizationId)
     {
         return Create(
@@ -46,12 +55,15 @@ internal static class TestAccessTokens
     private static string Create(
         bool includeOrganizationClaim,
         string? organizationClaimValue,
-        string? signingKey = null)
+        string? signingKey = null,
+        string? subject = "test-user",
+        bool includeSubject = true)
     {
-        List<Claim> claims =
-        [
-            new("sub", "test-user"),
-        ];
+        List<Claim> claims = [];
+        if (includeSubject)
+        {
+            claims.Add(new Claim("sub", subject ?? string.Empty));
+        }
 
         if (includeOrganizationClaim)
         {

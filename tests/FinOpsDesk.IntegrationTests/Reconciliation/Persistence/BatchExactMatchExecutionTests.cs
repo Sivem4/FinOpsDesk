@@ -22,7 +22,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
 
 [Collection(SqlServerCollection.Name)]
-public sealed class BatchExactMatchExecutionTests
+public sealed partial class BatchExactMatchExecutionTests
 {
     private static readonly CurrencyCode Pln = PersistenceTestData.Pln;
     private static readonly DateTimeOffset OpenedAt = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
@@ -1230,10 +1230,13 @@ public sealed class BatchExactMatchExecutionTests
         IBatchExactMatchItemSynchronization? synchronization = null,
         QueryCounters? counters = null,
         Action? afterCandidateQuery = null,
-        bool forbidItemExecution = false)
+        bool forbidItemExecution = false,
+        string? actorId = TestCurrentActorContext.DefaultActorId,
+        Action<IServiceCollection>? configure = null)
     {
         ServiceCollection services = new();
         services.AddSingleton<ICurrentOrganizationContext>(new TestCurrentOrganizationContext(organizationId));
+        services.AddSingleton<ICurrentActorContext>(new TestCurrentActorContext(actorId));
         services.AddSingleton(time ?? TimeProvider.System);
         if (synchronization is not null)
         {
@@ -1270,6 +1273,7 @@ public sealed class BatchExactMatchExecutionTests
             services.AddScoped<IBatchExactMatchItemExecutor, ForbiddenItemExecutor>();
         }
 
+        configure?.Invoke(services);
         return services.BuildServiceProvider();
     }
 
@@ -1757,6 +1761,8 @@ public sealed class BatchExactMatchExecutionTests
         public Task<BatchItemAttempt> ExecuteAsync(
             OrganizationId organizationId,
             Guid batchIdempotencyKey,
+            BatchExecutionId batchExecutionId,
+            string actorId,
             InvoiceId invoiceId,
             BankTransactionId bankTransactionId,
             DateTimeOffset confirmedAt,

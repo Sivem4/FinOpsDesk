@@ -2,10 +2,12 @@ using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
@@ -461,6 +463,105 @@ public sealed class ConfirmExplicitAmountHandlerTests
     }
 
     [Fact]
+    public async Task Handle_should_append_one_confirmation_audit_for_the_confirmed_amount()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m, "INV-001", Pln);
+        BankTransaction bankTransaction = CreateBankTransaction(600m, "OTHER", Pln);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+
+        Result<ConfirmExplicitAmountResponse> result = await scenario.Handler.Handle(
+            Command(invoice.Id, bankTransaction.Id, 400m, Pln),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        (Allocation allocation, string actorId, BatchExecutionId? batchExecutionId) =
+            Assert.Single(scenario.Audit.Calls);
+        Assert.Same(scenario.Allocations.Added, allocation);
+        Assert.Equal("operator-a", actorId);
+        Assert.Null(batchExecutionId);
+        Assert.Equal(AllocationIdempotencyOperation.ExplicitAmount, allocation.IdempotencyOperation);
+        Assert.Equal(IdempotencyKey, allocation.IdempotencyKey);
+        Assert.Equal(new Money(400m, Pln), allocation.Amount);
+        Assert.Equal(1, scenario.UnitOfWork.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_not_append_audit_when_replaying()
+    {
+        Scenario scenario = CreateScenario();
+        InvoiceId invoiceId = InvoiceId.New();
+        BankTransactionId bankTransactionId = BankTransactionId.New();
+        scenario.Lookup.Record = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoiceId,
+            bankTransactionId,
+            new Money(400m, Pln),
+            AllocationIdempotencyOperation.ExplicitAmount);
+
+        Result<ConfirmExplicitAmountResponse> result = await scenario.Handler.Handle(
+            Command(invoiceId, bankTransactionId, 400m, Pln),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value?.Replayed);
+        Assert.Empty(scenario.Audit.Calls);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_a_missing_actor_before_idempotency_lookup()
+    {
+        Scenario scenario = CreateScenario();
+        scenario.Actor.ActorId = null;
+        InvoiceId invoiceId = InvoiceId.New();
+        BankTransactionId bankTransactionId = BankTransactionId.New();
+        scenario.Lookup.Record = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoiceId,
+            bankTransactionId,
+            new Money(400m, Pln),
+            AllocationIdempotencyOperation.ExplicitAmount);
+
+        Result<ConfirmExplicitAmountResponse> result = await scenario.Handler.Handle(
+            Command(invoiceId, bankTransactionId, 400m, Pln),
+            CancellationToken.None);
+
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired.Code, result.Error?.Code);
+        Assert.Equal(0, scenario.Lookup.FindCallCount);
+        Assert.Empty(scenario.Audit.Calls);
+    }
+
+    [Fact]
+    public async Task Handle_should_not_replay_an_audit_uniqueness_failure()
+    {
+        Scenario scenario = CreateScenario();
+        Invoice invoice = CreateInvoice(1000m, "INV-001", Pln);
+        BankTransaction bankTransaction = CreateBankTransaction(600m, "OTHER", Pln);
+        scenario.Invoices.InvoiceToReturn = invoice;
+        scenario.BankTransactions.BankTransactionToReturn = bankTransaction;
+        scenario.Conflict.Violation = false;
+        scenario.UnitOfWork.ExceptionToThrow = new UniqueConstraintConflictException(
+            "A unique constraint rejected the commit.");
+        scenario.Lookup.RecordAfterSave = new ConfirmedAllocationRecord(
+            AllocationId.New(),
+            invoice.Id,
+            bankTransaction.Id,
+            new Money(400m, Pln),
+            AllocationIdempotencyOperation.ExplicitAmount);
+
+        Result<ConfirmExplicitAmountResponse> result = await scenario.Handler.Handle(
+            Command(invoice.Id, bankTransaction.Id, 400m, Pln),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.ConcurrencyConflict.Code,
+            result.Error?.Code);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(1, scenario.Lookup.FindCallCount);
+    }
+
+    [Fact]
     public void Command_should_reject_an_empty_idempotency_key()
     {
         Assert.Throws<ArgumentException>(
@@ -521,13 +622,19 @@ public sealed class ConfirmExplicitAmountHandlerTests
         var allocations = new FakeAllocationRepository();
         var lookup = new FakeLookup();
         var unitOfWork = new FakeUnitOfWork();
+        var actor = new FakeActorContext();
+        var audit = new FakeAuditWriter();
+        var conflict = new FakeIdempotencyConflict();
         var handler = new ConfirmExplicitAmountHandler(
             new FakeCurrentOrganizationContext(TestOrganizationId),
+            actor,
             invoices,
             bankTransactions,
             allocations,
             lookup,
             unitOfWork,
+            audit,
+            conflict,
             new FixedTimeProvider(ConfirmedAt));
 
         return new Scenario(
@@ -536,7 +643,10 @@ public sealed class ConfirmExplicitAmountHandlerTests
             bankTransactions,
             allocations,
             lookup,
-            unitOfWork);
+            unitOfWork,
+            actor,
+            audit,
+            conflict);
     }
 
     private static Invoice CreateInvoice(
@@ -572,7 +682,10 @@ public sealed class ConfirmExplicitAmountHandlerTests
             FakeBankTransactionRepository bankTransactions,
             FakeAllocationRepository allocations,
             FakeLookup lookup,
-            FakeUnitOfWork unitOfWork)
+            FakeUnitOfWork unitOfWork,
+            FakeActorContext actor,
+            FakeAuditWriter audit,
+            FakeIdempotencyConflict conflict)
         {
             Handler = handler;
             Invoices = invoices;
@@ -580,6 +693,9 @@ public sealed class ConfirmExplicitAmountHandlerTests
             Allocations = allocations;
             Lookup = lookup;
             UnitOfWork = unitOfWork;
+            Actor = actor;
+            Audit = audit;
+            Conflict = conflict;
         }
 
         public ConfirmExplicitAmountHandler Handler { get; }
@@ -594,9 +710,55 @@ public sealed class ConfirmExplicitAmountHandlerTests
 
         public FakeUnitOfWork UnitOfWork { get; }
 
+        public FakeActorContext Actor { get; }
+
+        public FakeAuditWriter Audit { get; }
+
+        public FakeIdempotencyConflict Conflict { get; }
+
         public InvoiceId StoredInvoiceId { get; set; } = InvoiceId.New();
 
         public BankTransactionId StoredBankTransactionId { get; set; } = BankTransactionId.New();
+    }
+
+    private sealed class FakeActorContext : ICurrentActorContext
+    {
+        public string? ActorId { get; set; } = "operator-a";
+
+        public bool TryGetActorId(out string actorId)
+        {
+            if (string.IsNullOrWhiteSpace(ActorId))
+            {
+                actorId = string.Empty;
+                return false;
+            }
+
+            actorId = ActorId;
+            return true;
+        }
+    }
+
+    private sealed class FakeAuditWriter : IFinancialAuditWriter
+    {
+        public List<(Allocation Allocation, string ActorId, BatchExecutionId? BatchExecutionId)> Calls { get; } = [];
+
+        public void AppendConfirmation(
+            Allocation allocation,
+            string actorId,
+            BatchExecutionId? batchExecutionId)
+        {
+            Calls.Add((allocation, actorId, batchExecutionId));
+        }
+    }
+
+    private sealed class FakeIdempotencyConflict : IAllocationIdempotencyConflict
+    {
+        public bool Violation { get; set; } = true;
+
+        public bool IsIdempotencyIndexViolation(Exception exception)
+        {
+            return Violation;
+        }
     }
 
     private sealed class FakeCurrentOrganizationContext : ICurrentOrganizationContext

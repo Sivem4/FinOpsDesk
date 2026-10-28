@@ -2,6 +2,7 @@ using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
@@ -776,11 +777,14 @@ public sealed class ConfirmExplicitAmountPersistenceTests
             scope.ServiceProvider.GetRequiredService<IInvoiceRepository>());
         var handler = new ConfirmExactMatchHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             blocker,
             scope.ServiceProvider.GetRequiredService<IBankTransactionRepository>(),
             scope.ServiceProvider.GetRequiredService<IAllocationRepository>(),
             scope.ServiceProvider.GetRequiredService<IAllocationIdempotencyLookup>(),
             scope.ServiceProvider.GetRequiredService<IUnitOfWork>(),
+            scope.ServiceProvider.GetRequiredService<IFinancialAuditWriter>(),
+            scope.ServiceProvider.GetRequiredService<IAllocationIdempotencyConflict>(),
             new FixedTimeProvider(ConfirmedAt));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         Task<Result<ConfirmExactMatchResponse>> loserTask = handler.Handle(
@@ -862,11 +866,14 @@ public sealed class ConfirmExplicitAmountPersistenceTests
         await using AsyncServiceScope scope = provider.CreateAsyncScope();
         var handler = new ConfirmExactMatchHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             scope.ServiceProvider.GetRequiredService<IInvoiceRepository>(),
             scope.ServiceProvider.GetRequiredService<IBankTransactionRepository>(),
             scope.ServiceProvider.GetRequiredService<IAllocationRepository>(),
             scope.ServiceProvider.GetRequiredService<IAllocationIdempotencyLookup>(),
             scope.ServiceProvider.GetRequiredService<IUnitOfWork>(),
+            scope.ServiceProvider.GetRequiredService<IFinancialAuditWriter>(),
+            scope.ServiceProvider.GetRequiredService<IAllocationIdempotencyConflict>(),
             new FixedTimeProvider(ConfirmedAt));
         return await handler.Handle(
             new ConfirmExactMatchCommand(invoiceId, bankTransactionId, idempotencyKey),
@@ -954,11 +961,14 @@ public sealed class ConfirmExplicitAmountPersistenceTests
     {
         return new ConfirmExplicitAmountHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             invoiceRepository ?? services.GetRequiredService<IInvoiceRepository>(),
             services.GetRequiredService<IBankTransactionRepository>(),
             services.GetRequiredService<IAllocationRepository>(),
             services.GetRequiredService<IAllocationIdempotencyLookup>(),
             unitOfWork ?? services.GetRequiredService<IUnitOfWork>(),
+            services.GetRequiredService<IFinancialAuditWriter>(),
+            services.GetRequiredService<IAllocationIdempotencyConflict>(),
             new FixedTimeProvider(ConfirmedAt));
     }
 

@@ -1,9 +1,13 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.SharedKernel.Results;
@@ -26,6 +30,8 @@ internal static class AllocationEndpoints
 
     private static readonly string[] AmountPropertyNames = ["amount", "currency"];
 
+    private static readonly string[] AuditQueryNames = ["page", "pageSize"];
+
     public static RouteGroupBuilder MapAllocationEndpoints(this RouteGroupBuilder group)
     {
         ArgumentNullException.ThrowIfNull(group);
@@ -34,7 +40,53 @@ internal static class AllocationEndpoints
             .WithName("AllocateExplicitAmount")
             .AddOpenApiOperationTransformer(DocumentAllocationOperation);
 
+        group.MapGet("/allocations/{allocationId}/audit", GetAuditAsync)
+            .WithName("GetAllocationAudit")
+            .WithSummary("List financial audit entries for one allocation.")
+            .WithDescription(
+                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
+                + "Any TenantMember may read ActorId. Finer audit permissions are future work. "
+                + "A missing JWT sub is allowed on this read. "
+                + "Results are ordered by RecordedAt ascending, then audit entry id ascending. "
+                + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. "
+                + "An allocation with no audit rows returns an empty page. "
+                + "The response does not include the idempotency key and does not reconstruct a historical actor.")
+            .Produces<FinancialAuditListResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .AddOpenApiOperationTransformer(DocumentAuditOperation);
+
         return group;
+    }
+
+    private static async Task<Results<Ok<FinancialAuditListResponse>, ProblemHttpResult>> GetAuditAsync(
+        string allocationId,
+        HttpRequest httpRequest,
+        GetAllocationAuditHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadAllocationId(allocationId, out Guid parsedAllocationId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (!TryBindAuditQuery(httpRequest, out int page, out int pageSize, out ProblemHttpResult? queryProblem))
+        {
+            return queryProblem!;
+        }
+
+        Result<FinancialAuditListResponse> result = await handler.Handle(
+            new GetAllocationAuditQuery(new AllocationId(parsedAllocationId), page, pageSize),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return Problem(result.Error, StatusCodeFor(result.Error), TitleFor(result.Error));
+        }
+
+        return TypedResults.Ok(result.Value);
     }
 
     private static async Task<Results<JsonHttpResult<ConfirmExplicitAmountResponse>, ProblemHttpResult>> AllocateAsync(
@@ -305,9 +357,16 @@ internal static class AllocationEndpoints
 
     private static int StatusCodeFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return StatusCodes.Status403Forbidden;
+        }
+
         if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code
             || error.Code == ReconciliationApplicationErrors.IdempotencyKeyInvalid.Code
             || error.Code == ReconciliationApplicationErrors.AllocationInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code
             || error.Code == ReconciliationApplicationErrors.ExplicitAmountInvalid.Code)
         {
             return StatusCodes.Status400BadRequest;
@@ -324,7 +383,8 @@ internal static class AllocationEndpoints
         }
 
         if (error.Code == ReconciliationApplicationErrors.InvoiceNotFound.Code
-            || error.Code == ReconciliationApplicationErrors.BankTransactionNotFound.Code)
+            || error.Code == ReconciliationApplicationErrors.BankTransactionNotFound.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
         {
             return StatusCodes.Status404NotFound;
         }
@@ -344,6 +404,11 @@ internal static class AllocationEndpoints
 
     private static string TitleFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return "Actor is required.";
+        }
+
         if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code)
         {
             return "Idempotency key is required.";
@@ -357,6 +422,21 @@ internal static class AllocationEndpoints
         if (error.Code == ReconciliationApplicationErrors.AllocationInvalidRequest.Code)
         {
             return "Allocation request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
+        {
+            return "Allocation was not found.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidRequest.Code)
+        {
+            return "Allocation audit request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code)
+        {
+            return "Allocation audit page is invalid.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.ExplicitAmountInvalid.Code)
@@ -522,6 +602,162 @@ internal static class AllocationEndpoints
                 },
             },
         };
+    }
+
+    private static bool TryReadAllocationId(
+        string allocationId,
+        out Guid parsedAllocationId,
+        out ProblemHttpResult? problem)
+    {
+        if (!Guid.TryParse(allocationId, out parsedAllocationId) || parsedAllocationId == Guid.Empty)
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationAuditInvalidRequest,
+                StatusCodes.Status400BadRequest,
+                "Allocation audit request is invalid.");
+            return false;
+        }
+
+        problem = null;
+        return true;
+    }
+
+    private static bool TryBindAuditQuery(
+        HttpRequest httpRequest,
+        out int page,
+        out int pageSize,
+        out ProblemHttpResult? problem)
+    {
+        page = FinancialAuditListPagination.DefaultPage;
+        pageSize = FinancialAuditListPagination.DefaultPageSize;
+        problem = RejectUnexpectedAuditQuery(httpRequest);
+        if (problem is not null)
+        {
+            return false;
+        }
+
+        if (!TryReadAuditPage(
+                httpRequest,
+                "page",
+                FinancialAuditListPagination.DefaultPage,
+                out page,
+                out problem)
+            || !TryReadAuditPage(
+                httpRequest,
+                "pageSize",
+                FinancialAuditListPagination.DefaultPageSize,
+                out pageSize,
+                out problem))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ProblemHttpResult? RejectUnexpectedAuditQuery(HttpRequest httpRequest)
+    {
+        foreach (string key in httpRequest.Query.Keys)
+        {
+            if (!AuditQueryNames.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                return Problem(
+                    ReconciliationApplicationErrors.AllocationAuditInvalidRequest,
+                    StatusCodes.Status400BadRequest,
+                    "Allocation audit request is invalid.");
+            }
+
+            if (httpRequest.Query[key].Count != 1)
+            {
+                return Problem(
+                    ReconciliationApplicationErrors.AllocationAuditInvalidPagination,
+                    StatusCodes.Status400BadRequest,
+                    "Allocation audit page is invalid.");
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadAuditPage(
+        HttpRequest httpRequest,
+        string name,
+        int defaultValue,
+        out int page,
+        out ProblemHttpResult? problem)
+    {
+        page = defaultValue;
+        problem = null;
+        if (!httpRequest.Query.TryGetValue(name, out StringValues values))
+        {
+            return true;
+        }
+
+        if (values.Count != 1
+            || !int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out page))
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationAuditInvalidPagination,
+                StatusCodes.Status400BadRequest,
+                "Allocation audit page is invalid.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static Task DocumentAuditOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        operation.Parameters ??= [];
+        foreach (IOpenApiParameter parameter in operation.Parameters)
+        {
+            if (string.Equals(parameter.Name, "allocationId", StringComparison.OrdinalIgnoreCase)
+                && parameter.In == ParameterLocation.Path
+                && parameter is OpenApiParameter pathParameter)
+            {
+                pathParameter.Description = "Allocation id. An empty or malformed GUID is rejected.";
+                pathParameter.Schema = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String,
+                    Format = "uuid",
+                };
+            }
+        }
+
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "page",
+            In = ParameterLocation.Query,
+            Required = false,
+            Description = "Page number. Defaults to 1. The zero-based offset must fit in a 32-bit integer.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(FinancialAuditListPagination.DefaultPage),
+                Minimum = "1",
+            },
+        });
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "pageSize",
+            In = ParameterLocation.Query,
+            Required = false,
+            Description = "Page size. Defaults to 50. Maximum is 100.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(FinancialAuditListPagination.DefaultPageSize),
+                Minimum = "1",
+                Maximum = "100",
+            },
+        });
+        return Task.CompletedTask;
     }
 
     private static ProblemHttpResult Problem(Error error, int statusCode, string title)

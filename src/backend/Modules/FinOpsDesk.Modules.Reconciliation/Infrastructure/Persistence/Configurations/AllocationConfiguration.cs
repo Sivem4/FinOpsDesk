@@ -28,6 +28,12 @@ internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocat
 
         builder.HasKey(allocation => allocation.Id);
 
+        builder.HasAlternateKey(allocation => new
+        {
+            allocation.OrganizationId,
+            allocation.Id,
+        });
+
         builder.Property(allocation => allocation.Id)
             .HasConversion(ReconciliationValueConverters.AllocationId)
             .ValueGeneratedNever();

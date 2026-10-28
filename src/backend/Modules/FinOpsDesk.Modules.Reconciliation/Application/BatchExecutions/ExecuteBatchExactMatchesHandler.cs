@@ -13,6 +13,7 @@ namespace FinOpsDesk.Modules.Reconciliation.Application.BatchExecutions;
 public sealed class ExecuteBatchExactMatchesHandler
 {
     private readonly ICurrentOrganizationContext _currentOrganizationContext;
+    private readonly ICurrentActorContext _currentActorContext;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IExactMatchCandidateQueries _candidateQueries;
     private readonly IAllocationIdempotencyLookup _idempotencyLookup;
@@ -21,6 +22,7 @@ public sealed class ExecuteBatchExactMatchesHandler
 
     public ExecuteBatchExactMatchesHandler(
         ICurrentOrganizationContext currentOrganizationContext,
+        ICurrentActorContext currentActorContext,
         IServiceScopeFactory scopeFactory,
         IExactMatchCandidateQueries candidateQueries,
         IAllocationIdempotencyLookup idempotencyLookup,
@@ -28,6 +30,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(currentOrganizationContext);
+        ArgumentNullException.ThrowIfNull(currentActorContext);
         ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(candidateQueries);
         ArgumentNullException.ThrowIfNull(idempotencyLookup);
@@ -35,6 +38,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _currentOrganizationContext = currentOrganizationContext;
+        _currentActorContext = currentActorContext;
         _scopeFactory = scopeFactory;
         _candidateQueries = candidateQueries;
         _idempotencyLookup = idempotencyLookup;
@@ -48,6 +52,12 @@ public sealed class ExecuteBatchExactMatchesHandler
     {
         ArgumentNullException.ThrowIfNull(command);
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_currentActorContext.TryGetActorId(out string actorId))
+        {
+            return Result<ExecuteBatchExactMatchesResponse>.Failure(
+                ReconciliationApplicationErrors.ActorRequired);
+        }
 
         if (command.IdempotencyKey == Guid.Empty || command.Pairs is null)
         {
@@ -129,6 +139,7 @@ public sealed class ExecuteBatchExactMatchesHandler
             organizationId,
             command.IdempotencyKey,
             identity,
+            actorId,
             cancellationToken);
     }
 
@@ -136,6 +147,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         OrganizationId organizationId,
         Guid idempotencyKey,
         BatchExactMatchIdentity identity,
+        string actorId,
         CancellationToken cancellationToken)
     {
         Result<IBatchExecutionLease> acquired = await _owner.TryAcquireAsync(
@@ -173,6 +185,7 @@ public sealed class ExecuteBatchExactMatchesHandler
                 idempotencyKey,
                 identity,
                 snapshot,
+                actorId,
                 cancellationToken);
 
             if (work.IsFailure)
@@ -227,6 +240,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         Guid idempotencyKey,
         BatchExactMatchIdentity identity,
         BatchExecutionSnapshot snapshot,
+        string actorId,
         CancellationToken cancellationToken)
     {
         BatchExecutionItem[] items = new BatchExecutionItem[identity.Pairs.Count];
@@ -305,6 +319,8 @@ public sealed class ExecuteBatchExactMatchesHandler
             Result<BatchExecutionItem> executed = await ExecuteNewItemAsync(
                 organizationId,
                 idempotencyKey,
+                snapshot.Id,
+                actorId,
                 identity.Pairs[index],
                 now,
                 cancellationToken);
@@ -354,6 +370,8 @@ public sealed class ExecuteBatchExactMatchesHandler
     private async Task<Result<BatchExecutionItem>> ExecuteNewItemAsync(
         OrganizationId organizationId,
         Guid idempotencyKey,
+        BatchExecutionId batchExecutionId,
+        string actorId,
         BatchExactMatchPair pair,
         DateTimeOffset confirmedAt,
         CancellationToken cancellationToken)
@@ -365,6 +383,8 @@ public sealed class ExecuteBatchExactMatchesHandler
             attempt = await ExecuteItemAsync(
                 organizationId,
                 idempotencyKey,
+                batchExecutionId,
+                actorId,
                 pair,
                 confirmedAt,
                 cancellationToken);
@@ -456,6 +476,8 @@ public sealed class ExecuteBatchExactMatchesHandler
     private async Task<BatchItemAttempt> ExecuteItemAsync(
         OrganizationId organizationId,
         Guid idempotencyKey,
+        BatchExecutionId batchExecutionId,
+        string actorId,
         BatchExactMatchPair pair,
         DateTimeOffset confirmedAt,
         CancellationToken cancellationToken)
@@ -466,6 +488,8 @@ public sealed class ExecuteBatchExactMatchesHandler
         return await executor.ExecuteAsync(
             organizationId,
             idempotencyKey,
+            batchExecutionId,
+            actorId,
             pair.InvoiceId,
             pair.BankTransactionId,
             confirmedAt,

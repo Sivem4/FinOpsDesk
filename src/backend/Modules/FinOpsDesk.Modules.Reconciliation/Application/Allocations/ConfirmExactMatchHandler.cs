@@ -1,5 +1,6 @@
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Application.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Application.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
@@ -14,36 +15,48 @@ namespace FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 public sealed class ConfirmExactMatchHandler
 {
     private readonly ICurrentOrganizationContext _currentOrganizationContext;
+    private readonly ICurrentActorContext _currentActorContext;
     private readonly IInvoiceRepository _invoiceRepository;
     private readonly IBankTransactionRepository _bankTransactionRepository;
     private readonly IAllocationRepository _allocationRepository;
     private readonly IAllocationIdempotencyLookup _idempotencyLookup;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IFinancialAuditWriter _financialAuditWriter;
+    private readonly IAllocationIdempotencyConflict _idempotencyConflict;
     private readonly TimeProvider _timeProvider;
 
     public ConfirmExactMatchHandler(
         ICurrentOrganizationContext currentOrganizationContext,
+        ICurrentActorContext currentActorContext,
         IInvoiceRepository invoiceRepository,
         IBankTransactionRepository bankTransactionRepository,
         IAllocationRepository allocationRepository,
         IAllocationIdempotencyLookup idempotencyLookup,
         IUnitOfWork unitOfWork,
+        IFinancialAuditWriter financialAuditWriter,
+        IAllocationIdempotencyConflict idempotencyConflict,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(currentOrganizationContext);
+        ArgumentNullException.ThrowIfNull(currentActorContext);
         ArgumentNullException.ThrowIfNull(invoiceRepository);
         ArgumentNullException.ThrowIfNull(bankTransactionRepository);
         ArgumentNullException.ThrowIfNull(allocationRepository);
         ArgumentNullException.ThrowIfNull(idempotencyLookup);
         ArgumentNullException.ThrowIfNull(unitOfWork);
+        ArgumentNullException.ThrowIfNull(financialAuditWriter);
+        ArgumentNullException.ThrowIfNull(idempotencyConflict);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _currentOrganizationContext = currentOrganizationContext;
+        _currentActorContext = currentActorContext;
         _invoiceRepository = invoiceRepository;
         _bankTransactionRepository = bankTransactionRepository;
         _allocationRepository = allocationRepository;
         _idempotencyLookup = idempotencyLookup;
         _unitOfWork = unitOfWork;
+        _financialAuditWriter = financialAuditWriter;
+        _idempotencyConflict = idempotencyConflict;
         _timeProvider = timeProvider;
     }
 
@@ -52,6 +65,12 @@ public sealed class ConfirmExactMatchHandler
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+
+        if (!_currentActorContext.TryGetActorId(out string actorId))
+        {
+            return Result<ConfirmExactMatchResponse>.Failure(
+                ReconciliationApplicationErrors.ActorRequired);
+        }
 
         OrganizationId organizationId = _currentOrganizationContext.OrganizationId;
         ConfirmedAllocationRecord? existing = await _idempotencyLookup.FindAsync(
@@ -126,15 +145,25 @@ public sealed class ConfirmExactMatchHandler
             AllocationIdempotencyOperation.ExactMatch);
 
         _allocationRepository.Add(allocation);
+        _financialAuditWriter.AppendConfirmation(allocation, actorId, batchExecutionId: null);
 
         try
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
-        catch (Exception exception) when (exception is ConcurrencyConflictException
-            or UniqueConstraintConflictException)
+        catch (ConcurrencyConflictException)
         {
             return await RecoverAsync(command, organizationId, cancellationToken);
+        }
+        catch (UniqueConstraintConflictException exception)
+            when (_idempotencyConflict.IsIdempotencyIndexViolation(exception))
+        {
+            return await RecoverAsync(command, organizationId, cancellationToken);
+        }
+        catch (UniqueConstraintConflictException)
+        {
+            return Result<ConfirmExactMatchResponse>.Failure(
+                ReconciliationApplicationErrors.ConcurrencyConflict);
         }
 
         return Result<ConfirmExactMatchResponse>.Success(
