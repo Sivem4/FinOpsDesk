@@ -39,7 +39,7 @@ Confirmation uses `IdempotencyKey` with `UX_Allocations_OrganizationId_Idempoten
 
 `CK_Allocations_IdempotencyOperation` still allows only confirmation operations 1, 2, and 3. Operation 4 is audit-only.
 
-A fresh reversal returns HTTP 200 with `replayed` false. The same key and the same normalized reason for the same allocation return HTTP 200 with `replayed` true. Replay returns the original `reversedAt`, reason, and audit actor. It does not write another audit row.
+A fresh reversal returns HTTP 200 with `replayed` false. The same key and the same normalized reason for the same allocation return HTTP 200. Replay returns the original `reversedAt` and reason with `replayed=true`. The original reversal actor remains preserved in the immutable audit entry and is not part of the reversal response. It does not write another audit row.
 
 The same reversal key with a different allocation id or a different normalized reason returns HTTP 409 `reconciliation.allocation.reversal_idempotency_payload_conflict`. A different key for an allocation that is already reversed returns HTTP 409 `reconciliation.allocation.already_reversed`.
 
