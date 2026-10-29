@@ -40,7 +40,13 @@ describe('invoice register', () => {
 
     renderRegister();
 
-    expect(await screen.findByText('No invoices are in this organization yet.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'No invoices are in this organization yet. Import a CSV file to add invoices.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Review your invoices and the amounts still outstanding/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Import invoices' })).toHaveAttribute('href', '/imports');
     expect(screen.queryByRole('button', { name: 'Go to first page' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Go to next page' })).not.toBeInTheDocument();
   });
@@ -63,7 +69,9 @@ describe('invoice register', () => {
     expect(
       await screen.findByText('This page has no invoices. Other pages still contain invoices.'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('No invoices are in this organization yet.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No invoices are in this organization yet. Import a CSV file to add invoices.'),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Go to first page' })).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Invoices' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Go to previous page' })).not.toBeInTheDocument();
@@ -98,7 +106,7 @@ describe('invoice register', () => {
     );
 
     renderRegister();
-    expect(await screen.findByText('The API could not be reached.')).toBeInTheDocument();
+    expect(await screen.findByText('We couldn’t connect. Check your connection and try again.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Loading invoices');
@@ -151,6 +159,25 @@ describe('invoice register', () => {
     expect(seen.some((query) => query.includes('page=2'))).toBe(true);
   });
 
+  it('allows keyboard selection and explains that balances come from the loaded register', async () => {
+    const user = userEvent.setup();
+    server.use(http.get('/api/invoices', () => json(listBody([invoice('INV-100', '10', '0', '10')]))));
+    renderRegister();
+
+    const invoiceButton = await screen.findByRole('button', { name: 'INV-100' });
+    expect(invoiceButton).toHaveAttribute('aria-pressed', 'false');
+    expect(invoiceButton).not.toHaveAttribute('aria-controls');
+    invoiceButton.focus();
+    await user.keyboard('{Enter}');
+
+    expect(invoiceButton).toHaveAttribute('aria-pressed', 'true');
+    expect(invoiceButton).toHaveAttribute('aria-controls', 'selected-invoice');
+    const selected = screen.getByRole('region', { name: 'Selected invoice' });
+    expect(selected).toHaveAttribute('id', invoiceButton.getAttribute('aria-controls'));
+    expect(selected).toHaveTextContent('These are the balances for the selected invoice.');
+    expect(screen.getByText(/Select an invoice number/)).toBeInTheDocument();
+  });
+
   it('shows invalid pagination from the URL and from the API', async () => {
     let calls = 0;
     server.use(
@@ -168,31 +195,31 @@ describe('invoice register', () => {
     );
 
     const view = renderRegister('/invoices?page=0');
-    expect(await screen.findByText('Page or page size is not valid.')).toBeInTheDocument();
+    expect(await screen.findByText('This page can’t be opened. Open Invoices again from the menu.')).toBeInTheDocument();
     expect(calls).toBe(0);
 
     view.unmount();
     renderRegister('/invoices');
-    expect(await screen.findByText('Page or page size is not valid.')).toBeInTheDocument();
+    expect(await screen.findByText('This page can’t be opened. Open Invoices again from the menu.')).toBeInTheDocument();
     expect(calls).toBe(1);
   });
 
   it('distinguishes unauthorized, forbidden, and network failures', async () => {
     server.use(http.get('/api/invoices', () => new HttpResponse(null, { status: 401 })));
     const unauthorized = renderRegister();
-    expect(await screen.findByText('The access token was rejected.')).toBeInTheDocument();
+    expect(await screen.findByText('Your access has expired or is no longer valid. Update it to continue.')).toBeInTheDocument();
     unauthorized.unmount();
 
     server.use(http.get('/api/invoices', () => new HttpResponse(null, { status: 403 })));
     const forbidden = renderRegister();
     expect(
-      await screen.findByText('The token does not contain a valid organization.'),
+      await screen.findByText('You don’t have access to this workspace. Check your access details.'),
     ).toBeInTheDocument();
     forbidden.unmount();
 
     server.use(http.get('/api/invoices', () => HttpResponse.error()));
     renderRegister();
-    expect(await screen.findByText('The API could not be reached.')).toBeInTheDocument();
+    expect(await screen.findByText('We couldn’t connect. Check your connection and try again.')).toBeInTheDocument();
   });
 });
 

@@ -1,6 +1,6 @@
 # Frontend development
 
-The operations workspace is a Vite application in `src/frontend`. Phase 6A shows the invoice register from `GET /api/invoices`. It does not issue tokens, import files, or change financial state.
+The operations workspace is a Vite application in `src/frontend`. It shows the invoice register from `GET /api/invoices` and CSV import at `/imports`. It does not issue tokens. The import screen sends the selected file to the existing import endpoints and does not change amounts in the browser.
 
 Production browser authentication is Phase 7. The development token screen is compiled only into the Vite development build. A production build shows that browser sign-in is not configured.
 
@@ -81,9 +81,17 @@ Paste the token into **Development access token**. It is held in memory only. Re
 
 The JWT stays valid until `exp` even after log out. This development flow has no revocation list.
 
-## Invoice data
+## CSV import
 
-The register calls `GET /api/invoices`. To add rows, import a CSV with the same access token. The UI does not import files.
+Open `http://localhost:5173/imports` after entering the development token. Choose invoices or bank transactions, enter a source system, and select the original CSV. The screen shows the required headers before submission. Invoice columns are `ExternalId,InvoiceNumber,Amount,Currency`. Bank transaction columns are `ExternalId,BookingDate,Amount,Currency,Reference`, and `BookingDate` uses `yyyy-MM-dd`. Files larger than 2 MiB are blocked in the form. The API remains the authority for the multipart request, the header, and every amount.
+
+Submit with **Import file**. The browser sends `multipart/form-data` fields named `file` and `sourceSystem`. The file bytes are not rewritten. Surrounding spaces are removed from the source system; its letter case is not changed in the browser. The server trims it and stores uppercase.
+
+A new import returns HTTP 201. The same bytes, import type, and normalized source system return HTTP 200 with `replayed` true and the stored batch. `Completed`, `CompletedWithErrors`, and `Rejected` are persisted batch results. HTTP 400 means the file was structurally rejected and no batch was saved. If the request ends without a response, the screen says the outcome is unknown. Submit the same file again manually. Reloading the browser discards the selected file, so it must be selected again. There is no import-history endpoint, so a finished result cannot be loaded by batch id.
+
+A confirmed invoice import or replay refreshes the invoice register. Open **Invoices** to see rows from `GET /api/invoices`. A bank transaction import does not refresh that register, and there is no bank-transaction list endpoint.
+
+The same call can be made directly:
 
 ```powershell
 $token = (scripts\dev-token.ps1 -Subject operator-1 -OrganizationId $organizationId).Trim()
@@ -96,7 +104,7 @@ curl.exe -sS -X POST "https://localhost:7257/api/imports/invoices" `
   -F "file=@$csvPath;type=text/csv"
 ```
 
-Use the public certificate trust from `dev-frontend.ps1` for `curl.exe` as well, or run curl from a session that already trusts the development certificate through Windows. A new import returns HTTP 201. Importing the same file bytes again returns HTTP 200 with `replayed` true.
+Use the public certificate trust from `dev-frontend.ps1` for `curl.exe` as well, or run curl from a session that already trusts the development certificate through Windows.
 
 Open `http://localhost:5173/invoices`. Amounts are read from the JSON number tokens, including a zero allocated amount.
 

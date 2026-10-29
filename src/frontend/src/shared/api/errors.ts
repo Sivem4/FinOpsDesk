@@ -32,9 +32,16 @@ export class StaleSessionError extends Error {
 }
 
 export class UnexpectedResponseError extends Error {
-  constructor() {
-    super('The API returned a response the invoice register cannot read.');
+  constructor(message = 'The API returned a response the invoice register cannot read.') {
+    super(message);
     this.name = 'UnexpectedResponseError';
+  }
+}
+
+export class UnknownImportOutcomeError extends Error {
+  constructor() {
+    super('The import request ended before a server result was received.');
+    this.name = 'UnknownImportOutcomeError';
   }
 }
 

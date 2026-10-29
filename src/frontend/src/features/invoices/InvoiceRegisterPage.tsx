@@ -11,10 +11,11 @@ import {
   TablePagination,
   TableRow,
   Typography,
+  Tooltip,
 } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 
 import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
 import { endSession, useSession } from '../../shared/auth/session';
@@ -52,15 +53,17 @@ export function InvoiceRegisterPage() {
         <Typography variant="h4" component="h1">
           Invoices
         </Typography>
-        {list !== null ? (
-          <Button onClick={() => void query.refetch()} disabled={query.isFetching}>
-            Refresh
-          </Button>
-        ) : null}
+        <Stack direction="row" spacing={1}>
+          <Button component={Link} to="/imports" variant="outlined">Import invoices</Button>
+          {list !== null ? (
+            <Button onClick={() => void query.refetch()} disabled={query.isFetching}>
+              Refresh
+            </Button>
+          ) : null}
+        </Stack>
       </Stack>
       <Typography color="text.secondary">
-        Amounts on this page come from the current invoice list. A separate invoice record is not
-        available.
+        Review your invoices and the amounts still outstanding. Select an invoice number to see its balances.
       </Typography>
       {!paginationValid ? <InvalidPagination /> : null}
       {paginationValid && query.isPending ? <LoadingState /> : null}
@@ -129,16 +132,21 @@ function InvoiceTable({
           <TableHead>
             <TableRow>
               <TableCell scope="col">Invoice number</TableCell>
-              <TableCell scope="col" align="right">Total</TableCell>
-              <TableCell scope="col" align="right">Allocated</TableCell>
-              <TableCell scope="col" align="right">Outstanding</TableCell>
+              <TableCell scope="col" align="right"><Tooltip describeChild title="The original invoice amount"><span tabIndex={0}>Total</span></Tooltip></TableCell>
+              <TableCell scope="col" align="right"><Tooltip describeChild title="The amount already applied to this invoice"><span tabIndex={0}>Allocated</span></Tooltip></TableCell>
+              <TableCell scope="col" align="right"><Tooltip describeChild title="The amount still to be covered"><span tabIndex={0}>Outstanding</span></Tooltip></TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {items.map((item) => (
               <TableRow key={item.id} selected={item.id === selectedId} hover>
                 <TableCell>
-                  <Button variant="text" onClick={() => onSelect(item.id)}>
+                  <Button
+                    variant="text"
+                    onClick={() => onSelect(item.id)}
+                    aria-pressed={item.id === selectedId}
+                    aria-controls={item.id === selectedId ? 'selected-invoice' : undefined}
+                  >
                     {item.invoiceNumber}
                   </Button>
                 </TableCell>
@@ -169,9 +177,12 @@ function InvoiceTable({
 
 function SelectedInvoice({ item }: { item: InvoiceListItem }) {
   return (
-    <Paper sx={{ p: 2 }}>
-      <Typography variant="h6" component="h2" gutterBottom>
+    <Paper id="selected-invoice" component="section" aria-labelledby="selected-invoice-heading" sx={{ p: 2 }}>
+      <Typography id="selected-invoice-heading" variant="h6" component="h2" gutterBottom>
         Selected invoice
+      </Typography>
+      <Typography color="text.secondary" gutterBottom>
+        These are the balances for the selected invoice.
       </Typography>
       <Typography>{item.invoiceNumber}</Typography>
       <Typography>Total {formatMoney(item.totalAmount, item.totalCurrency)}</Typography>
@@ -192,7 +203,9 @@ function LoadingState() {
 }
 
 function EmptyState() {
-  return <Alert severity="info">No invoices are in this organization yet.</Alert>;
+  return (
+    <Alert severity="info">No invoices are in this organization yet. Import a CSV file to add invoices.</Alert>
+  );
 }
 
 function EmptyPage({ onFirstPage }: { onFirstPage: () => void }) {
@@ -211,7 +224,7 @@ function EmptyPage({ onFirstPage }: { onFirstPage: () => void }) {
 }
 
 function InvalidPagination() {
-  return <Alert severity="warning">Page or page size is not valid.</Alert>;
+  return <Alert severity="warning">This page can’t be opened. Open Invoices again from the menu.</Alert>;
 }
 
 function ErrorState({
@@ -229,11 +242,11 @@ function ErrorState({
         severity="warning"
         action={
           <Button color="inherit" onClick={() => endSession('unauthorized')}>
-            Use a different token
+            Update access
           </Button>
         }
       >
-        The access token was rejected.
+        Your access has expired or is no longer valid. Update it to continue.
       </Alert>
     );
   }
@@ -244,11 +257,11 @@ function ErrorState({
         severity="warning"
         action={
           <Button color="inherit" onClick={() => endSession('forbidden')}>
-            Use a different token
+            Update access
           </Button>
         }
       >
-        The token does not contain a valid organization.
+        You don’t have access to this workspace. Check your access details.
       </Alert>
     );
   }
@@ -260,7 +273,7 @@ function ErrorState({
   if (error instanceof NetworkError) {
     return (
       <Alert severity="error" action={<RetryButton onRetry={onRetry} retrying={retrying} />}>
-        The API could not be reached.
+        We couldn’t connect. Check your connection and try again.
       </Alert>
     );
   }
@@ -268,7 +281,7 @@ function ErrorState({
   if (error instanceof UnexpectedResponseError) {
     return (
       <Alert severity="error" action={<RetryButton onRetry={onRetry} retrying={retrying} />}>
-        {error.message}
+        We couldn’t load your invoices. Please try again.
       </Alert>
     );
   }

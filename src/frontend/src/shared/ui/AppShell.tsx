@@ -21,6 +21,9 @@ export function AppShell({
           <Button component={NavLink} to="/invoices" color="inherit">
             Invoices
           </Button>
+          <Button component={NavLink} to="/imports" color="inherit">
+            Imports
+          </Button>
           <Button color="inherit" onClick={onReplace}>
             Replace token
           </Button>
