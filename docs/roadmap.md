@@ -110,7 +110,7 @@ Delivered:
 - HTTP 200 and invalid-pagination HTTP 400;
 - SQL Server query tests and JWT HTTP integration tests.
 
-Exact-match confirmation over HTTP, including HTTP 409 for that endpoint, followed in Phase 4C. Explicit-amount allocation followed in Phase 4D. Confirmation audit is Phase 5B. Persisted reversal is Phase 5C. Other manual allocation workflows remain open in Phase 5. Roles and the browser BFF remain Phase 7. See ADR 0004.
+Exact-match confirmation over HTTP, including HTTP 409 for that endpoint, followed in Phase 4C. Explicit-amount allocation followed in Phase 4D. Confirmation audit is Phase 5B. Persisted reversal is Phase 5C. Phase 5 records the delivered manual allocation workflow. Roles and the browser BFF remain Phase 7. See ADR 0004.
 
 ## Phase 3: Imports and idempotency
 
@@ -190,9 +190,9 @@ Do not add AI before the deterministic decision path is observable and testable.
 
 ## Phase 5: Allocation workflow and audit
 
-Status: In progress.
+Status: Complete.
 
-Phase 4C confirms one exact pair. Phase 4D confirms one explicit amount at `POST /api/allocations`, including sequential multi-allocation, and maps that endpoint's conflicts to HTTP 409. Phase 5B adds confirmation audit for those writes and for operator-approved batch exact matching. The phase as a whole is not complete.
+Phase 5B records confirmation audit for exact-match confirmation, explicit-amount allocation, and operator-approved batch exact matching. Phase 5C records full reversal of one allocation. The delivered workflow, the deferred suggestion lifecycle, and the idempotency boundary are stated after Phase 5C. Finer authorization remains Phase 7.
 
 ### 5B.1: Financial audit persistence
 
@@ -228,7 +228,7 @@ Migration `20261028002321_AddFinancialAuditEntries` was verified against isolate
 
 This increment introduces no new financial behavior.
 
-Phase 5B is complete. Phase 5 remains in progress.
+Phase 5B is complete.
 
 ### 5C: Allocation reversal
 
@@ -240,14 +240,24 @@ A batch receipt records the historical confirmation outcome. A later reversal do
 
 Migration `20261028221955_AddAllocationReversalPersistence` adds the allocation token, the nullable reversal key, and the reversal audit constraints. Its Down is rejected while a reversal audit row or a non-null reversal key exists.
 
-These Phase 5 requirements also remain open:
+The delivered allocation workflow is:
 
-- manual allocation workflows that Phase 4D does not cover;
-- persisted confirmation of a `MatchSuggestion`, which remains a domain model only;
-- idempotency for financial commands other than exact-match confirmation, explicit-amount confirmation, batch exact-match execution, and allocation reversal;
-- HTTP conflict mapping for those remaining allocation commands.
+- exact-1 confirmation through `POST /api/matches/confirm`;
+- explicit-amount allocation through `POST /api/allocations`, including a partial amount;
+- several separate allocations against the same invoice;
+- several separate allocations against the same bank transaction;
+- batch exact-match execution through `POST /api/matches/batch/execute`;
+- full reversal of one existing allocation through `POST /api/allocations/{allocationId}/reverse`.
 
-Finer authorization, including who may read audit `ActorId`, remains Phase 7.
+Repeated explicit-amount calls are independent, idempotent financial transactions. They are not one atomic command that allocates several arbitrary amounts together.
+
+Phase 5 does not include partial reversal of one allocation, one atomic request containing several arbitrary allocation amounts, cross-currency allocation, or direct confirmation by a persisted `MatchSuggestion` identifier.
+
+`smart-1` suggestions are advisory and read-only. `MatchSuggestion` exists as a domain model and has no persisted EF Core lifecycle. Confirmation commands reload and validate the current financial records. Persisting a suggestion lifecycle is not required to complete Phase 5 and is not implemented. A later phase may revisit that persistence if a genuine business requirement appears.
+
+Exact-match confirmation, explicit-amount confirmation, batch exact-match execution, and full allocation reversal already have tenant-scoped idempotency and HTTP conflict handling under their existing persistence rules. Import repetition uses the file hash and source identity. Review-case repetition uses the open subject key and `rowversion`. Those mechanisms are separate from allocation command keys. This phase does not add a generic idempotency framework, and it does not leave idempotency or conflict mapping unfinished for commands that do not exist.
+
+Finer authorization, including resource-specific permissions and who may read audit `ActorId`, remains Phase 7. Authentication and authorization follow-ups already listed under Phase 7 stay open.
 
 ## Phase 6: React operations workspace
 
