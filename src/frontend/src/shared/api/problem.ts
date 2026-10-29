@@ -63,6 +63,14 @@ function fallbackTitle(status: number): string {
     return 'Forbidden';
   }
 
+  if (status === 409) {
+    return 'The import conflict was not resolved.';
+  }
+
+  if (status === 413) {
+    return 'The file is too large.';
+  }
+
   return 'The API could not complete the request.';
 }
 

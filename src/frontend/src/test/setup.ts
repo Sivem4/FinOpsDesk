@@ -4,10 +4,12 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { queryClient } from '../shared/api/query-client';
 import { sessionStore } from '../shared/api/session-store';
+import { installMultipartFormDataCompat } from './form-data-compat';
 import { server } from './server';
 
 beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' });
+  installMultipartFormDataCompat();
 });
 
 afterEach(() => {
