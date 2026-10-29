@@ -8,6 +8,8 @@ namespace FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 
 public sealed class Allocation
 {
+    public const int MaxReversalReasonLength = 500;
+
     public AllocationId Id { get; }
 
     public OrganizationId OrganizationId { get; }
@@ -84,6 +86,7 @@ public sealed class Allocation
             }
         }
         else if (idempotencyOperation is null
+            || idempotencyOperation == AllocationIdempotencyOperation.Reversal
             || !Enum.IsDefined(idempotencyOperation.Value))
         {
             throw new ArgumentException(
@@ -106,6 +109,23 @@ public sealed class Allocation
         string reason,
         DateTimeOffset reversedAt)
     {
+        Result validation = ValidateReversal(reason, reversedAt);
+
+        if (validation.IsFailure)
+        {
+            return validation;
+        }
+
+        Status = AllocationStatus.Reversed;
+        ReversedAt = reversedAt;
+        ReversalReason = reason.Trim();
+        return Result.Success();
+    }
+
+    internal Result ValidateReversal(
+        string reason,
+        DateTimeOffset reversedAt)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
         if (reversedAt < ConfirmedAt)
@@ -120,9 +140,11 @@ public sealed class Allocation
             return Result.Failure(ReconciliationErrors.AllocationAlreadyReversed);
         }
 
-        Status = AllocationStatus.Reversed;
-        ReversedAt = reversedAt;
-        ReversalReason = reason.Trim();
+        if (reason.Trim().Length > MaxReversalReasonLength)
+        {
+            return Result.Failure(ReconciliationErrors.AllocationReversalReasonTooLong);
+        }
+
         return Result.Success();
     }
 }

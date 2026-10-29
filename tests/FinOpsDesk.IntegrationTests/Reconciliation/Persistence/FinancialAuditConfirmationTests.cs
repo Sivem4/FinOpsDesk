@@ -431,6 +431,14 @@ public sealed class FinancialAuditConfirmationTests
                     actorId,
                     batchExecutionId));
         }
+
+        public void AppendReversal(
+            Allocation allocation,
+            string actorId,
+            Guid reversalIdempotencyKey)
+        {
+            throw new InvalidOperationException("This confirmation test double does not record reversals.");
+        }
     }
 
     private sealed class StaleRowVersionUnitOfWork : IUnitOfWork

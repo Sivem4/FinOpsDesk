@@ -125,6 +125,22 @@ public sealed class BankTransactionTests
     }
 
     [Fact]
+    public void CanReverseAllocation_should_not_change_allocated_amount()
+    {
+        var transaction = CreateTransaction(1000m);
+        transaction.Allocate(new Money(300m, Pln));
+
+        Result accepted = transaction.CanReverseAllocation(new Money(300m, Pln));
+        Result rejected = transaction.CanReverseAllocation(new Money(301m, Pln));
+
+        Assert.True(accepted.IsSuccess);
+        Assert.Equal(
+            ReconciliationErrors.BankTransactionReversalExceedsAllocated.Code,
+            rejected.Error?.Code);
+        Assert.Equal(new Money(300m, Pln), transaction.AllocatedAmount);
+    }
+
+    [Fact]
     public void ReverseAllocation_should_restore_unapplied_amount()
     {
         var transaction = CreateTransaction(1000m);

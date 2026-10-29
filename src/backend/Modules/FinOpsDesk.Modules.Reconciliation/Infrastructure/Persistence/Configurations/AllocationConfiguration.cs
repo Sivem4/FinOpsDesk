@@ -12,6 +12,13 @@ internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocat
 {
     internal const string IdempotencyIndexName = "UX_Allocations_OrganizationId_IdempotencyKey";
 
+    internal const string ReversalIdempotencyIndexName =
+        "UX_Allocations_OrganizationId_ReversalIdempotencyKey";
+
+    internal const string RowVersionPropertyName = "RowVersion";
+
+    internal const string ReversalIdempotencyKeyPropertyName = "ReversalIdempotencyKey";
+
     internal const string IdempotencyOperationCheckName = "CK_Allocations_IdempotencyOperation";
 
     internal const string IdempotencyOperationCheckSql =
@@ -64,6 +71,17 @@ internal sealed class AllocationConfiguration : IEntityTypeConfiguration<Allocat
             .IsUnique()
             .HasFilter("[IdempotencyKey] IS NOT NULL")
             .HasDatabaseName(IdempotencyIndexName);
+
+        builder.Property<byte[]>(RowVersionPropertyName)
+            .IsRowVersion()
+            .IsRequired();
+
+        builder.Property<Guid?>(ReversalIdempotencyKeyPropertyName);
+
+        builder.HasIndex("OrganizationId", ReversalIdempotencyKeyPropertyName)
+            .IsUnique()
+            .HasFilter("[ReversalIdempotencyKey] IS NOT NULL")
+            .HasDatabaseName(ReversalIdempotencyIndexName);
 
         builder.Property(allocation => allocation.ReversedAt)
             .HasColumnType("datetimeoffset");

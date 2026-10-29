@@ -131,7 +131,7 @@ public sealed class BankTransaction
         return Result.Success();
     }
 
-    public Result ReverseAllocation(Money amount)
+    public Result CanReverseAllocation(Money amount)
     {
         ArgumentNullException.ThrowIfNull(amount);
 
@@ -151,6 +151,18 @@ public sealed class BankTransaction
         {
             return Result.Failure(
                 ReconciliationErrors.BankTransactionReversalExceedsAllocated);
+        }
+
+        return Result.Success();
+    }
+
+    public Result ReverseAllocation(Money amount)
+    {
+        Result canReverse = CanReverseAllocation(amount);
+
+        if (canReverse.IsFailure)
+        {
+            return canReverse;
         }
 
         AllocatedAmount = AllocatedAmount.Subtract(amount);

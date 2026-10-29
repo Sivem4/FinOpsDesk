@@ -32,4 +32,21 @@ internal sealed class FinancialAuditWriter : IFinancialAuditWriter
 
         _dbContext.FinancialAuditEntries.Add(entry);
     }
+
+    public void AppendReversal(
+        Allocation allocation,
+        string actorId,
+        Guid reversalIdempotencyKey)
+    {
+        ArgumentNullException.ThrowIfNull(allocation);
+        ArgumentNullException.ThrowIfNull(actorId);
+
+        FinancialAuditEntry entry = FinancialAuditEntry.ForReversal(
+            FinancialAuditEntryId.New(),
+            allocation,
+            actorId,
+            reversalIdempotencyKey);
+
+        _dbContext.FinancialAuditEntries.Add(entry);
+    }
 }

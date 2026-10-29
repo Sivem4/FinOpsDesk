@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-26
+- Follow-up: [ADR 0010](0010-batch-auto-matching.md) adds batch execution, [ADR 0011](0011-financial-audit-foundation.md) adds confirmation audit, and [ADR 0012](0012-allocation-reversal.md) adds persisted reversal. The explicit-amount decision below remains in force.
 
 ## Context
 
@@ -27,13 +28,13 @@ The required `Idempotency-Key` header is one UUID in `D` format. `OrganizationId
 
 Migration `20261026155535_AddAllocationIdempotencyOperation` adds the nullable operation column, backfills existing keyed Phase 4C rows to `ExactMatch`, and adds `CK_Allocations_IdempotencyOperation`. A row is valid only when the key and the operation are both null, or the key is present and the operation is 1 or 2. Keyless rows, including those created by `ConfirmAllocationHandler`, stay outside the filtered unique index. The Phase 4C migration is not changed. The filtered unique index remains the authority for a repeated key.
 
-`Invoice` and `BankTransaction` keep their SQL Server `rowversion` tokens. `Allocation` does not have one. A stale version or a unique-key conflict fails the whole `SaveChanges`. The handler reads the winner through `IAllocationIdempotencyLookup` on a new context and does not save the failed context again. A matching fingerprint becomes a replay. A different fingerprint becomes a payload conflict. If that fresh read does not find the key, the result is `reconciliation.concurrency_conflict`.
+`Invoice` and `BankTransaction` keep their SQL Server `rowversion` tokens. This decision does not give `Allocation` one. ADR 0012 later adds that token for persisted reversal. A stale version or a unique-key conflict fails the whole `SaveChanges`. The handler reads the winner through `IAllocationIdempotencyLookup` on a new context and does not save the failed context again. A matching fingerprint becomes a replay. A different fingerprint becomes a payload conflict. If that fresh read does not find the key, the result is `reconciliation.concurrency_conflict`.
 
 The same recovery runs when a balance check fails after the first lookup missed. That covers a winner that committed the same aggregates before this request finished validation. There is a remaining window after the second lookup: the winner may still be uncommitted, and this request can return the balance or concurrency error without storing the key. A client retry with the original key and payload then takes the lookup path and returns the original allocation id. No lock and no automatic financial retry are added.
 
 The route uses the existing `TenantMember` policy. Any member of the organization can call it. A foreign invoice or bank transaction is not found, and the response does not include the other tenant's amounts, references, or organization id. A client-supplied organization id is not accepted. The endpoint does not record the acting user.
 
-There is no `POST /api/allocations/batch`, no automatic batch reconciliation, no persisted reversal, and no immutable audit record. Reversal, audit attribution, and finer authorization remain later phases. `ConfirmAllocationHandler` stays unregistered for HTTP. `POST /api/matches/confirm` is unchanged.
+This decision does not add `POST /api/allocations/batch`, automatic batch reconciliation, persisted reversal, or an immutable audit record. Those later arrived in ADR 0010, ADR 0011, and ADR 0012. Finer authorization remains Phase 7. `ConfirmAllocationHandler` stays unregistered for HTTP. `POST /api/matches/confirm` is unchanged.
 
 ## Alternatives considered
 

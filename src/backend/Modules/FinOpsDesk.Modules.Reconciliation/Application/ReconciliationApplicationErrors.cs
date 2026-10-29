@@ -223,4 +223,19 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.batch.request_too_large",
             "The batch execution request body must be at most 8192 bytes.");
+
+    public static Error AllocationReversalInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation.reversal_invalid_request",
+            "The reversal body must contain only a non-blank reason.");
+
+    public static Error AllocationReversalIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.allocation.reversal_idempotency_payload_conflict",
+            "This idempotency key was already used for a different reversal request.");
+
+    public static Error AllocationReversalIntegrityConflict { get; } =
+        new(
+            "reconciliation.allocation.reversal_integrity_conflict",
+            "The stored reversal is not a complete reversal for this request.");
 }

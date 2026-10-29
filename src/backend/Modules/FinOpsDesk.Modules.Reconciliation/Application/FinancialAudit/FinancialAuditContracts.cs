@@ -20,7 +20,8 @@ public sealed record FinancialAuditEntryResponse(
     string Operation,
     string ActorId,
     MoneyDto Amount,
-    DateTimeOffset RecordedAt);
+    DateTimeOffset RecordedAt,
+    string? Reason);
 
 public sealed record FinancialAuditListResponse(
     IReadOnlyList<FinancialAuditEntryResponse> Items,

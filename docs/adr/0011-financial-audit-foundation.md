@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-28
+- Follow-up: [ADR 0012](0012-allocation-reversal.md) adds the reversal action and its read mapping. The confirmation-audit decision below remains the foundation.
 
 ## Context
 
@@ -19,7 +20,7 @@ Financial confirmation writes append one `FinancialAuditEntry` in the same SQL S
 
 ### Entry
 
-`FinancialAuditEntry` lives in the Reconciliation module and in the `reconciliation` schema. The only implemented action is `Confirmation` (1). `AllocationIdempotencyOperation` is a different fact: `ExactMatch` (1), `ExplicitAmount` (2), or `BatchExactMatch` (3). The action says what happened to the allocation. The operation says which confirmation command produced it.
+`FinancialAuditEntry` lives in the Reconciliation module and in the `reconciliation` schema. This decision implements `Confirmation` (1). `AllocationIdempotencyOperation` on a confirmation is `ExactMatch` (1), `ExplicitAmount` (2), or `BatchExactMatch` (3). The action says what happened to the allocation. The operation says which confirmation command produced it. ADR 0012 adds `Reversal` (2) and audit operation 4.
 
 The factory copies organization, allocation, invoice, bank transaction, amount, currency, `RecordedAt`, idempotency operation, and idempotency key from the allocation. `RecordedAt` is `Allocation.ConfirmedAt`. `BatchExecutionId` is required for `BatchExactMatch` and must be absent for the other two operations, because an allocation does not store the batch receipt id. The actor is a separate argument. It is the trimmed JWT `sub` claim, from 1 to 256 characters, and it is not accepted from the body, the query string, or a custom header.
 
@@ -55,7 +56,7 @@ Batch execution keeps one transaction per item. The item executor appends the au
 
 The query checks that the allocation belongs to the authenticated organization and then reads that organization's audit rows for that allocation. Both checks are parameterized EF Core predicates. An unknown allocation and another organization's allocation both return HTTP 404. The response does not reveal that the other allocation exists. A historical allocation with no audit row returns HTTP 200, page 1, page size 50, `totalCount` 0, and an empty `items` array. The read does not synthesize an actor or a confirmation time.
 
-Page size is 1 through 100. Ordering is `RecordedAt` ascending, then audit entry id ascending. The current model can store only one confirmation per allocation, so a single allocation cannot legally supply two confirmation rows to prove that order. The query still orders by both columns so a later reversal row can sort after the confirmation without a contract change. The response action is the string `confirmation`. The operation is `exactMatch`, `explicitAmount`, or `batchExactMatch`. The idempotency key stays in the table and is not part of this response. `BatchExecutionId` is null except for batch confirmation.
+Page size is 1 through 100. Ordering is `RecordedAt` ascending, then audit entry id ascending. The current model can store only one confirmation per allocation, so a single allocation cannot legally supply two confirmation rows to prove that order. The query still orders by both columns so a later reversal row can sort after the confirmation without a contract change. The response action for a confirmation is the string `confirmation`. ADR 0012 adds `reversal`. A confirmation operation is `exactMatch`, `explicitAmount`, or `batchExactMatch`. The idempotency key stays in the table and is not part of this response. `BatchExecutionId` is null except for batch confirmation.
 
 ### Append-only trigger
 
@@ -63,9 +64,9 @@ Page size is 1 through 100. Ordering is `RecordedAt` ascending, then audit entry
 
 ### What this is not
 
-This is not event sourcing. The allocation and the two balances remain the current financial state. The audit table is an append-only history of confirmation writes that the application integrated explicitly. It is not a complete ledger of every balance change, import, review decision, or future command.
+This is not event sourcing. The allocation and the two balances remain the current financial state. The audit table is an append-only history of the financial writes that the application integrated explicitly. It is not a complete ledger of every balance change, import, review decision, or future command.
 
-Existing confirmation paths append an audit record. A new financial write path does not become audited by sharing the table. It needs its own call to the writer, the same transaction, tests, and review. Reversal is that kind of future path. Phase 5C is expected to append a reversal action without deleting the confirmation and without backfilling a confirmation that was never written. Reversal is not implemented here.
+Existing confirmation paths append an audit record. A new financial write path does not become audited by sharing the table. It needs its own call to the writer, the same transaction, tests, and review. ADR 0012 is that path for reversal. It appends a reversal action without deleting the confirmation and without backfilling a confirmation that was never written. This decision does not change the confirmation writers.
 
 ## Alternatives considered
 
@@ -89,6 +90,6 @@ Rejected for this phase. The only approved role is `TenantMember`. A separate au
 
 Confirmation of an exact pair, an explicit amount, or a new batch exact-match item now has an actor and a durable confirmation record. Historical allocations remain valid and simply have an empty audit page. Idempotent replay does not duplicate that record.
 
-The read contract can represent a future `reversal` action, but no such action is stored or returned today. Database immutability stops ordinary `UPDATE` and `DELETE`. It does not certify the history. Composite foreign keys stop cross-tenant references. They do not prove that the invoice and bank transaction are the allocation's own pair.
+The read contract returns `confirmation` and, under ADR 0012, `reversal`. Database immutability stops ordinary `UPDATE` and `DELETE`. It does not certify the history. Composite foreign keys stop cross-tenant references. They do not prove that the invoice and bank transaction are the allocation's own pair.
 
-`MatchSuggestion` stays unpersisted. Allocation reversal, reversal concurrency, and audit for financial commands other than the three confirmation paths remain open.
+`MatchSuggestion` stays unpersisted. Allocation reversal and its concurrency token are specified in ADR 0012. Audit for financial commands other than confirmation and reversal remains open.

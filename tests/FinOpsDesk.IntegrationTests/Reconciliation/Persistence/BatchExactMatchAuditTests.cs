@@ -370,6 +370,14 @@ public sealed partial class BatchExactMatchExecutionTests
                         batchExecutionId));
             }
         }
+
+        public void AppendReversal(
+            Allocation allocation,
+            string actorId,
+            Guid reversalIdempotencyKey)
+        {
+            throw new InvalidOperationException("This confirmation test double does not record reversals.");
+        }
     }
 
     private sealed class StaleInvoiceSynchronization : IBatchExactMatchItemSynchronization

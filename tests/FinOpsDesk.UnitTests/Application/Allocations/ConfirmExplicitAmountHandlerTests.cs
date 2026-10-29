@@ -749,6 +749,14 @@ public sealed class ConfirmExplicitAmountHandlerTests
         {
             Calls.Add((allocation, actorId, batchExecutionId));
         }
+
+        public void AppendReversal(
+            Allocation allocation,
+            string actorId,
+            Guid reversalIdempotencyKey)
+        {
+            throw new InvalidOperationException("This confirmation test double does not record reversals.");
+        }
     }
 
     private sealed class FakeIdempotencyConflict : IAllocationIdempotencyConflict
@@ -825,6 +833,19 @@ public sealed class ConfirmExplicitAmountHandlerTests
         {
             AddCallCount++;
             Added = allocation;
+        }
+
+        public Task<Allocation?> GetByIdAsync(
+            OrganizationId organizationId,
+            AllocationId allocationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void AssignReversalIdempotencyKey(Allocation allocation, Guid reversalIdempotencyKey)
+        {
+            throw new NotSupportedException();
         }
     }
 
