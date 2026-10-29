@@ -467,6 +467,19 @@ public sealed class ConfirmAllocationHandlerTests
             AddCallCount++;
             Added = allocation;
         }
+
+        public Task<Allocation?> GetByIdAsync(
+            OrganizationId organizationId,
+            AllocationId allocationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void AssignReversalIdempotencyKey(Allocation allocation, Guid reversalIdempotencyKey)
+        {
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class FakeUnitOfWork : IUnitOfWork

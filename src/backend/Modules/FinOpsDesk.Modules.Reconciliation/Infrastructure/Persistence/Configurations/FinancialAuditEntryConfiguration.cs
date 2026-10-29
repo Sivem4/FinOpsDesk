@@ -26,8 +26,16 @@ internal sealed class FinancialAuditEntryConfiguration : IEntityTypeConfiguratio
 
     internal const string BatchReferenceCheckName = "CK_FinancialAuditEntries_BatchReference";
 
+    internal const string ActionOperationCheckName = "CK_FinancialAuditEntries_ActionOperation";
+
+    internal const string ReasonCheckName = "CK_FinancialAuditEntries_Reason";
+
     internal static readonly string ActionCheckSql =
-        "([Action] = " + (int)FinancialAuditAction.Confirmation + ")";
+        "([Action] IN ("
+        + (int)FinancialAuditAction.Confirmation
+        + ", "
+        + (int)FinancialAuditAction.Reversal
+        + "))";
 
     // DATALENGTH counts trailing spaces; LEN and SQL equality do not, including under a binary collation.
     // LTRIM/RTRIM remove only U+0020. nvarchar DATALENGTH is two bytes per UTF-16 code unit.
@@ -44,6 +52,21 @@ internal sealed class FinancialAuditEntryConfiguration : IEntityTypeConfiguratio
         + (int)AllocationIdempotencyOperation.ExplicitAmount
         + ", "
         + (int)AllocationIdempotencyOperation.BatchExactMatch
+        + ", "
+        + (int)AllocationIdempotencyOperation.Reversal
+        + "))";
+
+    internal static readonly string ActionOperationCheckSql =
+        "(([Action] = " + (int)FinancialAuditAction.Confirmation
+        + " AND [IdempotencyOperation] IN ("
+        + (int)AllocationIdempotencyOperation.ExactMatch
+        + ", "
+        + (int)AllocationIdempotencyOperation.ExplicitAmount
+        + ", "
+        + (int)AllocationIdempotencyOperation.BatchExactMatch
+        + ")) OR ([Action] = " + (int)FinancialAuditAction.Reversal
+        + " AND [IdempotencyOperation] = "
+        + (int)AllocationIdempotencyOperation.Reversal
         + "))";
 
     internal static readonly string BatchReferenceCheckSql =
@@ -52,7 +75,16 @@ internal sealed class FinancialAuditEntryConfiguration : IEntityTypeConfiguratio
         + (int)AllocationIdempotencyOperation.ExactMatch
         + ", "
         + (int)AllocationIdempotencyOperation.ExplicitAmount
+        + ", "
+        + (int)AllocationIdempotencyOperation.Reversal
         + ") AND [BatchExecutionId] IS NULL))";
+
+    internal static readonly string ReasonCheckSql =
+        "(([Action] = " + (int)FinancialAuditAction.Confirmation
+        + " AND [Reason] IS NULL) OR ([Action] = " + (int)FinancialAuditAction.Reversal
+        + " AND [Reason] IS NOT NULL AND DATALENGTH([Reason]) = DATALENGTH(LTRIM(RTRIM([Reason]))) AND DATALENGTH([Reason]) BETWEEN 2 AND "
+        + (Allocation.MaxReversalReasonLength * 2)
+        + "))";
 
     public void Configure(EntityTypeBuilder<FinancialAuditEntry> builder)
     {
@@ -64,7 +96,9 @@ internal sealed class FinancialAuditEntryConfiguration : IEntityTypeConfiguratio
             table.HasCheckConstraint(ActorIdCheckName, ActorIdCheckSql);
             table.HasCheckConstraint(AmountCheckName, AmountCheckSql);
             table.HasCheckConstraint(IdempotencyOperationCheckName, IdempotencyOperationCheckSql);
+            table.HasCheckConstraint(ActionOperationCheckName, ActionOperationCheckSql);
             table.HasCheckConstraint(BatchReferenceCheckName, BatchReferenceCheckSql);
+            table.HasCheckConstraint(ReasonCheckName, ReasonCheckSql);
         });
 
         builder.HasKey(entry => entry.Id);
@@ -96,6 +130,8 @@ internal sealed class FinancialAuditEntryConfiguration : IEntityTypeConfiguratio
         builder.Property(entry => entry.ActorId)
             .HasMaxLength(FinancialAuditEntry.MaxActorIdLength)
             .IsRequired();
+        builder.Property(entry => entry.Reason)
+            .HasMaxLength(Allocation.MaxReversalReasonLength);
 
         builder.Property(entry => entry.RecordedAt)
             .HasColumnType("datetimeoffset");

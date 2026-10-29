@@ -9,4 +9,9 @@ public interface IFinancialAuditWriter
         Allocation allocation,
         string actorId,
         BatchExecutionId? batchExecutionId);
+
+    void AppendReversal(
+        Allocation allocation,
+        string actorId,
+        Guid reversalIdempotencyKey);
 }

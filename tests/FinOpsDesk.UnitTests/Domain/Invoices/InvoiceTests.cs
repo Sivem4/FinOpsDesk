@@ -119,6 +119,22 @@ public sealed class InvoiceTests
     }
 
     [Fact]
+    public void CanReverseAllocation_should_not_change_allocated_amount()
+    {
+        var invoice = CreateInvoice(1000m);
+        invoice.Allocate(new Money(300m, Pln));
+
+        Result accepted = invoice.CanReverseAllocation(new Money(300m, Pln));
+        Result rejected = invoice.CanReverseAllocation(new Money(301m, Pln));
+
+        Assert.True(accepted.IsSuccess);
+        Assert.Equal(
+            ReconciliationErrors.InvoiceReversalExceedsAllocated.Code,
+            rejected.Error?.Code);
+        Assert.Equal(new Money(300m, Pln), invoice.AllocatedAmount);
+    }
+
+    [Fact]
     public void ReverseAllocation_should_restore_outstanding_amount()
     {
         var invoice = CreateInvoice(1000m);

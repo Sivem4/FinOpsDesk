@@ -47,11 +47,20 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("ReversalIdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("ReversalReason")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTimeOffset?>("ReversedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -84,6 +93,11 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasFilter("[IdempotencyKey] IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "InvoiceId");
+
+                    b.HasIndex("OrganizationId", "ReversalIdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Allocations_OrganizationId_ReversalIdempotencyKey")
+                        .HasFilter("[ReversalIdempotencyKey] IS NOT NULL");
 
                     b.ToTable("Allocations", "reconciliation", t =>
                         {
@@ -250,6 +264,10 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<DateTimeOffset>("RecordedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -287,15 +305,19 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         {
                             t.HasTrigger("TR_FinancialAuditEntries_RejectMutation");
 
-                            t.HasCheckConstraint("CK_FinancialAuditEntries_Action", "([Action] = 1)");
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_Action", "([Action] IN (1, 2))");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_ActionOperation", "(([Action] = 1 AND [IdempotencyOperation] IN (1, 2, 3)) OR ([Action] = 2 AND [IdempotencyOperation] = 4))");
 
                             t.HasCheckConstraint("CK_FinancialAuditEntries_ActorId", "DATALENGTH([ActorId]) = DATALENGTH(LTRIM(RTRIM([ActorId]))) AND DATALENGTH([ActorId]) BETWEEN 2 AND 512");
 
                             t.HasCheckConstraint("CK_FinancialAuditEntries_Amount", "([Amount] > 0)");
 
-                            t.HasCheckConstraint("CK_FinancialAuditEntries_BatchReference", "(([IdempotencyOperation] = 3 AND [BatchExecutionId] IS NOT NULL) OR ([IdempotencyOperation] IN (1, 2) AND [BatchExecutionId] IS NULL))");
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_BatchReference", "(([IdempotencyOperation] = 3 AND [BatchExecutionId] IS NOT NULL) OR ([IdempotencyOperation] IN (1, 2, 4) AND [BatchExecutionId] IS NULL))");
 
-                            t.HasCheckConstraint("CK_FinancialAuditEntries_IdempotencyOperation", "([IdempotencyOperation] IN (1, 2, 3))");
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_IdempotencyOperation", "([IdempotencyOperation] IN (1, 2, 3, 4))");
+
+                            t.HasCheckConstraint("CK_FinancialAuditEntries_Reason", "(([Action] = 1 AND [Reason] IS NULL) OR ([Action] = 2 AND [Reason] IS NOT NULL AND DATALENGTH([Reason]) = DATALENGTH(LTRIM(RTRIM([Reason]))) AND DATALENGTH([Reason]) BETWEEN 2 AND 1000))");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);

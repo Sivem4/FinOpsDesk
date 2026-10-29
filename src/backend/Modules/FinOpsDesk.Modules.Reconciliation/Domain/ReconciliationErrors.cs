@@ -29,6 +29,16 @@ public static class ReconciliationErrors
             "reconciliation.allocation.already_reversed",
             "A reversed allocation cannot be reversed again.");
 
+    public static Error AllocationReversalReasonTooLong { get; } =
+        new(
+            "reconciliation.allocation.reversal_reason_too_long",
+            "Reversal reason cannot exceed 500 characters.");
+
+    public static Error AllocationReversalTargetMismatch { get; } =
+        new(
+            "reconciliation.allocation.reversal_target_mismatch",
+            "The invoice and bank transaction do not match the allocation.");
+
     public static Error MatchSuggestionAlreadyResolved { get; } =
         new(
             "reconciliation.match_suggestion.already_resolved",

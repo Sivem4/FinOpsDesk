@@ -70,7 +70,8 @@ internal sealed class FinancialAuditQueries : IFinancialAuditQueries
                 entry.ActorId,
                 entry.Amount.Amount,
                 entry.Amount.Currency.Value,
-                entry.RecordedAt))
+                entry.RecordedAt,
+                entry.Reason))
             .ToListAsync(cancellationToken);
 
         FinancialAuditEntryResponse[] items = new FinancialAuditEntryResponse[rows.Count];
@@ -95,7 +96,8 @@ internal sealed class FinancialAuditQueries : IFinancialAuditQueries
             OperationName(row.Operation),
             row.ActorId,
             new MoneyDto(row.Amount, row.Currency),
-            row.RecordedAt);
+            row.RecordedAt,
+            row.Reason);
     }
 
     private static string ActionName(FinancialAuditAction action)
@@ -103,6 +105,7 @@ internal sealed class FinancialAuditQueries : IFinancialAuditQueries
         return action switch
         {
             FinancialAuditAction.Confirmation => "confirmation",
+            FinancialAuditAction.Reversal => "reversal",
             _ => throw new InvalidOperationException(
                 "Financial audit action is not defined."),
         };
@@ -115,6 +118,7 @@ internal sealed class FinancialAuditQueries : IFinancialAuditQueries
             AllocationIdempotencyOperation.ExactMatch => "exactMatch",
             AllocationIdempotencyOperation.ExplicitAmount => "explicitAmount",
             AllocationIdempotencyOperation.BatchExactMatch => "batchExactMatch",
+            AllocationIdempotencyOperation.Reversal => "reversal",
             _ => throw new InvalidOperationException(
                 "Allocation idempotency operation is not defined."),
         };
@@ -131,5 +135,6 @@ internal sealed class FinancialAuditQueries : IFinancialAuditQueries
         string ActorId,
         decimal Amount,
         string Currency,
-        DateTimeOffset RecordedAt);
+        DateTimeOffset RecordedAt,
+        string? Reason);
 }

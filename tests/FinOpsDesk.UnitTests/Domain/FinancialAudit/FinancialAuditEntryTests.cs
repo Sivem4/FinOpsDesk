@@ -46,6 +46,7 @@ public sealed class FinancialAuditEntryTests
         Assert.Equal(allocation.ConfirmedAt, entry.RecordedAt);
         Assert.Equal(AllocationIdempotencyOperation.ExactMatch, entry.IdempotencyOperation);
         Assert.Equal(idempotencyKey, entry.IdempotencyKey);
+        Assert.Null(entry.Reason);
         Assert.Empty(typeof(FinancialAuditEntry).GetConstructors(BindingFlags.Instance | BindingFlags.Public));
     }
 
@@ -180,6 +181,114 @@ public sealed class FinancialAuditEntryTests
                 allocation,
                 new string('a', FinancialAuditEntry.MaxActorIdLength + 1),
                 batchExecutionId: null));
+    }
+
+    [Fact]
+    public void ForReversal_copies_the_full_amount_actor_time_and_normalized_reason()
+    {
+        Guid confirmationKey = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        Guid reversalKey = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        DateTimeOffset reversedAt = ConfirmedAt.AddMinutes(5);
+        Allocation allocation = CreateAllocation(
+            AllocationIdempotencyOperation.ExactMatch,
+            confirmationKey,
+            42.5m);
+        allocation.Reverse("  duplicate payment  ", reversedAt);
+
+        FinancialAuditEntry entry = FinancialAuditEntry.ForReversal(
+            FinancialAuditEntryId.New(),
+            allocation,
+            "  operator-b  ",
+            reversalKey);
+
+        Assert.Equal(FinancialAuditAction.Reversal, entry.Action);
+        Assert.Equal(AllocationIdempotencyOperation.Reversal, entry.IdempotencyOperation);
+        Assert.Equal(reversalKey, entry.IdempotencyKey);
+        Assert.Equal(allocation.Amount, entry.Amount);
+        Assert.Equal("PLN", entry.Amount.Currency.Value);
+        Assert.Equal("operator-b", entry.ActorId);
+        Assert.Equal(reversedAt, entry.RecordedAt);
+        Assert.Equal("duplicate payment", entry.Reason);
+        Assert.Null(entry.BatchExecutionId);
+        Assert.Equal(confirmationKey, allocation.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.ExactMatch, allocation.IdempotencyOperation);
+        Assert.Equal(ConfirmedAt, allocation.ConfirmedAt);
+    }
+
+    [Fact]
+    public void ForReversal_rejects_a_confirmed_allocation()
+    {
+        Allocation allocation = CreateAllocation(
+            AllocationIdempotencyOperation.ExplicitAmount,
+            Guid.NewGuid(),
+            10m);
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => FinancialAuditEntry.ForReversal(
+                FinancialAuditEntryId.New(),
+                allocation,
+                "operator-a",
+                Guid.NewGuid()));
+
+        Assert.Contains("currently reversed", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(AllocationStatus.Confirmed, allocation.Status);
+    }
+
+    [Fact]
+    public void ForReversal_accepts_a_historical_allocation_without_confirmation_metadata()
+    {
+        Guid reversalKey = Guid.NewGuid();
+        DateTimeOffset reversedAt = ConfirmedAt.AddHours(1);
+        Allocation allocation = new(
+            AllocationId.New(),
+            Organization,
+            InvoiceId.New(),
+            BankTransactionId.New(),
+            new Money(15m, Pln),
+            ConfirmedAt);
+        allocation.Reverse("historical correction", reversedAt);
+
+        FinancialAuditEntry entry = FinancialAuditEntry.ForReversal(
+            FinancialAuditEntryId.New(),
+            allocation,
+            "operator-a",
+            reversalKey);
+
+        Assert.Equal(FinancialAuditAction.Reversal, entry.Action);
+        Assert.Equal(reversalKey, entry.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.Reversal, entry.IdempotencyOperation);
+        Assert.Null(allocation.IdempotencyKey);
+        Assert.Null(allocation.IdempotencyOperation);
+        Assert.Equal("historical correction", entry.Reason);
+    }
+
+    [Fact]
+    public void ForReversal_rejects_an_empty_key_and_a_blank_actor()
+    {
+        Allocation allocation = CreateAllocation(
+            AllocationIdempotencyOperation.BatchExactMatch,
+            Guid.NewGuid(),
+            10m);
+        allocation.Reverse("operator error", ConfirmedAt);
+
+        Assert.Throws<ArgumentException>(
+            () => FinancialAuditEntry.ForReversal(
+                FinancialAuditEntryId.New(),
+                allocation,
+                "operator-a",
+                Guid.Empty));
+        Assert.Throws<ArgumentException>(
+            () => FinancialAuditEntry.ForReversal(
+                FinancialAuditEntryId.New(),
+                allocation,
+                "   ",
+                Guid.NewGuid()));
+        Assert.Throws<ArgumentNullException>(
+            () => FinancialAuditEntry.ForReversal(
+                FinancialAuditEntryId.New(),
+                allocation,
+                null!,
+                Guid.NewGuid()));
     }
 
     private static Allocation CreateAllocation(

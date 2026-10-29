@@ -2,7 +2,7 @@
 
 FinOpsDesk is B2B finance operations and reconciliation platform built with .NET and React.
 
-The project models an accounts-receivable cash application workflow: customer invoices and incoming bank transactions are imported, deterministic matching suggestions are generated, finance users confirm or reject allocations, exceptions are investigated, and financially relevant actions are audited.
+The project models an accounts-receivable cash application workflow: customer invoices and incoming bank transactions are imported, deterministic matching suggestions are generated, finance users confirm or reverse allocations, exceptions are investigated, and financially relevant actions are audited. Allocation reversal is specified in [ADR 0012](docs/adr/0012-allocation-reversal.md).
 
 ## Product vision
 

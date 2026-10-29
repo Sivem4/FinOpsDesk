@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-27
+- Follow-up: [ADR 0012](0012-allocation-reversal.md) records how a later reversal relates to a Running or Completed batch receipt. The receipt decision below remains in force.
 
 ## Context
 
@@ -73,4 +74,4 @@ Rejected. The command is one idempotent attempt with a mixed result document. Ca
 
 ## Consequences
 
-`GET /api/matches`, `GET /api/matches/smart`, `POST /api/matches/confirm`, `POST /api/allocations`, and the review-case routes keep their contracts. Batch confirmation does not change `exact-1` or `smart-1`. Phase 5 still owns persisted reversal and audit records for financial changes that do not yet have them. Phase 7 owns resource-based financial authorization and the missing OpenAPI Bearer metadata.
+`GET /api/matches`, `GET /api/matches/smart`, `POST /api/matches/confirm`, `POST /api/allocations`, and the review-case routes keep their contracts. Batch confirmation does not change `exact-1` or `smart-1`. Persisted reversal, reversal audit, and the historical meaning of a batch receipt after a later reversal are recorded in ADR 0012. Phase 7 owns resource-based financial authorization and the missing OpenAPI Bearer metadata.

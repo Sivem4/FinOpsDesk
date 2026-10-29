@@ -55,6 +55,7 @@ public sealed class AllocationAuditEndpointTests : IDisposable
         Assert.Equal(JsonValueKind.Null, item.GetProperty("batchExecutionId").ValueKind);
         Assert.Equal("confirmation", item.GetProperty("action").GetString());
         Assert.Equal("exactMatch", item.GetProperty("operation").GetString());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("reason").ValueKind);
         Assert.Equal("exact-operator", item.GetProperty("actorId").GetString());
         Assert.Equal(40m, item.GetProperty("amount").GetProperty("amount").GetDecimal());
         Assert.Equal("PLN", item.GetProperty("amount").GetProperty("currency").GetString());

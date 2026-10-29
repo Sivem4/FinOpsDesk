@@ -40,6 +40,26 @@ internal static class AllocationEndpoints
             .WithName("AllocateExplicitAmount")
             .AddOpenApiOperationTransformer(DocumentAllocationOperation);
 
+        group.MapPost("/allocations/{allocationId}/reverse", ReverseAsync)
+            .WithName("ReverseAllocation")
+            .WithSummary("Reverse one confirmed allocation for its full original amount.")
+            .WithDescription(
+                "Requires a bearer token and the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
+                + "ActorId comes only from the JWT sub claim. A missing, blank, or overlong sub is rejected before replay or financial work. "
+                + "The body accepts only reason. Amount, reversedAt, actorId, and organizationId are not accepted from the client. "
+                + "Idempotency-Key is a UUID in D format and is scoped to reversal, separate from confirmation. "
+                + "A fresh reversal and a matching replay both return HTTP 200 with the persisted reversal values. "
+                + "replayed is false for the first commit and true for a matching replay.")
+            .Produces<ReverseAllocationResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .AddOpenApiOperationTransformer(DocumentReverseOperation);
+
         group.MapGet("/allocations/{allocationId}/audit", GetAuditAsync)
             .WithName("GetAllocationAudit")
             .WithSummary("List financial audit entries for one allocation.")
@@ -59,6 +79,71 @@ internal static class AllocationEndpoints
             .AddOpenApiOperationTransformer(DocumentAuditOperation);
 
         return group;
+    }
+
+    private static async Task<Results<Ok<ReverseAllocationResponse>, ProblemHttpResult>> ReverseAsync(
+        string allocationId,
+        HttpRequest httpRequest,
+        ReverseAllocationHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(allocationId, out Guid parsedAllocationId) || parsedAllocationId == Guid.Empty)
+        {
+            return ReversalProblem(ReconciliationApplicationErrors.AllocationReversalInvalidRequest);
+        }
+
+        if (!IsJsonContentType(httpRequest.ContentType))
+        {
+            return UnsupportedMediaType();
+        }
+
+        if (!TryReadIdempotencyKey(httpRequest, out Guid idempotencyKey, out Error? keyError))
+        {
+            return Problem(keyError!, StatusCodeFor(keyError!), TitleFor(keyError!));
+        }
+
+        if (httpRequest.Query.Count > 0)
+        {
+            return ReversalProblem(ReconciliationApplicationErrors.AllocationReversalInvalidRequest);
+        }
+
+        byte[]? body = await ReadBoundedBodyAsync(httpRequest.Body, cancellationToken);
+        if (body is null)
+        {
+            return RequestTooLarge();
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body);
+        }
+        catch (JsonException exception) when (exception.InnerException is not OperationCanceledException)
+        {
+            return ReversalProblem(ReconciliationApplicationErrors.AllocationReversalInvalidRequest);
+        }
+
+        using (document)
+        {
+            if (!TryReadReversalReason(document.RootElement, out string reason, out Error? requestError))
+            {
+                return ReversalProblem(requestError!);
+            }
+
+            Result<ReverseAllocationResponse> result = await handler.Handle(
+                new ReverseAllocationCommand(
+                    new AllocationId(parsedAllocationId),
+                    reason,
+                    idempotencyKey),
+                cancellationToken);
+
+            if (result.IsFailure)
+            {
+                return ReversalProblem(result.Error);
+            }
+
+            return TypedResults.Ok(result.Value);
+        }
     }
 
     private static async Task<Results<Ok<FinancialAuditListResponse>, ProblemHttpResult>> GetAuditAsync(
@@ -251,6 +336,245 @@ internal static class AllocationEndpoints
 
         error = null;
         return true;
+    }
+
+    private static bool TryReadReversalReason(JsonElement root, out string reason, out Error? error)
+    {
+        reason = string.Empty;
+        error = ReconciliationApplicationErrors.AllocationReversalInvalidRequest;
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        string? raw = null;
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            if (!property.Name.Equals("reason", StringComparison.OrdinalIgnoreCase) || raw is not null)
+            {
+                return false;
+            }
+
+            if (property.Value.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            raw = property.Value.GetString();
+        }
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        reason = raw.Trim();
+        if (reason.Length > Allocation.MaxReversalReasonLength)
+        {
+            error = ReconciliationErrors.AllocationReversalReasonTooLong;
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static ProblemHttpResult ReversalProblem(Error error)
+    {
+        return Problem(error, StatusCodeForReversal(error), TitleForReversal(error));
+    }
+
+    private static int StatusCodeForReversal(Error error)
+    {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return StatusCodes.Status403Forbidden;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code
+            || error.Code == ReconciliationApplicationErrors.IdempotencyKeyInvalid.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationReversalInvalidRequest.Code
+            || error.Code == ReconciliationErrors.AllocationReversalReasonTooLong.Code)
+        {
+            return StatusCodes.Status400BadRequest;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationRequestTooLarge.Code)
+        {
+            return StatusCodes.Status413PayloadTooLarge;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationUnsupportedMediaType.Code)
+        {
+            return StatusCodes.Status415UnsupportedMediaType;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
+        {
+            return StatusCodes.Status404NotFound;
+        }
+
+        if (error.Code == ReconciliationErrors.AllocationAlreadyReversed.Code
+            || error.Code == ReconciliationErrors.AllocationReversalTargetMismatch.Code
+            || error.Code == ReconciliationErrors.InvoiceReversalExceedsAllocated.Code
+            || error.Code == ReconciliationErrors.BankTransactionReversalExceedsAllocated.Code
+            || error.Code == ReconciliationErrors.CurrencyMismatch.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationReversalIdempotencyPayloadConflict.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationReversalIntegrityConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ConcurrencyConflict.Code)
+        {
+            return StatusCodes.Status409Conflict;
+        }
+
+        throw new InvalidOperationException(
+            $"Unexpected allocation reversal failure '{error.Code}'.");
+    }
+
+    private static string TitleForReversal(Error error)
+    {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return "Actor is required.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyRequired.Code)
+        {
+            return "Idempotency key is required.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.IdempotencyKeyInvalid.Code)
+        {
+            return "Idempotency key is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationReversalInvalidRequest.Code)
+        {
+            return "Reversal request is invalid.";
+        }
+
+        if (error.Code == ReconciliationErrors.AllocationReversalReasonTooLong.Code)
+        {
+            return "Reversal reason is too long.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
+        {
+            return "Allocation was not found.";
+        }
+
+        if (error.Code == ReconciliationErrors.AllocationAlreadyReversed.Code)
+        {
+            return "Allocation is already reversed.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationReversalIdempotencyPayloadConflict.Code)
+        {
+            return "Idempotency key was already used.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationReversalIntegrityConflict.Code)
+        {
+            return "Stored reversal is inconsistent.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ConcurrencyConflict.Code)
+        {
+            return "The financial records were modified.";
+        }
+
+        if (error.Code == ReconciliationErrors.InvoiceReversalExceedsAllocated.Code
+            || error.Code == ReconciliationErrors.BankTransactionReversalExceedsAllocated.Code
+            || error.Code == ReconciliationErrors.AllocationReversalTargetMismatch.Code
+            || error.Code == ReconciliationErrors.CurrencyMismatch.Code)
+        {
+            return "Reversal conflicts with the stored financial records.";
+        }
+
+        throw new InvalidOperationException(
+            $"Unexpected allocation reversal failure '{error.Code}'.");
+    }
+
+    private static Task DocumentReverseOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        operation.RequestBody = new OpenApiRequestBody
+        {
+            Required = true,
+            Description = "The normalized reason is stored. Leading and trailing whitespace is removed. At most 500 characters.",
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.Object,
+                        AdditionalPropertiesAllowed = false,
+                        Required = new HashSet<string> { "reason" },
+                        Properties = new Dictionary<string, IOpenApiSchema>
+                        {
+                            ["reason"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.String,
+                                MinLength = 1,
+                                MaxLength = Allocation.MaxReversalReasonLength,
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        operation.Parameters ??= [];
+        foreach (IOpenApiParameter parameter in operation.Parameters)
+        {
+            if (string.Equals(parameter.Name, "allocationId", StringComparison.OrdinalIgnoreCase)
+                && parameter.In == ParameterLocation.Path
+                && parameter is OpenApiParameter pathParameter)
+            {
+                pathParameter.Description = "Allocation id. An empty or malformed GUID is rejected.";
+                pathParameter.Schema = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String,
+                    Format = "uuid",
+                };
+            }
+        }
+
+        bool headerPresent = false;
+        foreach (IOpenApiParameter parameter in operation.Parameters)
+        {
+            if (string.Equals(parameter.Name, "Idempotency-Key", StringComparison.OrdinalIgnoreCase)
+                && parameter.In == ParameterLocation.Header)
+            {
+                headerPresent = true;
+                break;
+            }
+        }
+
+        if (!headerPresent)
+        {
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = "Idempotency-Key",
+                In = ParameterLocation.Header,
+                Required = true,
+                Description = "Exactly one UUID in D format. An empty UUID is rejected. The key is scoped to reversal.",
+                Schema = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String,
+                    Format = "uuid",
+                },
+            });
+        }
+
+        return Task.CompletedTask;
     }
 
     private static bool TryReadGuid(JsonElement element, out Guid value)

@@ -30,6 +30,8 @@ public sealed class FinancialAuditEntry
 
     public DateTimeOffset RecordedAt { get; }
 
+    public string? Reason { get; }
+
     public AllocationIdempotencyOperation IdempotencyOperation { get; }
 
     public Guid IdempotencyKey { get; }
@@ -52,7 +54,8 @@ public sealed class FinancialAuditEntry
         Money amount,
         DateTimeOffset recordedAt,
         AllocationIdempotencyOperation idempotencyOperation,
-        Guid idempotencyKey)
+        Guid idempotencyKey,
+        string? reason)
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(organizationId);
@@ -61,11 +64,11 @@ public sealed class FinancialAuditEntry
         ArgumentNullException.ThrowIfNull(bankTransactionId);
         ArgumentNullException.ThrowIfNull(amount);
 
-        if (action != FinancialAuditAction.Confirmation || !Enum.IsDefined(action))
+        if (!Enum.IsDefined(action))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(action),
-                "Only a confirmation audit entry can be recorded.");
+                "Financial audit action is not defined.");
         }
 
         if (actorId.Length == 0 || actorId.Length > MaxActorIdLength || actorId != actorId.Trim())
@@ -92,19 +95,62 @@ public sealed class FinancialAuditEntry
         if (idempotencyKey == Guid.Empty || !Enum.IsDefined(idempotencyOperation))
         {
             throw new ArgumentException(
-                "A confirmation audit requires the allocation idempotency key and operation.",
+                "A financial audit entry requires an idempotency key and operation.",
                 nameof(idempotencyKey));
         }
 
-        if (idempotencyOperation == AllocationIdempotencyOperation.BatchExactMatch)
+        if (action == FinancialAuditAction.Confirmation)
         {
-            ArgumentNullException.ThrowIfNull(batchExecutionId);
+            if (reason is not null)
+            {
+                throw new ArgumentException(
+                    "A confirmation audit cannot store a reversal reason.",
+                    nameof(reason));
+            }
+
+            if (idempotencyOperation == AllocationIdempotencyOperation.Reversal)
+            {
+                throw new ArgumentException(
+                    "A confirmation audit requires a confirmation operation.",
+                    nameof(idempotencyOperation));
+            }
+
+            if (idempotencyOperation == AllocationIdempotencyOperation.BatchExactMatch)
+            {
+                ArgumentNullException.ThrowIfNull(batchExecutionId);
+            }
+            else if (batchExecutionId is not null)
+            {
+                throw new ArgumentException(
+                    "A batch execution id is only valid for a batch exact-match confirmation.",
+                    nameof(batchExecutionId));
+            }
         }
-        else if (batchExecutionId is not null)
+        else if (action == FinancialAuditAction.Reversal)
         {
-            throw new ArgumentException(
-                "A batch execution id is only valid for a batch exact-match confirmation.",
-                nameof(batchExecutionId));
+            if (idempotencyOperation != AllocationIdempotencyOperation.Reversal)
+            {
+                throw new ArgumentException(
+                    "A reversal audit requires the reversal operation.",
+                    nameof(idempotencyOperation));
+            }
+
+            if (batchExecutionId is not null)
+            {
+                throw new ArgumentException(
+                    "A reversal audit cannot reference a batch execution.",
+                    nameof(batchExecutionId));
+            }
+
+            if (reason is null
+                || reason.Length == 0
+                || reason.Length > Allocation.MaxReversalReasonLength
+                || reason != reason.Trim())
+            {
+                throw new ArgumentException(
+                    "A reversal audit requires a trimmed reason of at most 500 characters.",
+                    nameof(reason));
+            }
         }
 
         Id = id;
@@ -117,6 +163,7 @@ public sealed class FinancialAuditEntry
         ActorId = actorId;
         Amount = amount;
         RecordedAt = recordedAt;
+        Reason = reason;
         IdempotencyOperation = idempotencyOperation;
         IdempotencyKey = idempotencyKey;
     }
@@ -157,6 +204,48 @@ public sealed class FinancialAuditEntry
             allocation.Amount,
             allocation.ConfirmedAt,
             idempotencyOperation,
-            idempotencyKey);
+            idempotencyKey,
+            reason: null);
+    }
+
+    public static FinancialAuditEntry ForReversal(
+        FinancialAuditEntryId id,
+        Allocation allocation,
+        string actorId,
+        Guid reversalIdempotencyKey)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(allocation);
+        ArgumentNullException.ThrowIfNull(actorId);
+
+        if (allocation.Status != AllocationStatus.Reversed
+            || allocation.ReversedAt is not DateTimeOffset reversedAt
+            || allocation.ReversalReason is not string reason)
+        {
+            throw new InvalidOperationException(
+                "A reversal audit requires an allocation that is currently reversed.");
+        }
+
+        if (reversalIdempotencyKey == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Reversal idempotency key cannot be empty.",
+                nameof(reversalIdempotencyKey));
+        }
+
+        return new FinancialAuditEntry(
+            id,
+            allocation.OrganizationId,
+            allocation.Id,
+            allocation.InvoiceId,
+            allocation.BankTransactionId,
+            batchExecutionId: null,
+            FinancialAuditAction.Reversal,
+            actorId.Trim(),
+            allocation.Amount,
+            reversedAt,
+            AllocationIdempotencyOperation.Reversal,
+            reversalIdempotencyKey,
+            reason);
     }
 }

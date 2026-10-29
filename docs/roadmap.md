@@ -41,7 +41,7 @@ Unit tests cover:
 - cross-currency rejection;
 - allocation reversal.
 
-`MatchSuggestion` is a domain model. It is not persisted, and Phase 4 matching does not use it. Allocation reversal here is domain behavior on the allocation and the two balances. A persisted reversal workflow remains Phase 5.
+`MatchSuggestion` is a domain model. It is not persisted, and Phase 4 matching does not use it. Allocation reversal here is domain behavior on the allocation and the two balances. Phase 5C later persisted that workflow. See ADR 0012.
 
 No EF Core or HTTP dependency is allowed in domain code.
 
@@ -89,7 +89,7 @@ Delivered:
 - ConfirmAllocation mapping of that conflict to `Result.Failure`;
 - SQL Server integration coverage for stale-version detection and atomic rollback.
 
-Phase 4C maps `rowversion` and idempotency conflicts to HTTP 409 for `POST /api/matches/confirm`. Phase 4D does the same for `POST /api/allocations`. A persisted reversal still needs its own HTTP conflict mapping in Phase 5. Automatic retry remains out of scope.
+Phase 4C maps `rowversion` and idempotency conflicts to HTTP 409 for `POST /api/matches/confirm`. Phase 4D does the same for `POST /api/allocations`. Phase 5C maps reversal conflicts to HTTP 409, including `Allocation` `rowversion` conflicts. Automatic retry remains out of scope.
 
 ## Phase 2B.3: First HTTP vertical slice
 
@@ -110,7 +110,7 @@ Delivered:
 - HTTP 200 and invalid-pagination HTTP 400;
 - SQL Server query tests and JWT HTTP integration tests.
 
-Exact-match confirmation over HTTP, including HTTP 409 for that endpoint, followed in Phase 4C. Explicit-amount allocation followed in Phase 4D. Persisted reversal, audit, and other manual allocation workflows remain Phase 5. Roles and the browser BFF remain Phase 7. See ADR 0004.
+Exact-match confirmation over HTTP, including HTTP 409 for that endpoint, followed in Phase 4C. Explicit-amount allocation followed in Phase 4D. Confirmation audit is Phase 5B. Persisted reversal is Phase 5C. Other manual allocation workflows remain open in Phase 5. Roles and the browser BFF remain Phase 7. See ADR 0004.
 
 ## Phase 3: Imports and idempotency
 
@@ -232,23 +232,19 @@ Phase 5B is complete. Phase 5 remains in progress.
 
 ### 5C: Allocation reversal
 
-Status: Planned.
+Status: Complete.
 
-Phase 5C is the planned allocation reversal work. It has not started. It covers:
+`POST /api/allocations/{allocationId}/reverse` reverses one confirmed allocation for its full original amount. The allocation row remains. Invoice and bank-transaction allocated balances are restored by that amount. Confirmation identity is unchanged. One reversal audit entry is written in the same `SaveChangesAsync`. Confirmation and reversal idempotency keys are separate namespaces. `Allocation` has its own `rowversion`. See ADR 0012.
 
-- persisted allocation reversal with a reason;
-- reversal idempotency;
-- optimistic concurrency, including an `Allocation` rowversion;
-- atomic restoration of financial balances;
-- an append-only reversal audit, which is not implemented by the confirmation audit;
-- extension of the audit action database constraint and read mapping;
-- the unresolved semantics of `Running` batch recovery when a previously confirmed allocation has subsequently been reversed.
+A batch receipt records the historical confirmation outcome. A later reversal does not rewrite a Completed receipt. Recovery of a Running receipt may return a currently reversed allocation as historically confirmed, with the original allocation id and amount, and without a new confirmation audit. There is no `ConfirmedThenReversed` outcome.
+
+Migration `20261028221955_AddAllocationReversalPersistence` adds the allocation token, the nullable reversal key, and the reversal audit constraints. Its Down is rejected while a reversal audit row or a non-null reversal key exists.
 
 These Phase 5 requirements also remain open:
 
 - manual allocation workflows that Phase 4D does not cover;
 - persisted confirmation of a `MatchSuggestion`, which remains a domain model only;
-- idempotency for financial commands other than exact-match confirmation, explicit-amount confirmation, batch exact-match execution, and the planned reversal command;
+- idempotency for financial commands other than exact-match confirmation, explicit-amount confirmation, batch exact-match execution, and allocation reversal;
 - HTTP conflict mapping for those remaining allocation commands.
 
 Finer authorization, including who may read audit `ActorId`, remains Phase 7.

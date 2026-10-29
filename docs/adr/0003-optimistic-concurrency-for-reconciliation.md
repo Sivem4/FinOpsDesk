@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-05
+- Amended by: [ADR 0012](0012-allocation-reversal.md) adds an `Allocation` `rowversion` for persisted reversal. The invoice and bank-transaction tokens, the shadow-property decision, and the no-retry rule below remain in force.
 
 ## Context
 

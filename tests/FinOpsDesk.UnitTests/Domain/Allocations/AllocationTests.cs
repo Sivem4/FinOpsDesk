@@ -204,6 +204,34 @@ public sealed class AllocationTests
     }
 
     [Fact]
+    public void Reverse_should_accept_a_reason_of_the_maximum_length()
+    {
+        var allocation = CreateAllocation();
+        string reason = new('a', Allocation.MaxReversalReasonLength);
+
+        Result result = allocation.Reverse(reason, ConfirmedAt.AddHours(1));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(reason, allocation.ReversalReason);
+    }
+
+    [Fact]
+    public void Reverse_should_reject_a_reason_longer_than_500_characters_without_truncation()
+    {
+        var allocation = CreateAllocation();
+        string reason = new('a', Allocation.MaxReversalReasonLength + 1);
+
+        Result result = allocation.Reverse(reason, ConfirmedAt.AddHours(1));
+
+        Assert.Equal(
+            ReconciliationErrors.AllocationReversalReasonTooLong.Code,
+            result.Error?.Code);
+        Assert.Equal(AllocationStatus.Confirmed, allocation.Status);
+        Assert.Null(allocation.ReversedAt);
+        Assert.Null(allocation.ReversalReason);
+    }
+
+    [Fact]
     public void New_allocation_should_keep_a_non_empty_idempotency_key()
     {
         Guid idempotencyKey = Guid.NewGuid();
@@ -263,6 +291,21 @@ public sealed class AllocationTests
                 ConfirmedAt,
                 Guid.NewGuid(),
                 (AllocationIdempotencyOperation)99));
+    }
+
+    [Fact]
+    public void New_allocation_should_reject_the_reversal_operation_as_a_confirmation_operation()
+    {
+        Assert.Throws<ArgumentException>(
+            () => new Allocation(
+                AllocationId.New(),
+                TestOrganizationId,
+                InvoiceId.New(),
+                BankTransactionId.New(),
+                new Money(300m, Pln),
+                ConfirmedAt,
+                Guid.NewGuid(),
+                AllocationIdempotencyOperation.Reversal));
     }
 
     [Fact]
