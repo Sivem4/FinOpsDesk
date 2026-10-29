@@ -76,3 +76,7 @@ Run repository verification with:
 scripts\verify.cmd
 ```
 
+## Local frontend
+
+The React application lives in `src/frontend`. Local setup, the development access token, HTTPS trust, and the invoice register are documented in [docs/frontend-development.md](docs/frontend-development.md). Production browser sign-in remains Phase 7.
+

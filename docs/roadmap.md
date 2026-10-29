@@ -279,6 +279,8 @@ Add:
 - loading, error, empty, forbidden, and conflict states;
 - component tests.
 
+The first frontend increment is an invoice register on `GET /api/invoices`. That response already contains the fields shown for the selected row. A separate invoice-detail endpoint does not exist, so an addressable invoice detail screen is not part of this increment. A bank-transaction list endpoint does not exist either. Both screens remain planned and depend on additional read endpoints. They are not removed from the product scope. Production browser sign-in remains Phase 7.
+
 ## Phase 7: Authentication, authorization, and tenant isolation
 
 Status: Planned.
