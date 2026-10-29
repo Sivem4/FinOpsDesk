@@ -1,0 +1,115 @@
+# Frontend development
+
+The operations workspace is a Vite application in `src/frontend`. Phase 6A shows the invoice register from `GET /api/invoices`. It does not issue tokens, import files, or change financial state.
+
+Production browser authentication is Phase 7. The development token screen is compiled only into the Vite development build. A production build shows that browser sign-in is not configured.
+
+## Prerequisites
+
+- .NET 10 SDK
+- Node.js `^22.22.2`, `^24.15.0`, or `>=26.0.0` (this repository was verified with Node.js 24.18.0)
+- npm 11
+- SQL Server LocalDB on Windows
+- A trusted ASP.NET Core HTTPS development certificate:
+
+```powershell
+dotnet dev-certs https --trust
+dotnet dev-certs https --check --trust
+```
+
+## Database
+
+The API reads `ConnectionStrings:FinOpsDesk`. The Development default is LocalDB database `FinOpsDesk`. The host does not apply migrations at startup.
+
+```powershell
+dotnet tool restore
+dotnet ef database update `
+  --project src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj `
+  --startup-project src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj `
+  --context ReconciliationDbContext
+```
+
+An empty database is valid. The register then shows that the organization has no invoices.
+
+## API signing key
+
+Set these variables in the same PowerShell session that starts the API. Do not commit them and do not put them in a `VITE_` variable.
+
+```powershell
+$env:Authentication__JwtBearer__Authority = ''
+$env:Authentication__JwtBearer__Issuer = 'https://finopsdesk.local'
+$env:Authentication__JwtBearer__Audience = 'finopsdesk-api'
+$env:Authentication__JwtBearer__SigningKey = '<at least 32 UTF-8 bytes from a password manager>'
+```
+
+`Issuer` is the token issuer. It is not the Kestrel URL. The local issuer must be exactly `https://finopsdesk.local`. Leave `Authority` empty when `SigningKey` is set. Do not reuse `finopsdesk-integration-test-signing-key`.
+
+## HTTPS
+
+Start the API with the `https` launch profile:
+
+```powershell
+dotnet run --project src/backend/FinOpsDesk.Api --launch-profile https
+```
+
+Kestrel listens on `https://localhost:7257` and `http://localhost:5185`. With this profile, `http://localhost:5185` responds with `307` to `https://localhost:7257`. The Vite proxy therefore targets only `https://localhost:7257` and keeps `secure: true`. The browser talks to the Vite origin, so the API does not need CORS.
+
+The package engine range is the intersection of the resolved lockfile. `react-router` requires Node `>=22.22.0`. `jsdom` requires `^22.22.2 || ^24.15.0 || >=26.0.0`. Node 22.19, 23, 24.0 through 24.14, and 25 are outside that intersection. `node --use-system-ca` was checked on Node.js 24.18.0 against a trusted ASP.NET development certificate. Node still failed the handshake with `DEPTH_ZERO_SELF_SIGNED_CERT`. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0` and do not set the proxy `secure` option to `false`.
+
+The verified trust path exports the public certificate only, from `Cert:\CurrentUser\Root`, to a file outside the repository:
+
+```powershell
+scripts\dev-frontend.ps1
+```
+
+That script writes `%USERPROFILE%\.finopsdesk\localhost-dev.crt`, sets `NODE_EXTRA_CA_CERTS` to that file, and runs Vite. The export uses `X509ContentType.Cert`, which does not include the private key. The script stops if the store object reports a private key.
+
+`GET https://localhost:7257/health` through this trust path returns `200` and `Healthy`.
+
+## Development token
+
+In the same session that holds the signing variables:
+
+```powershell
+$organizationId = [guid]::NewGuid()
+scripts\dev-token.ps1 -Subject operator-1 -OrganizationId $organizationId
+```
+
+Stdout is one JWT. The script does not write a file and does not call the API. Claims are `iss`, `aud`, `sub`, `org_id`, `nbf`, and `exp`. The default lifetime is 60 minutes and the maximum is 8 hours. `sub` is required and is limited to 256 characters. `org_id` is a non-empty GUID. There is no membership store: data created with this token belongs to that organization.
+
+Paste the token into **Development access token**. It is held in memory only. Reload discards it. Log out aborts in-flight requests and clears the TanStack Query cache. Replace token starts a new session before the next response can be stored. A token is not written to `localStorage`, `sessionStorage`, or the URL. When `exp` passes, the screen asks for a new token. The API remains the authority: a rejected token is HTTP 401, and a token without a usable organization id is HTTP 403.
+
+The JWT stays valid until `exp` even after log out. This development flow has no revocation list.
+
+## Invoice data
+
+The register calls `GET /api/invoices`. To add rows, import a CSV with the same access token. The UI does not import files.
+
+```powershell
+$token = (scripts\dev-token.ps1 -Subject operator-1 -OrganizationId $organizationId).Trim()
+$csv = "ExternalId,InvoiceNumber,Amount,Currency`r`ndemo-100,INV-100,1250.50,PLN`r`n"
+$csvPath = Join-Path $env:TEMP 'finopsdesk-invoices.csv'
+[System.IO.File]::WriteAllText($csvPath, $csv, [System.Text.UTF8Encoding]::new($false))
+curl.exe -sS -X POST "https://localhost:7257/api/imports/invoices" `
+  -H "Authorization: Bearer $token" `
+  -F "sourceSystem=DEMO" `
+  -F "file=@$csvPath;type=text/csv"
+```
+
+Use the public certificate trust from `dev-frontend.ps1` for `curl.exe` as well, or run curl from a session that already trusts the development certificate through Windows. A new import returns HTTP 201. Importing the same file bytes again returns HTTP 200 with `replayed` true.
+
+Open `http://localhost:5173/invoices`. Amounts are read from the JSON number tokens, including a zero allocated amount.
+
+## Checks
+
+From `src/frontend`:
+
+```powershell
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+The production build must not contain the development token screen. Frontend CI is `.github/workflows/frontend-ci.yml`.

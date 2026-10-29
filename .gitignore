@@ -9,6 +9,11 @@
 # FinOpsDesk local/review artifacts
 *-review.diff
 
+# Frontend build output
+src/frontend/dist/
+src/frontend/coverage/
+src/frontend/*.tsbuildinfo
+
 # User-specific files
 *.rsuser
 *.suo
