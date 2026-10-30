@@ -99,7 +99,7 @@ Open `http://localhost:5173/reconciliation`. **Exact** calls `GET /api/matches` 
 
 HTTP 201 with `replayed` false means the allocation was recorded. HTTP 200 with `replayed` true means the same key and the same pair were already recorded. The screen shows the allocation id and the amount from that response. A verified 201 or 200 refreshes the invoice register and both reconciliation reads for the current session. An unreadable success or a lost response keeps the same key and does not refresh the caches as a confirmed success. The operator can send that same request again. The screen does not create a new key after an error. The attempt stays in memory only while the Reconciliation page stays mounted. Reloading the browser or leaving `/reconciliation` discards it. The application does not keep an unresolved attempt across that navigation. Opening the page again can start a new confirmation with a new idempotency key, and that new operation cannot tell whether the earlier POST was saved. Refreshing the list is a GET and does not prove the result of a particular POST.
 
-Manual allocation through `POST /api/allocations` is not part of this screen.
+Manual allocation through `POST /api/allocations` is not part of this screen. `GET /api/allocations/context` can read the current context of one invoice and one bank transaction, and this screen does not call it. That read does not reserve either balance.
 
 The same call can be made directly:
 

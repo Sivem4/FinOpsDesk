@@ -32,9 +32,29 @@ internal static class AllocationEndpoints
 
     private static readonly string[] AuditQueryNames = ["page", "pageSize"];
 
+    private static readonly string[] ContextQueryNames = ["invoiceId", "bankTransactionId"];
+
     public static RouteGroupBuilder MapAllocationEndpoints(this RouteGroupBuilder group)
     {
         ArgumentNullException.ThrowIfNull(group);
+
+        group.MapGet("/allocations/context", GetContextAsync)
+            .WithName("GetAllocationContext")
+            .WithSummary("Read the current business context of one invoice and one bank transaction.")
+            .WithDescription(
+                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
+                + "A missing JWT sub is allowed. The query requires exactly one invoiceId and one bankTransactionId. "
+                + "Both reads are organization-scoped point lookups. They are not one atomic snapshot and they do not lock or reserve either record. "
+                + "Outstanding and unapplied amounts are calculated from the stored principal and allocated amounts. "
+                + "Different currencies are returned as stored. POST /api/allocations remains responsible for rejecting a cross-currency allocation "
+                + "and for checking the balances at commit time.")
+            .Produces<AllocationContextResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status500InternalServerError)
+            .AddOpenApiOperationTransformer(DocumentContextOperation);
 
         group.MapPost("/allocations", AllocateAsync)
             .WithName("AllocateExplicitAmount")
@@ -164,6 +184,32 @@ internal static class AllocationEndpoints
 
         Result<FinancialAuditListResponse> result = await handler.Handle(
             new GetAllocationAuditQuery(new AllocationId(parsedAllocationId), page, pageSize),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return Problem(result.Error, StatusCodeFor(result.Error), TitleFor(result.Error));
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
+    private static async Task<Results<Ok<AllocationContextResponse>, ProblemHttpResult>> GetContextAsync(
+        HttpRequest httpRequest,
+        GetAllocationContextHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadContextQuery(
+                httpRequest,
+                out Guid invoiceId,
+                out Guid bankTransactionId,
+                out ProblemHttpResult? queryProblem))
+        {
+            return queryProblem!;
+        }
+
+        Result<AllocationContextResponse> result = await handler.Handle(
+            new GetAllocationContextQuery(new InvoiceId(invoiceId), new BankTransactionId(bankTransactionId)),
             cancellationToken);
 
         if (result.IsFailure)
@@ -691,6 +737,7 @@ internal static class AllocationEndpoints
             || error.Code == ReconciliationApplicationErrors.AllocationInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationContextInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.ExplicitAmountInvalid.Code)
         {
             return StatusCodes.Status400BadRequest;
@@ -711,6 +758,11 @@ internal static class AllocationEndpoints
             || error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
         {
             return StatusCodes.Status404NotFound;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationContextInconsistentMoney.Code)
+        {
+            return StatusCodes.Status500InternalServerError;
         }
 
         if (error.Code == ReconciliationErrors.CurrencyMismatch.Code
@@ -756,6 +808,16 @@ internal static class AllocationEndpoints
         if (error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidRequest.Code)
         {
             return "Allocation audit request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationContextInvalidRequest.Code)
+        {
+            return "Allocation context request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationContextInconsistentMoney.Code)
+        {
+            return "Stored financial amounts are inconsistent.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code)
@@ -924,6 +986,104 @@ internal static class AllocationEndpoints
                         },
                     },
                 },
+            },
+        };
+    }
+
+    private static bool TryReadContextQuery(
+        HttpRequest httpRequest,
+        out Guid invoiceId,
+        out Guid bankTransactionId,
+        out ProblemHttpResult? problem)
+    {
+        invoiceId = Guid.Empty;
+        bankTransactionId = Guid.Empty;
+        problem = RejectUnexpectedContextQuery(httpRequest);
+        if (problem is not null)
+        {
+            return false;
+        }
+
+        if (!TryReadContextGuid(httpRequest, "invoiceId", out invoiceId)
+            || !TryReadContextGuid(httpRequest, "bankTransactionId", out bankTransactionId))
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationContextInvalidRequest,
+                StatusCodes.Status400BadRequest,
+                "Allocation context request is invalid.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ProblemHttpResult? RejectUnexpectedContextQuery(HttpRequest httpRequest)
+    {
+        foreach (string key in httpRequest.Query.Keys)
+        {
+            if (!ContextQueryNames.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                return Problem(
+                    ReconciliationApplicationErrors.AllocationContextInvalidRequest,
+                    StatusCodes.Status400BadRequest,
+                    "Allocation context request is invalid.");
+            }
+
+            if (httpRequest.Query[key].Count != 1)
+            {
+                return Problem(
+                    ReconciliationApplicationErrors.AllocationContextInvalidRequest,
+                    StatusCodes.Status400BadRequest,
+                    "Allocation context request is invalid.");
+            }
+        }
+
+        if (!httpRequest.Query.ContainsKey("invoiceId") || !httpRequest.Query.ContainsKey("bankTransactionId"))
+        {
+            return Problem(
+                ReconciliationApplicationErrors.AllocationContextInvalidRequest,
+                StatusCodes.Status400BadRequest,
+                "Allocation context request is invalid.");
+        }
+
+        return null;
+    }
+
+    private static bool TryReadContextGuid(HttpRequest httpRequest, string name, out Guid value)
+    {
+        string? text = httpRequest.Query[name].ToString();
+        return Guid.TryParse(text, out value) && value != Guid.Empty;
+    }
+
+    private static Task DocumentContextOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        operation.Parameters ??= [];
+        operation.Parameters.Add(ContextQueryParameter("invoiceId", "Invoice id. An empty GUID is rejected."));
+        operation.Parameters.Add(ContextQueryParameter(
+            "bankTransactionId",
+            "Bank transaction id. An empty GUID is rejected."));
+        return Task.CompletedTask;
+    }
+
+    private static OpenApiParameter ContextQueryParameter(string name, string description)
+    {
+        return new OpenApiParameter
+        {
+            Name = name,
+            In = ParameterLocation.Query,
+            Required = true,
+            Description = description,
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
             },
         };
     }

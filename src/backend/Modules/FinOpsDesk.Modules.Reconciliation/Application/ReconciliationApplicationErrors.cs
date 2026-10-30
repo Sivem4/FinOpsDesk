@@ -129,6 +129,16 @@ public static class ReconciliationApplicationErrors
             "reconciliation.allocation.request_too_large",
             "The allocation request body must be at most 4096 bytes.");
 
+    public static Error AllocationContextInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation_context.invalid_request",
+            "The allocation context request must contain exactly one invoice id and one bank transaction id, and both must be non-empty GUIDs.");
+
+    public static Error AllocationContextInconsistentMoney { get; } =
+        new(
+            "reconciliation.allocation_context.inconsistent_money",
+            "Stored amounts for the invoice or bank transaction are inconsistent.");
+
     public static Error ReviewCaseNotFound { get; } =
         new(
             "reconciliation.review_case.not_found",

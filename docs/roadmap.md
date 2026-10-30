@@ -279,7 +279,7 @@ Add:
 - loading, error, empty, forbidden, and conflict states;
 - component tests.
 
-The first frontend increment is an invoice register on `GET /api/invoices`. That response already contains the fields shown for the selected row. A separate invoice-detail endpoint does not exist, so an addressable invoice detail screen is not part of this increment. A bank-transaction list endpoint does not exist either. Both screens remain planned and depend on additional read endpoints. They are not removed from the product scope. Production browser sign-in remains Phase 7.
+The first frontend increment is an invoice register on `GET /api/invoices`. That response already contains the fields shown for the selected row. A separate invoice-detail endpoint does not exist, so an addressable invoice detail screen is not part of this increment. A bank-transaction list endpoint does not exist either. Both screens remain planned and depend on additional read endpoints. They are not removed from the product scope. `GET /api/allocations/context` returns the current business context of one named invoice and one named bank transaction. It does not reserve funds, and the allocation dialog that would call `POST /api/allocations` remains planned. Production browser sign-in remains Phase 7.
 
 The CSV import workspace posts the operator's original file to `POST /api/imports/invoices` or `POST /api/imports/bank-transactions` and shows that response, including replay and row errors. A list of earlier batches, a batch read by id, and an error-file download are not part of this increment because those endpoints do not exist. They remain out of scope until a separate read API is approved. The bank-transaction register remains planned.
 
