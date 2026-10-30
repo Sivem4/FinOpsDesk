@@ -99,7 +99,7 @@ export function ImportWorkspacePage() {
         },
       );
     },
-    onSuccess: (_result, attempt, epoch) => {
+    onSuccess: (result, attempt, epoch) => {
       if (sessionStore.getSnapshot().epoch !== epoch) {
         return;
       }
@@ -107,6 +107,12 @@ export function ImportWorkspacePage() {
       if (attempt.importType === 'invoices') {
         void queryClient.invalidateQueries({
           queryKey: ['invoices', epoch],
+        });
+      }
+
+      if (attempt.importType === 'bank-transactions' && result.importedRows > 0) {
+        void queryClient.invalidateQueries({
+          queryKey: ['bank-transactions', epoch],
         });
       }
 
@@ -399,6 +405,11 @@ function ImportResult({
           Review invoices
         </Button>
       ) : null}
+      {canReviewBankTransactions(result) ? (
+        <Button component={Link} to="/bank-transactions" variant="outlined">
+          Review bank transactions
+        </Button>
+      ) : null}
       {result.rowErrors.length > 0 ? (
         <Stack spacing={1}>
           <Typography component="h3" variant="subtitle1" sx={{ fontWeight: 600 }}>
@@ -515,6 +526,10 @@ function TechnicalDetails({ result }: { result: ImportCsvResult }) {
 
 function canReviewInvoices(result: ImportCsvResult): boolean {
   return result.importType === 'Invoice' && (result.importedRows > 0 || result.alreadyExistsRows > 0);
+}
+
+function canReviewBankTransactions(result: ImportCsvResult): boolean {
+  return result.importType === 'BankTransaction' && (result.importedRows > 0 || result.alreadyExistsRows > 0);
 }
 
 function severityFor(status: ImportCsvResult['status']): 'success' | 'warning' | 'error' {

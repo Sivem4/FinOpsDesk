@@ -24,6 +24,16 @@ public static class ReconciliationApplicationErrors
             "reconciliation.invoices.invalid_pagination",
             "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
 
+    public static Error InvalidBankTransactionPagination { get; } =
+        new(
+            "reconciliation.bank_transactions.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
+    public static Error BankTransactionListInconsistentMoney { get; } =
+        new(
+            "reconciliation.bank_transactions.inconsistent_money",
+            "Stored amounts for a bank transaction on this page are inconsistent.");
+
     public static Error ImportFileRequired { get; } =
         new(
             "reconciliation.import.file_required",

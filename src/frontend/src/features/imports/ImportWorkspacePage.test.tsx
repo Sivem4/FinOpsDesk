@@ -152,6 +152,7 @@ describe('csv import workspace', () => {
     expect(screen.getByText('Import type: BankTransaction')).toBeVisible();
     expect(bytes).toBe(csv);
     expect(screen.queryByRole('link', { name: 'Review invoices' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review bank transactions' })).toHaveAttribute('href', '/bank-transactions');
   });
 
   it('disables submission while the upload is in progress', async () => {
@@ -680,6 +681,8 @@ describe('csv import workspace', () => {
     const bank = renderWorkspace();
     seedMatches(bank.epoch);
     const bankInvoices = ['invoices', bank.epoch, 1, 50] as const;
+    const bankRegister = ['bank-transactions', bank.epoch, 1, 50] as const;
+    queryClient.setQueryData(bankRegister, { items: [] });
     await user.click(screen.getByRole('radio', { name: 'Bank transactions' }));
     await submitFile(user, sampleFile(), 'Bank');
     await screen.findByText('Import complete');
@@ -687,6 +690,7 @@ describe('csv import workspace', () => {
       expect(queryClient.getQueryState(['matches', bank.epoch, 'smart'])?.isInvalidated).toBe(true);
     });
     expect(queryClient.getQueryState(bankInvoices)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(bankRegister)?.isInvalidated).toBe(true);
     bank.view.unmount();
 
     server.use(
@@ -694,11 +698,14 @@ describe('csv import workspace', () => {
     );
     const bankReplay = renderWorkspace();
     seedMatches(bankReplay.epoch);
+    const replayRegister = ['bank-transactions', bankReplay.epoch, 1, 50] as const;
+    queryClient.setQueryData(replayRegister, { items: [] });
     await user.click(screen.getByRole('radio', { name: 'Bank transactions' }));
     await submitFile(user, sampleFile(), 'Bank');
     await screen.findByText(/Nothing was added again/);
     await waitFor(() => {
       expect(queryClient.getQueryState(['matches', bankReplay.epoch, 'exact'])?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(replayRegister)?.isInvalidated).toBe(true);
     });
     bankReplay.view.unmount();
 
@@ -709,6 +716,55 @@ describe('csv import workspace', () => {
     await screen.findByText(/We don’t know whether this file was saved/);
     expect(queryClient.getQueryState(['matches', unknown.epoch, 'exact'])?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(['matches', unknown.epoch, 'smart'])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(['bank-transactions', unknown.epoch, 1, 50])?.isInvalidated).not.toBe(true);
+  });
+
+  it('refreshes the bank register after a partial bank import and not after a rejected file', async () => {
+    const user = userEvent.setup();
+    const rowError = {
+      dataRowIndex: 2,
+      sourceLineNumber: 3,
+      errorCode: 'reconciliation.import.row_invalid',
+      message: 'Amount is invalid.',
+      columnName: 'Amount',
+    };
+
+    server.use(http.post('/api/imports/bank-transactions', () => importResult({
+      importType: 'BankTransaction',
+      status: 'CompletedWithErrors',
+      totalRows: 2,
+      importedRows: 1,
+      alreadyExistsRows: 0,
+      rejectedRows: 1,
+      rowErrors: [rowError],
+    })));
+    const partial = renderWorkspace();
+    const partialKey = ['bank-transactions', partial.epoch, 1, 50] as const;
+    queryClient.setQueryData(partialKey, { items: [] });
+    await user.click(screen.getByRole('radio', { name: 'Bank transactions' }));
+    await submitFile(user, sampleFile(), 'Bank');
+    expect(await screen.findByText('Some rows need attention')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(queryClient.getQueryState(partialKey)?.isInvalidated).toBe(true);
+    });
+    partial.view.unmount();
+
+    server.use(http.post('/api/imports/bank-transactions', () => importResult({
+      importType: 'BankTransaction',
+      status: 'Rejected',
+      totalRows: 1,
+      importedRows: 0,
+      alreadyExistsRows: 0,
+      rejectedRows: 1,
+      rowErrors: [rowError],
+    })));
+    const rejected = renderWorkspace();
+    const rejectedKey = ['bank-transactions', rejected.epoch, 1, 50] as const;
+    queryClient.setQueryData(rejectedKey, { items: [] });
+    await user.click(screen.getByRole('radio', { name: 'Bank transactions' }));
+    await submitFile(user, sampleFile(), 'Bank');
+    expect(await screen.findByText('No rows added')).toBeInTheDocument();
+    expect(queryClient.getQueryState(rejectedKey)?.isInvalidated).toBe(false);
   });
 
   it('shows an exact size for a small file and a binary size for a larger file', async () => {
