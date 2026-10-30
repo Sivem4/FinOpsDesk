@@ -411,6 +411,99 @@ public sealed class AllocationContextEndpointTests : IDisposable
         Assert.Equal(0, await reload.Allocations.CountAsync(allocation => allocation.OrganizationId == organizationId));
     }
 
+    [Fact]
+    public async Task Context_returns_500_when_bank_transaction_currency_is_inconsistent()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 77.77m, "SECRET-BANK-INV");
+        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
+            organizationId,
+            77.77m,
+            reference: "SECRET-BANK-PAY");
+        await SeedAsync(invoice, bankTransaction);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                UPDATE [reconciliation].[BankTransactions]
+                SET [AllocatedCurrency] = 'USD'
+                WHERE [Id] = {bankTransaction.Id.Value}
+                """);
+        }
+
+        using HttpClient client = Client(organizationId);
+        string body = await AssertProblemAsync(
+            await client.GetAsync(ContextPath(invoice.Id.Value, bankTransaction.Id.Value)),
+            HttpStatusCode.InternalServerError,
+            ReconciliationApplicationErrors.AllocationContextInconsistentMoney.Code,
+            "SECRET-BANK-INV");
+        Assert.DoesNotContain("SECRET-BANK-PAY", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("77.77", body, StringComparison.Ordinal);
+        AssertNoContextDto(body);
+        await AssertStoredPairUnchangedAsync(
+            organizationId,
+            invoice,
+            bankTransaction,
+            invoiceAllocated: 0m,
+            invoiceAllocatedCurrency: "PLN",
+            bankAllocated: 0m,
+            bankAllocatedCurrency: "USD");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Context_rejects_allocated_amount_greater_than_principal(bool corruptInvoice)
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 100m, "SECRET-OVER-INV");
+        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
+            organizationId,
+            100m,
+            reference: "SECRET-OVER-PAY");
+        await SeedAsync(invoice, bankTransaction);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            if (corruptInvoice)
+            {
+                await context.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE [reconciliation].[Invoices]
+                    SET [AllocatedAmount] = {120m}
+                    WHERE [Id] = {invoice.Id.Value}
+                    """);
+            }
+            else
+            {
+                await context.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE [reconciliation].[BankTransactions]
+                    SET [AllocatedAmount] = {120m}
+                    WHERE [Id] = {bankTransaction.Id.Value}
+                    """);
+            }
+        }
+
+        using HttpClient client = Client(organizationId);
+        string body = await AssertProblemAsync(
+            await client.GetAsync(ContextPath(invoice.Id.Value, bankTransaction.Id.Value)),
+            HttpStatusCode.InternalServerError,
+            ReconciliationApplicationErrors.AllocationContextInconsistentMoney.Code,
+            "SECRET-OVER-INV");
+        Assert.DoesNotContain("SECRET-OVER-PAY", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("120", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("100", body, StringComparison.Ordinal);
+        AssertNoContextDto(body);
+        await AssertStoredPairUnchangedAsync(
+            organizationId,
+            invoice,
+            bankTransaction,
+            invoiceAllocated: corruptInvoice ? 120m : 0m,
+            invoiceAllocatedCurrency: "PLN",
+            bankAllocated: corruptInvoice ? 0m : 120m,
+            bankAllocatedCurrency: "PLN");
+    }
+
     public void Dispose()
     {
         _factory.Dispose();
@@ -461,6 +554,43 @@ public sealed class AllocationContextEndpointTests : IDisposable
         }
 
         return body;
+    }
+
+    private static void AssertNoContextDto(string body)
+    {
+        using JsonDocument document = JsonDocument.Parse(body);
+        Assert.False(document.RootElement.TryGetProperty("invoice", out _));
+        Assert.False(document.RootElement.TryGetProperty("bankTransaction", out _));
+        Assert.DoesNotContain("outstandingAmount", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("unappliedAmount", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("invoiceNumber", body, StringComparison.Ordinal);
+    }
+
+    private async Task AssertStoredPairUnchangedAsync(
+        OrganizationId organizationId,
+        Invoice invoice,
+        BankTransaction bankTransaction,
+        decimal invoiceAllocated,
+        string invoiceAllocatedCurrency,
+        decimal bankAllocated,
+        string bankAllocatedCurrency)
+    {
+        await using ReconciliationDbContext reload = _fixture.CreateContext();
+        Assert.Equal(0, await reload.Allocations.CountAsync(allocation => allocation.OrganizationId == organizationId));
+        Assert.Equal(
+            0,
+            await reload.FinancialAuditEntries.CountAsync(entry => entry.OrganizationId == organizationId));
+        Invoice storedInvoice = await reload.Invoices.SingleAsync(candidate => candidate.Id == invoice.Id);
+        BankTransaction storedBank = await reload.BankTransactions.SingleAsync(
+            candidate => candidate.Id == bankTransaction.Id);
+        Assert.Equal(invoice.TotalAmount.Amount, storedInvoice.TotalAmount.Amount);
+        Assert.Equal(invoice.TotalAmount.Currency.Value, storedInvoice.TotalAmount.Currency.Value);
+        Assert.Equal(invoiceAllocated, storedInvoice.AllocatedAmount.Amount);
+        Assert.Equal(invoiceAllocatedCurrency, storedInvoice.AllocatedAmount.Currency.Value);
+        Assert.Equal(bankTransaction.Amount.Amount, storedBank.Amount.Amount);
+        Assert.Equal(bankTransaction.Amount.Currency.Value, storedBank.Amount.Currency.Value);
+        Assert.Equal(bankAllocated, storedBank.AllocatedAmount.Amount);
+        Assert.Equal(bankAllocatedCurrency, storedBank.AllocatedAmount.Currency.Value);
     }
 
     private static void AssertMoney(JsonElement money, decimal amount, string currency)
