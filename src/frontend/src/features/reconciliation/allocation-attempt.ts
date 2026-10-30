@@ -641,6 +641,10 @@ function serializeStoredAttempt(attempt: ExplicitAmountAttempt): string {
   });
 }
 
+export function readAllocationOrganizationId(token: string | null): string | null {
+  return readOrganizationId(token);
+}
+
 function readOrganizationId(token: string | null): string | null {
   const claim = readClaim(token, 'org_id');
   return typeof claim === 'string' && isGuid(claim) ? claim.toLowerCase() : null;
