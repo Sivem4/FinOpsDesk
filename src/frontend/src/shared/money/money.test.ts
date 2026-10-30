@@ -2,6 +2,7 @@ import { isLosslessNumber, parse } from 'lossless-json';
 import { describe, expect, it } from 'vitest';
 
 import {
+  compareDecimalAmounts,
   formatMoney,
   parseAllocationAmount,
   readMoney,
@@ -69,6 +70,17 @@ describe('monetary amounts', () => {
 
     expect(money.amount).toBe('999999999999999.9999');
     expect(Number('999999999999999.9999').toString()).not.toBe('999999999999999.9999');
+  });
+
+  it('compares canonical amounts at scale four without using Number', () => {
+    expect(compareDecimalAmounts(parseAllocationAmount('10.50'), parseAllocationAmount('10.5'))).toBe(0);
+    expect(compareDecimalAmounts(parseAllocationAmount('9.9999'), parseAllocationAmount('10'))).toBe(-1);
+    expect(compareDecimalAmounts(parseAllocationAmount('0.0001'), parseAllocationAmount('0.001'))).toBe(-1);
+    expect(compareDecimalAmounts(
+      parseAllocationAmount('999999999999999.9999'),
+      parseAllocationAmount('999999999999999.9998'),
+    )).toBe(1);
+    expect(Number('999999999999999.9999') === Number('999999999999999.9998')).toBe(true);
   });
 
   it('serializes an allocation amount as an unquoted JSON number', () => {

@@ -52,6 +52,21 @@ export function parseAllocationAmount(input: string): DecimalString {
   return canonicalFromScaled(scaled);
 }
 
+export function compareDecimalAmounts(left: DecimalString, right: DecimalString): -1 | 0 | 1 {
+  const leftScaled = scaledCanonical(left);
+  const rightScaled = scaledCanonical(right);
+
+  if (leftScaled < rightScaled) {
+    return -1;
+  }
+
+  if (leftScaled > rightScaled) {
+    return 1;
+  }
+
+  return 0;
+}
+
 export function readMoney(value: unknown): MoneyDto {
   if (!isRecord(value)) {
     throw new MoneyParseError('Money must be an object.');
@@ -244,6 +259,26 @@ function readExponent(text: string): number {
   }
 
   return parsed;
+}
+
+function scaledCanonical(value: string): bigint {
+  const negative = value.startsWith('-');
+  const unsigned = negative ? value.slice(1) : value;
+  const pieces = unsigned.split('.');
+  const whole = pieces[0] ?? '';
+  const fraction = pieces[1] ?? '';
+
+  if (pieces.length > 2 || whole.length === 0 || !/^\d+$/.test(whole) || (fraction.length > 0 && !/^\d+$/.test(fraction)) || fraction.length > SCALE_DIGITS) {
+    throw new MoneyParseError('Monetary amount is not a canonical decimal.');
+  }
+
+  const scaled = BigInt(whole) * SCALE_FACTOR + BigInt(fraction.padEnd(SCALE_DIGITS, '0'));
+
+  if (scaled >= MAX_SCALED_EXCLUSIVE) {
+    throw new MoneyParseError('Monetary amount must be below 1000000000000000.');
+  }
+
+  return negative ? -scaled : scaled;
 }
 
 function canonicalFromScaled(scaled: bigint): DecimalString {

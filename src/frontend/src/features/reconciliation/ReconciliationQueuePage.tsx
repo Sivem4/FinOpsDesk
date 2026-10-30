@@ -21,12 +21,22 @@ import { useRef, useState, type ReactNode } from 'react';
 import { ApiError, NetworkError, StaleSessionError, UnexpectedResponseError } from '../../shared/api/errors';
 import { sessionStore } from '../../shared/api/session-store';
 import { endSession, useSession } from '../../shared/auth/session';
-import { formatMoney } from '../../shared/money/money';
+import { formatMoney, type DecimalString } from '../../shared/money/money';
+import { getAllocationContext } from './allocation-context-api';
+import {
+  AllocationStorageCleanupError,
+  inspectAllocationAttempt,
+  readAllocationOrganizationId,
+  useAllocationAttempt,
+} from './allocation-attempt';
 import {
   ConfirmationAttemptBanner,
   ExactMatchConfirmationDialog,
   type ConfirmationPairView,
 } from './ExactMatchConfirmationDialog';
+import { AllocationRecoveryBanner, ManualAllocationDialog } from './ManualAllocationDialog';
+import { assessAllocationAmount, describeAllocationBalances } from './manual-allocation-rules';
+import { useManualAllocation } from './useManualAllocation';
 import {
   createConfirmationAttempt,
   postExactConfirmation,
@@ -90,6 +100,11 @@ export function ReconciliationQueuePage() {
   const [successDismissed, setSuccessDismissed] = useState(true);
   const submitting = useRef(false);
   const requestController = useRef<AbortController | null>(null);
+  const allocationAttempt = useAllocationAttempt();
+  const manualAllocation = useManualAllocation();
+  const [allocationOpen, setAllocationOpen] = useState(false);
+  const [redirectedFromOtherPair, setRedirectedFromOtherPair] = useState(false);
+  const [draftPair, setDraftPair] = useState<AllocationDraft | null>(null);
   const visibleAttempt = activeConfirmation !== null && activeConfirmation.attempt.epoch === session.epoch
     ? activeConfirmation
     : null;
@@ -106,6 +121,25 @@ export function ReconciliationQueuePage() {
   if (dialogOpen && visibleAttempt === null && visibleDraft === null) {
     setDialogOpen(false);
   }
+  const storedAllocationPair = allocationAttempt.status === 'pending'
+    ? { invoiceId: allocationAttempt.attempt.invoiceId, bankTransactionId: allocationAttempt.attempt.bankTransactionId }
+    : null;
+  const allocationContextPair = allocationOpen
+    ? storedAllocationPair ?? (allocationAttempt.status === 'none' ? draftPair : null)
+    : null;
+  const allocationContext = useQuery({
+    queryKey: allocationContextPair === null
+      ? ['allocations', 'context', session.epoch, 'idle']
+      : ['allocations', 'context', session.epoch, allocationContextPair.invoiceId, allocationContextPair.bankTransactionId],
+    enabled: allocationContextPair !== null && session.token !== null,
+    queryFn: ({ signal }) => {
+      if (allocationContextPair === null) {
+        throw new Error('Allocation context was requested without a pair.');
+      }
+
+      return getAllocationContext(allocationContextPair.invoiceId, allocationContextPair.bankTransactionId, signal);
+    },
+  });
   const exact = useQuery({
     queryKey: ['matches', session.epoch, 'exact'],
     enabled: session.token !== null && view === 'exact',
@@ -182,6 +216,15 @@ export function ReconciliationQueuePage() {
       <Typography color="text.secondary">
         Exact and Smart are separate reads and can come from different moments in the books.
       </Typography>
+      {allocationOpen ? null : (
+        <AllocationRecoveryBanner
+          attempt={allocationAttempt}
+          result={manualAllocation.result}
+          error={manualAllocation.error}
+          onReview={openStoredAllocation}
+          onDismiss={() => manualAllocation.dismiss()}
+        />
+      )}
       {showDialog ? null : (
         <ConfirmationAttemptBanner
           pair={visibleAttempt?.pair ?? null}
@@ -220,7 +263,9 @@ export function ReconciliationQueuePage() {
           actionFor={actionFor}
         />
       ) : null}
-      {view === 'smart' && smart.isSuccess ? <SmartResult result={smart.data} resetKey={smart.dataUpdatedAt} /> : null}
+      {view === 'smart' && smart.isSuccess ? (
+        <SmartResult result={smart.data} resetKey={smart.dataUpdatedAt} onAllocate={openSmartAllocation} />
+      ) : null}
       <ExactMatchConfirmationDialog
         open={showDialog}
         pair={pair}
@@ -230,6 +275,26 @@ export function ReconciliationQueuePage() {
         onClose={() => setDialogOpen(false)}
         onConfirm={submitConfirmation}
         onLeave={leaveAttempt}
+      />
+      <ManualAllocationDialog
+        open={allocationOpen}
+        context={allocationContext}
+        attempt={allocationAttempt}
+        suggestedAmount={draftPair?.suggestedAmount ?? null}
+        draftPairKey={draftPair === null ? null : `${draftPair.invoiceId}:${draftPair.bankTransactionId}`}
+        redirectedFromOtherPair={redirectedFromOtherPair}
+        submitting={manualAllocation.submitting}
+        error={manualAllocation.error}
+        result={manualAllocation.result}
+        onClose={() => setAllocationOpen(false)}
+        onAllocate={submitManualAllocation}
+        onRetry={() => {
+          void manualAllocation.retryStoredAttempt();
+        }}
+        onAbandon={manualAllocation.abandonStoredAttempt}
+        onRefreshContext={() => {
+          void allocationContext.refetch();
+        }}
       />
     </Stack>
   );
@@ -316,6 +381,68 @@ export function ReconciliationQueuePage() {
     confirmation.mutate(attempt);
   }
 
+  function openStoredAllocation(): void {
+    setRedirectedFromOtherPair(false);
+    setAllocationOpen(true);
+  }
+
+  function openSmartAllocation(item: SmartMatchSuggestion): void {
+    const stored = inspectAllocationAttempt();
+
+    if (manualAllocation.error instanceof AllocationStorageCleanupError && stored.status === 'none') {
+      setAllocationOpen(true);
+      return;
+    }
+
+    if (stored.status !== 'none') {
+      setRedirectedFromOtherPair(true);
+      setAllocationOpen(true);
+      return;
+    }
+
+    manualAllocation.dismiss();
+    setRedirectedFromOtherPair(false);
+    setDraftPair({
+      invoiceId: item.invoiceId,
+      bankTransactionId: item.bankTransactionId,
+      suggestedAmount: item.suggestedAmount,
+      suggestedCurrency: item.suggestedAmountCurrency,
+    });
+    setAllocationOpen(true);
+  }
+
+  function submitManualAllocation(amountText: string, currency: string): void {
+    if (draftPair === null || !allocationContext.isSuccess || allocationContext.isFetching || allocationContext.data === undefined) {
+      return;
+    }
+
+    const balances = describeAllocationBalances(allocationContext.data);
+
+    if (balances.status !== 'allocatable' || balances.currency !== currency) {
+      return;
+    }
+
+    const decision = assessAllocationAmount(balances.maximum, amountText);
+
+    if (!decision.ok) {
+      return;
+    }
+
+    const organizationId = readAllocationOrganizationId(sessionStore.getSnapshot().token);
+
+    if (organizationId === null) {
+      return;
+    }
+
+    void manualAllocation.allocateNew({
+      invoiceId: draftPair.invoiceId,
+      bankTransactionId: draftPair.bankTransactionId,
+      amount: decision.amount,
+      currency: balances.currency,
+      organizationId,
+    });
+  }
+
   function leaveAttempt(): void {
     if (confirmation.isPending || !isDefinitiveRejection(confirmationError)) {
       return;
@@ -381,7 +508,15 @@ function ExactResult({
   );
 }
 
-function SmartResult({ result, resetKey }: { result: SmartMatchResponse; resetKey: number }) {
+function SmartResult({
+  result,
+  resetKey,
+  onAllocate,
+}: {
+  result: SmartMatchResponse;
+  resetKey: number;
+  onAllocate: (item: SmartMatchSuggestion) => void;
+}) {
   return (
     <Stack spacing={2}>
       <Alert severity="info">
@@ -406,7 +541,7 @@ function SmartResult({ result, resetKey }: { result: SmartMatchResponse; resetKe
       ) : null}
       {result.suggestions.length > 0 ? (
         <RecordSection title="Suggestions" count={result.suggestions.length}>
-          <PagedSection items={result.suggestions} resetKey={resetKey} label="suggestions" renderPage={(items) => <SuggestionTable items={items} />} />
+          <PagedSection items={result.suggestions} resetKey={resetKey} label="suggestions" renderPage={(items) => <SuggestionTable items={items} onAllocate={onAllocate} />} />
         </RecordSection>
       ) : null}
     </Stack>
@@ -500,10 +635,16 @@ function ClassifiedTable({ items }: { items: ClassifiedMatchRecord[] }) {
   );
 }
 
-function SuggestionTable({ items }: { items: SmartMatchSuggestion[] }) {
+function SuggestionTable({
+  items,
+  onAllocate,
+}: {
+  items: SmartMatchSuggestion[];
+  onAllocate: (item: SmartMatchSuggestion) => void;
+}) {
   return (
     <MatchTable
-      headings={['Rank', 'Score', 'Invoice', 'Bank transaction', 'Outstanding', 'Unapplied', 'Suggested', 'Flags', 'Signals']}
+      headings={['Rank', 'Score', 'Invoice', 'Bank transaction', 'Outstanding', 'Unapplied', 'Suggested', 'Flags', 'Signals', 'Action']}
       rows={items.map((item) => (
         <TableRow key={`${item.invoiceId}-${item.bankTransactionId}`}>
           <TableCell>{item.rank}</TableCell>
@@ -527,6 +668,16 @@ function SuggestionTable({ items }: { items: SmartMatchSuggestion[] }) {
                 </span>
               ))}
             </Stack>
+          </TableCell>
+          <TableCell>
+            <Button
+              type="button"
+              size="small"
+              aria-label={`Allocate invoice ${item.invoiceId} and bank transaction ${item.bankTransactionId}`}
+              onClick={() => onAllocate(item)}
+            >
+              Allocate
+            </Button>
           </TableCell>
         </TableRow>
       ))}
@@ -607,6 +758,13 @@ const hiddenIdentifier = {
   whiteSpace: 'nowrap',
   border: 0,
 } as const;
+
+interface AllocationDraft {
+  invoiceId: string;
+  bankTransactionId: string;
+  suggestedAmount: DecimalString;
+  suggestedCurrency: string;
+}
 
 function reasonLabel(reason: string): string {
   return reasonLabels[reason] ?? reason;
