@@ -1,6 +1,6 @@
 # Frontend development
 
-The operations workspace is a Vite application in `src/frontend`. It shows the invoice register from `GET /api/invoices` and CSV import at `/imports`. It does not issue tokens. The import screen sends the selected file to the existing import endpoints and does not change amounts in the browser.
+The operations workspace is a Vite application in `src/frontend`. It shows the invoice register from `GET /api/invoices`, CSV import at `/imports`, and a read-only reconciliation queue at `/reconciliation`. It does not issue tokens. The import screen sends the selected file to the existing import endpoints and does not change amounts in the browser. The reconciliation screen reads `GET /api/matches` and `GET /api/matches/smart` and does not allocate money.
 
 Production browser authentication is Phase 7. The development token screen is compiled only into the Vite development build. A production build shows that browser sign-in is not configured.
 
@@ -89,7 +89,11 @@ Submit with **Import file**. The browser sends `multipart/form-data` fields name
 
 A new import returns HTTP 201. The same bytes, import type, and normalized source system return HTTP 200 with `replayed` true and the stored batch. `Completed`, `CompletedWithErrors`, and `Rejected` are persisted batch results. HTTP 400 means the file was structurally rejected and no batch was saved. If the request ends without a response, the screen says the outcome is unknown. Submit the same file again manually. Reloading the browser discards the selected file, so it must be selected again. There is no import-history endpoint, so a finished result cannot be loaded by batch id.
 
-A confirmed invoice import or replay refreshes the invoice register. Open **Invoices** to see rows from `GET /api/invoices`. A bank transaction import does not refresh that register, and there is no bank-transaction list endpoint.
+A confirmed invoice import or replay refreshes the invoice register and the reconciliation queries for that session. Open **Invoices** to see rows from `GET /api/invoices`. A confirmed bank-transaction import or replay refreshes the reconciliation queries for that session. It does not refresh the invoice register, and there is no bank-transaction list endpoint. An import whose outcome is unknown does not refresh either cache.
+
+## Reconciliation
+
+Open `http://localhost:5173/reconciliation`. **Exact** calls `GET /api/matches` and shows `exact-1` pairs, ambiguous groups, unmatched rows, and ineligible rows in the returned order. **Smart** calls `GET /api/matches/smart` with no query string and shows `smart-1` suggestions. Scores are points. The screen does not turn them into percentages and does not confirm a match. Only the selected view requests its endpoint. A book larger than 5,000 open rows on either side returns HTTP 409 and is not matched. Inconsistent stored money returns the matching HTTP 500 problem and is not matched. Exact and Smart are separate reads.
 
 The same call can be made directly:
 

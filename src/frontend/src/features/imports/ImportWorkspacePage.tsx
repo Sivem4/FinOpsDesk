@@ -100,12 +100,18 @@ export function ImportWorkspacePage() {
       );
     },
     onSuccess: (_result, attempt, epoch) => {
-      if (attempt.importType !== 'invoices' || sessionStore.getSnapshot().epoch !== epoch) {
+      if (sessionStore.getSnapshot().epoch !== epoch) {
         return;
       }
 
+      if (attempt.importType === 'invoices') {
+        void queryClient.invalidateQueries({
+          queryKey: ['invoices', epoch],
+        });
+      }
+
       void queryClient.invalidateQueries({
-        queryKey: ['invoices', epoch],
+        queryKey: ['matches', epoch],
       });
     },
   });
