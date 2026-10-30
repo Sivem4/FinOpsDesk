@@ -652,6 +652,65 @@ describe('csv import workspace', () => {
     expect(queryClient.getQueryState(unknownKey)?.isInvalidated).toBe(false);
   });
 
+  it('invalidates matching queries after confirmed invoice and bank imports', async () => {
+    const user = userEvent.setup();
+
+    server.use(http.post('/api/imports/invoices', () => importResult()));
+    const created = renderWorkspace();
+    seedMatches(created.epoch);
+    await submitFile(user, sampleFile());
+    await screen.findByText('Import complete');
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['matches', created.epoch, 'exact'])?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(['matches', created.epoch, 'smart'])?.isInvalidated).toBe(true);
+    });
+    created.view.unmount();
+
+    server.use(http.post('/api/imports/invoices', () => importResult({ replayed: true })));
+    const replay = renderWorkspace();
+    seedMatches(replay.epoch);
+    await submitFile(user, sampleFile());
+    await screen.findByText(/Nothing was added again/);
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['matches', replay.epoch, 'exact'])?.isInvalidated).toBe(true);
+    });
+    replay.view.unmount();
+
+    server.use(http.post('/api/imports/bank-transactions', () => importResult({ importType: 'BankTransaction' })));
+    const bank = renderWorkspace();
+    seedMatches(bank.epoch);
+    const bankInvoices = ['invoices', bank.epoch, 1, 50] as const;
+    await user.click(screen.getByRole('radio', { name: 'Bank transactions' }));
+    await submitFile(user, sampleFile(), 'Bank');
+    await screen.findByText('Import complete');
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['matches', bank.epoch, 'smart'])?.isInvalidated).toBe(true);
+    });
+    expect(queryClient.getQueryState(bankInvoices)?.isInvalidated).toBe(false);
+    bank.view.unmount();
+
+    server.use(
+      http.post('/api/imports/bank-transactions', () => importResult({ importType: 'BankTransaction', replayed: true })),
+    );
+    const bankReplay = renderWorkspace();
+    seedMatches(bankReplay.epoch);
+    await user.click(screen.getByRole('radio', { name: 'Bank transactions' }));
+    await submitFile(user, sampleFile(), 'Bank');
+    await screen.findByText(/Nothing was added again/);
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['matches', bankReplay.epoch, 'exact'])?.isInvalidated).toBe(true);
+    });
+    bankReplay.view.unmount();
+
+    server.use(http.post('/api/imports/invoices', () => HttpResponse.error()));
+    const unknown = renderWorkspace();
+    seedMatches(unknown.epoch);
+    await submitFile(user, sampleFile());
+    await screen.findByText(/We don’t know whether this file was saved/);
+    expect(queryClient.getQueryState(['matches', unknown.epoch, 'exact'])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(['matches', unknown.epoch, 'smart'])?.isInvalidated).toBe(false);
+  });
+
   it('shows an exact size for a small file and a binary size for a larger file', async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -773,6 +832,11 @@ describe('csv import workspace', () => {
     expect(screen.queryByRole('heading', { name: 'Import result' })).not.toBeInTheDocument();
   });
 });
+
+function seedMatches(epoch: number) {
+  queryClient.setQueryData(['matches', epoch, 'exact'], { algorithmVersion: 'exact-1' });
+  queryClient.setQueryData(['matches', epoch, 'smart'], { algorithmVersion: 'smart-1' });
+}
 
 function renderWorkspace() {
   sessionStore.rotate('memory-token', Math.floor(Date.now() / 1000) + 3600, null);

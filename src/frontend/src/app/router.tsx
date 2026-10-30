@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router';
 
 import { ImportWorkspacePage } from '../features/imports/ImportWorkspacePage';
 import { InvoiceRegisterPage } from '../features/invoices/InvoiceRegisterPage';
+import { ReconciliationQueuePage } from '../features/reconciliation/ReconciliationQueuePage';
 
 export function AppRouter() {
   return (
@@ -10,6 +11,7 @@ export function AppRouter() {
       <Route path="/" element={<Navigate to="/invoices" replace />} />
       <Route path="/invoices" element={<InvoiceRegisterPage />} />
       <Route path="/imports" element={<ImportWorkspacePage />} />
+      <Route path="/reconciliation" element={<ReconciliationQueuePage />} />
       <Route
         path="*"
         element={<Alert severity="warning">That page is not available.</Alert>}
