@@ -99,6 +99,81 @@ public sealed class ListInvoicesHandlerTests
         Assert.Equal(0, invoiceQueries.CallCount);
     }
 
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("  AbC  ", "AbC")]
+    [InlineData("INV-1", "INV-1")]
+    public async Task Handle_should_forward_a_trimmed_invoice_number(
+        string? supplied,
+        string? expected)
+    {
+        RecordingOrganizationContext organizationContext = new(TestOrganizationId);
+        FakeInvoiceQueries invoiceQueries = new();
+        ListInvoicesHandler handler = CreateHandler(organizationContext, invoiceQueries);
+        using CancellationTokenSource cancellationTokenSource = new();
+
+        Result<InvoiceListResponse> result = await handler.Handle(
+            new ListInvoicesQuery(1, 50, supplied),
+            cancellationTokenSource.Token);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(1, organizationContext.ReadCount);
+        Assert.Equal(expected, invoiceQueries.InvoiceNumber);
+        Assert.Equal(cancellationTokenSource.Token, invoiceQueries.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public async Task Handle_should_reject_an_empty_invoice_number_before_querying(string supplied)
+    {
+        RecordingOrganizationContext organizationContext = new(TestOrganizationId);
+        FakeInvoiceQueries invoiceQueries = new();
+        ListInvoicesHandler handler = CreateHandler(organizationContext, invoiceQueries);
+
+        Result<InvoiceListResponse> result = await handler.Handle(
+            new ListInvoicesQuery(1, 50, supplied),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(ReconciliationApplicationErrors.InvalidInvoiceNumberLookup, result.Error);
+        Assert.Equal(0, organizationContext.ReadCount);
+        Assert.Equal(0, invoiceQueries.CallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_an_invoice_number_longer_than_256_characters()
+    {
+        RecordingOrganizationContext organizationContext = new(TestOrganizationId);
+        FakeInvoiceQueries invoiceQueries = new();
+        ListInvoicesHandler handler = CreateHandler(organizationContext, invoiceQueries);
+
+        Result<InvoiceListResponse> result = await handler.Handle(
+            new ListInvoicesQuery(1, 50, new string('A', 257)),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(ReconciliationApplicationErrors.InvalidInvoiceNumberLookup, result.Error);
+        Assert.DoesNotContain("A", result.Error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, invoiceQueries.CallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_accept_an_invoice_number_of_256_characters()
+    {
+        string invoiceNumber = new('B', 256);
+        FakeInvoiceQueries invoiceQueries = new();
+        ListInvoicesHandler handler = CreateHandler(new RecordingOrganizationContext(TestOrganizationId), invoiceQueries);
+
+        Result<InvoiceListResponse> result = await handler.Handle(
+            new ListInvoicesQuery(1, 50, "  " + invoiceNumber + "  "),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(invoiceNumber, invoiceQueries.InvoiceNumber);
+    }
+
     private static ListInvoicesHandler CreateHandler(
         ICurrentOrganizationContext organizationContext,
         IInvoiceQueries invoiceQueries)
@@ -151,18 +226,22 @@ public sealed class ListInvoicesHandlerTests
 
         public int PageSize { get; private set; }
 
+        public string? InvoiceNumber { get; private set; }
+
         public CancellationToken CancellationToken { get; private set; }
 
         public Task<InvoiceListResponse> ListAsync(
             OrganizationId organizationId,
             int page,
             int pageSize,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string? invoiceNumber = null)
         {
             CallCount++;
             OrganizationId = organizationId;
             Page = page;
             PageSize = pageSize;
+            InvoiceNumber = invoiceNumber;
             CancellationToken = cancellationToken;
             return Task.FromResult(_response);
         }

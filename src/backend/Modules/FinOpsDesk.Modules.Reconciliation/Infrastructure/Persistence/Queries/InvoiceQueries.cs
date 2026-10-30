@@ -21,14 +21,23 @@ internal sealed class InvoiceQueries : IInvoiceQueries
         OrganizationId organizationId,
         int page,
         int pageSize,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? invoiceNumber = null)
     {
         ArgumentNullException.ThrowIfNull(organizationId);
 
+        // Count and page share this query. InvoiceNumber is nvarchar(max) and has
+        // no search index, so an exact term still scans the tenant's id range.
         IQueryable<Invoice> invoices = _dbContext.Invoices
             .AsNoTracking()
-            .Where(invoice => invoice.OrganizationId == organizationId)
-            .OrderBy(invoice => invoice.Id);
+            .Where(invoice => invoice.OrganizationId == organizationId);
+
+        if (invoiceNumber is not null)
+        {
+            invoices = invoices.Where(invoice => invoice.InvoiceNumber == invoiceNumber);
+        }
+
+        invoices = invoices.OrderBy(invoice => invoice.Id);
 
         int totalCount = await invoices.CountAsync(cancellationToken);
 

@@ -6,9 +6,12 @@ public sealed class ListBankTransactionsQuery
 
     public int PageSize { get; }
 
-    public ListBankTransactionsQuery(int page, int pageSize)
+    public string? Reference { get; }
+
+    public ListBankTransactionsQuery(int page, int pageSize, string? reference = null)
     {
         Page = page;
         PageSize = pageSize;
+        Reference = reference;
     }
 }

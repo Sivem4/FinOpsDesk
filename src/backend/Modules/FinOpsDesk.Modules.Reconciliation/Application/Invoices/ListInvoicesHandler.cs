@@ -33,13 +33,20 @@ public sealed class ListInvoicesHandler
                 ReconciliationApplicationErrors.InvalidInvoicePagination);
         }
 
+        if (!ExactLookupTerm.TryNormalize(query.InvoiceNumber, out string? invoiceNumber))
+        {
+            return Result<InvoiceListResponse>.Failure(
+                ReconciliationApplicationErrors.InvalidInvoiceNumberLookup);
+        }
+
         OrganizationId organizationId = _currentOrganizationContext.OrganizationId;
 
         InvoiceListResponse response = await _invoiceQueries.ListAsync(
             organizationId,
             query.Page,
             query.PageSize,
-            cancellationToken);
+            cancellationToken,
+            invoiceNumber);
 
         return Result<InvoiceListResponse>.Success(response);
     }

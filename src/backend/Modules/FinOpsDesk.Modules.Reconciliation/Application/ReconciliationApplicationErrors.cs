@@ -24,10 +24,20 @@ public static class ReconciliationApplicationErrors
             "reconciliation.invoices.invalid_pagination",
             "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
 
+    public static Error InvalidInvoiceNumberLookup { get; } =
+        new(
+            "reconciliation.invoices.invalid_invoice_number",
+            "Invoice number must be 1 to 256 characters after trimming.");
+
     public static Error InvalidBankTransactionPagination { get; } =
         new(
             "reconciliation.bank_transactions.invalid_pagination",
             "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
+    public static Error InvalidBankTransactionReferenceLookup { get; } =
+        new(
+            "reconciliation.bank_transactions.invalid_reference",
+            "Bank transaction reference must be 1 to 256 characters after trimming.");
 
     public static Error BankTransactionListInconsistentMoney { get; } =
         new(

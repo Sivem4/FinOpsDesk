@@ -8,5 +8,6 @@ public interface IBankTransactionQueries
         OrganizationId organizationId,
         int page,
         int pageSize,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? reference = null);
 }

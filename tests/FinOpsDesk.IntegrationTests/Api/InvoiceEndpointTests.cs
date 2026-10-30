@@ -197,6 +197,164 @@ public sealed class InvoiceEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Exact_invoice_number_returns_only_matching_rows()
+    {
+        SeededInvoices seeded = await SeedInvoicesAsync();
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(seeded.OrganizationA.Value));
+
+        using JsonDocument document = await ReadOkAsync(
+            await client.GetAsync(InvoiceNumberQuery("  INV-A-1  ")));
+
+        JsonElement root = document.RootElement;
+        Assert.Equal(1, root.GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("page").GetInt32());
+        Assert.Equal(50, root.GetProperty("pageSize").GetInt32());
+        JsonElement item = Assert.Single(root.GetProperty("items").EnumerateArray());
+        Assert.Equal(seeded.PartialInvoice.Id.Value, item.GetProperty("id").GetGuid());
+        Assert.Equal("INV-A-1", item.GetProperty("invoiceNumber").GetString());
+    }
+
+    [Fact]
+    public async Task Unknown_invoice_number_returns_an_empty_page()
+    {
+        SeededInvoices seeded = await SeedInvoicesAsync();
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(seeded.OrganizationA.Value));
+
+        using JsonDocument document = await ReadOkAsync(await client.GetAsync(InvoiceNumberQuery("MISSING")));
+
+        Assert.Equal(0, document.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Empty(document.RootElement.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Duplicate_invoice_numbers_are_paged_by_id()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice first = new(InvoiceId.New(), organizationId, "DUP", new Money(10m, PersistenceTestData.Pln));
+        Invoice second = new(InvoiceId.New(), organizationId, "DUP", new Money(20m, PersistenceTestData.Pln));
+        Invoice third = new(InvoiceId.New(), organizationId, "DUP", new Money(30m, PersistenceTestData.Pln));
+        Invoice other = new(InvoiceId.New(), organizationId, "OTHER", new Money(40m, PersistenceTestData.Pln));
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            context.Invoices.AddRange(first, second, third, other);
+            await context.SaveChangesAsync();
+        }
+
+        List<Guid> expected = await LoadMatchingOrderAsync(organizationId, "DUP");
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(organizationId.Value));
+
+        using JsonDocument firstPage = await ReadOkAsync(
+            await client.GetAsync(InvoiceNumberQuery("DUP") + "&page=1&pageSize=1"));
+        using JsonDocument secondPage = await ReadOkAsync(
+            await client.GetAsync(InvoiceNumberQuery("DUP") + "&page=2&pageSize=1"));
+
+        Assert.Equal(3, firstPage.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(expected[0], Assert.Single(firstPage.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Equal(3, secondPage.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(expected[1], Assert.Single(secondPage.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public async Task Empty_invoice_number_returns_400_without_the_term(string term)
+    {
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(Guid.NewGuid()));
+
+        HttpResponseMessage response = await client.GetAsync(InvoiceNumberQuery(term));
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using JsonDocument document = JsonDocument.Parse(body);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidInvoiceNumberLookup.Code,
+            document.RootElement.GetProperty("code").GetString());
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidInvoiceNumberLookup.Message,
+            document.RootElement.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task Invoice_number_longer_than_256_characters_returns_400_without_the_term()
+    {
+        string term = "REJECTED-LOOKUP-" + new string('Z', 241);
+        Assert.Equal(257, term.Length);
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(Guid.NewGuid()));
+
+        HttpResponseMessage response = await client.GetAsync(InvoiceNumberQuery(term));
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using JsonDocument document = JsonDocument.Parse(body);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidInvoiceNumberLookup.Code,
+            document.RootElement.GetProperty("code").GetString());
+        Assert.DoesNotContain("REJECTED-LOOKUP", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Same_invoice_number_in_another_organization_stays_hidden()
+    {
+        OrganizationId organizationA = OrganizationId.New();
+        OrganizationId organizationB = OrganizationId.New();
+        Invoice invoiceA = new(InvoiceId.New(), organizationA, "SAME", new Money(10m, PersistenceTestData.Pln));
+        Invoice invoiceB = new(InvoiceId.New(), organizationB, "SAME", new Money(20m, PersistenceTestData.Pln));
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            context.Invoices.AddRange(invoiceA, invoiceB);
+            await context.SaveChangesAsync();
+        }
+
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(organizationA.Value));
+        using JsonDocument document = await ReadOkAsync(
+            await client.GetAsync(
+                InvoiceNumberQuery("SAME") + "&organizationId=" + organizationB.Value));
+
+        Assert.Equal(1, document.RootElement.GetProperty("totalCount").GetInt32());
+        JsonElement item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(invoiceA.Id.Value, item.GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Invoice_number_equality_follows_sql_server_comparison()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice cased = new(InvoiceId.New(), organizationId, "Inv-Case", new Money(10m, PersistenceTestData.Pln));
+        Invoice padded = new(InvoiceId.New(), organizationId, "INV-PAD", new Money(11m, PersistenceTestData.Pln));
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            context.Invoices.AddRange(cased, padded);
+            await context.SaveChangesAsync();
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE [reconciliation].[Invoices] SET [InvoiceNumber] = {"INV-PAD "} WHERE [Id] = {padded.Id.Value}");
+        }
+
+        bool caseEquals = await SqlEqualsAsync("Inv-Case", "inv-case");
+        bool trailingSpaceEquals = await SqlEqualsAsync("INV-PAD", "INV-PAD ");
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(organizationId.Value));
+        using JsonDocument caseDocument = await ReadOkAsync(await client.GetAsync(InvoiceNumberQuery("inv-case")));
+        using JsonDocument spaceDocument = await ReadOkAsync(await client.GetAsync(InvoiceNumberQuery("INV-PAD")));
+
+        Assert.Equal(caseEquals ? 1 : 0, caseDocument.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(trailingSpaceEquals ? 1 : 0, spaceDocument.RootElement.GetProperty("totalCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Invalid_pagination_still_wins_when_an_invoice_number_is_supplied()
+    {
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(Guid.NewGuid()));
+
+        HttpResponseMessage response = await client.GetAsync("/api/invoices?page=0&invoiceNumber=INV-A-1");
+        using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidInvoicePagination.Code,
+            document.RootElement.GetProperty("code").GetString());
+    }
+
     public void Dispose()
     {
         _factory.Dispose();
@@ -233,6 +391,41 @@ public sealed class InvoiceEndpointTests : IDisposable
             partialInvoice,
             otherInvoice);
     }
+
+    private async Task<List<Guid>> LoadMatchingOrderAsync(OrganizationId organizationId, string invoiceNumber)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        return await context.Invoices
+            .AsNoTracking()
+            .Where(invoice => invoice.OrganizationId == organizationId && invoice.InvoiceNumber == invoiceNumber)
+            .OrderBy(invoice => invoice.Id)
+            .Select(invoice => invoice.Id.Value)
+            .ToListAsync();
+    }
+
+    private async Task<bool> SqlEqualsAsync(string left, string right)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        List<FlagRow> rows = await context.Database.SqlQuery<FlagRow>(
+            $"""
+            SELECT CAST(CASE WHEN {left} = {right} THEN 1 ELSE 0 END AS int) AS [Flag]
+            """)
+            .ToListAsync();
+        return Assert.Single(rows).Flag == 1;
+    }
+
+    private static string InvoiceNumberQuery(string term)
+    {
+        return "/api/invoices?invoiceNumber=" + Uri.EscapeDataString(term);
+    }
+
+    private static async Task<JsonDocument> ReadOkAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    private sealed record FlagRow(int Flag);
 
     private async Task<List<Guid>> LoadOrganizationAOrderAsync(OrganizationId organizationA)
     {

@@ -22,6 +22,7 @@ internal static class BankTransactionEndpoints
 
     private static async Task<Results<Ok<BankTransactionListResponse>, ProblemHttpResult>> ListBankTransactionsAsync(
         ListBankTransactionsHandler handler,
+        HttpRequest request,
         int? page,
         int? pageSize,
         CancellationToken cancellationToken)
@@ -29,7 +30,8 @@ internal static class BankTransactionEndpoints
         Result<BankTransactionListResponse> result = await handler.Handle(
             new ListBankTransactionsQuery(
                 page ?? BankTransactionListPagination.DefaultPage,
-                pageSize ?? BankTransactionListPagination.DefaultPageSize),
+                pageSize ?? BankTransactionListPagination.DefaultPageSize,
+                SuppliedQuery(request.Query, "reference")),
             cancellationToken);
 
         if (result.IsSuccess)
@@ -45,6 +47,14 @@ internal static class BankTransactionEndpoints
                 result.Error);
         }
 
+        if (result.Error.Code == ReconciliationApplicationErrors.InvalidBankTransactionReferenceLookup.Code)
+        {
+            return Problem(
+                StatusCodes.Status400BadRequest,
+                "Invalid bank transaction reference.",
+                result.Error);
+        }
+
         if (result.Error.Code == ReconciliationApplicationErrors.BankTransactionListInconsistentMoney.Code)
         {
             return Problem(
@@ -55,6 +65,11 @@ internal static class BankTransactionEndpoints
 
         throw new InvalidOperationException(
             $"Unexpected bank transaction list failure '{result.Error.Code}'.");
+    }
+
+    private static string? SuppliedQuery(IQueryCollection query, string name)
+    {
+        return query.ContainsKey(name) ? query[name].ToString() : null;
     }
 
     private static ProblemHttpResult Problem(int statusCode, string title, Error error)
