@@ -60,6 +60,63 @@ public sealed class AllocationReversalEndpointTests : IDisposable
         Assert.Equal(0m, await AllocatedAsync(allocationId));
     }
 
+    [Fact]
+    public async Task Explicit_amount_replay_after_reversal_returns_the_original_allocation()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 100m, "INV-REPLAY");
+        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
+            organizationId,
+            100m,
+            reference: "PAY-REPLAY");
+        await using (ReconciliationDbContext seed = _fixture.CreateContext())
+        {
+            seed.AddRange(invoice, bankTransaction);
+            await seed.SaveChangesAsync();
+        }
+
+        using HttpClient client = Client(organizationId, "operator-1");
+        Guid idempotencyKey = Guid.NewGuid();
+        HttpResponseMessage created = await client.SendAsync(
+            AllocateExplicitRequest(invoice.Id.Value, bankTransaction.Id.Value, idempotencyKey));
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using JsonDocument createdDocument = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        Guid allocationId = createdDocument.RootElement.GetProperty("allocationId").GetGuid();
+        Assert.False(createdDocument.RootElement.GetProperty("replayed").GetBoolean());
+
+        HttpResponseMessage reversed = await client.SendAsync(
+            ReverseRequest(allocationId, "duplicate payment", Guid.NewGuid(), spoof: false));
+        Assert.Equal(HttpStatusCode.OK, reversed.StatusCode);
+
+        HttpResponseMessage replay = await client.SendAsync(
+            AllocateExplicitRequest(invoice.Id.Value, bankTransaction.Id.Value, idempotencyKey));
+
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        using JsonDocument replayDocument = JsonDocument.Parse(await replay.Content.ReadAsStringAsync());
+        Assert.True(replayDocument.RootElement.GetProperty("replayed").GetBoolean());
+        Assert.Equal(allocationId, replayDocument.RootElement.GetProperty("allocationId").GetGuid());
+        Assert.Equal(40.00m, replayDocument.RootElement.GetProperty("amount").GetProperty("amount").GetDecimal());
+        Assert.Equal("PLN", replayDocument.RootElement.GetProperty("amount").GetProperty("currency").GetString());
+
+        await using ReconciliationDbContext reload = _fixture.CreateContext();
+        Assert.Equal(1, await reload.Allocations.CountAsync(allocation => allocation.OrganizationId == organizationId));
+        Allocation stored = await reload.Allocations.SingleAsync(allocation => allocation.OrganizationId == organizationId);
+        Assert.Equal(allocationId, stored.Id.Value);
+        Assert.Equal(AllocationStatus.Reversed, stored.Status);
+        Assert.Equal(idempotencyKey, stored.IdempotencyKey);
+        Assert.Equal(0m, (await reload.Invoices.SingleAsync(candidate => candidate.Id == invoice.Id)).AllocatedAmount.Amount);
+        Assert.Equal(0m, (await reload.BankTransactions.SingleAsync(candidate => candidate.Id == bankTransaction.Id)).AllocatedAmount.Amount);
+        Assert.Equal(
+            1,
+            await reload.FinancialAuditEntries.CountAsync(
+                entry => entry.AllocationId == stored.Id && entry.Action == FinancialAuditAction.Confirmation));
+        Assert.Equal(
+            1,
+            await reload.FinancialAuditEntries.CountAsync(
+                entry => entry.AllocationId == stored.Id && entry.Action == FinancialAuditAction.Reversal));
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("blank")]
@@ -392,6 +449,23 @@ public sealed class AllocationReversalEndpointTests : IDisposable
         await using ReconciliationDbContext context = _fixture.CreateContext();
         return await context.FinancialAuditEntries.CountAsync(
             entry => entry.AllocationId == allocationId && entry.Action == FinancialAuditAction.Reversal);
+    }
+
+    private static HttpRequestMessage AllocateExplicitRequest(
+        Guid invoiceId,
+        Guid bankTransactionId,
+        Guid idempotencyKey)
+    {
+        string json =
+            "{\"invoiceId\":\"" + invoiceId.ToString("D")
+            + "\",\"bankTransactionId\":\"" + bankTransactionId.ToString("D")
+            + "\",\"amount\":{\"amount\":40.00,\"currency\":\"PLN\"}}";
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/allocations")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey.ToString("D"));
+        return request;
     }
 
     private static HttpRequestMessage ReverseRequest(Guid allocationId, string reason, Guid idempotencyKey, bool spoof)
