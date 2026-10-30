@@ -290,6 +290,207 @@ public sealed class BankTransactionEndpointTests : IDisposable
         Assert.False(document.RootElement.TryGetProperty("items", out _));
     }
 
+    [Fact]
+    public async Task Omitted_reference_filter_keeps_null_references_visible()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction missing = Create(organizationId, 10m, new DateOnly(2026, 5, 1), null);
+        BankTransaction named = Create(organizationId, 12m, new DateOnly(2026, 5, 2), "PAY-KEEP");
+        await SaveAsync(missing, named);
+        using HttpClient client = Client(organizationId);
+
+        using JsonDocument unfiltered = await ReadOkAsync(await client.GetAsync("/api/bank-transactions"));
+        using JsonDocument filtered = await ReadOkAsync(await client.GetAsync(ReferenceQuery("PAY-KEEP")));
+
+        Assert.Equal(2, unfiltered.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, filtered.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(named.Id.Value, Assert.Single(filtered.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Unknown_reference_returns_an_empty_page()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        await SaveAsync(Create(organizationId, 10m, new DateOnly(2026, 5, 1), "PAY-KEEP"));
+        using HttpClient client = Client(organizationId);
+
+        using JsonDocument document = await ReadOkAsync(await client.GetAsync(ReferenceQuery("MISSING")));
+
+        Assert.Equal(0, document.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Empty(document.RootElement.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Duplicate_references_are_paged_by_id()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction first = Create(organizationId, 10m, new DateOnly(2026, 6, 1), "DUP-PAY");
+        BankTransaction second = Create(organizationId, 11m, new DateOnly(2026, 6, 2), "DUP-PAY");
+        BankTransaction third = Create(organizationId, 12m, new DateOnly(2026, 6, 3), "DUP-PAY");
+        BankTransaction other = Create(organizationId, 13m, new DateOnly(2026, 6, 4), "OTHER-PAY");
+        await SaveAsync(first, second, third, other);
+        List<Guid> expected = await LoadMatchingOrderAsync(organizationId, "DUP-PAY");
+        using HttpClient client = Client(organizationId);
+
+        using JsonDocument firstPage = await ReadOkAsync(await client.GetAsync(ReferenceQuery("DUP-PAY") + "&page=1&pageSize=1"));
+        using JsonDocument secondPage = await ReadOkAsync(await client.GetAsync(ReferenceQuery("DUP-PAY") + "&page=2&pageSize=1"));
+
+        Assert.Equal(3, firstPage.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(expected[0], Assert.Single(firstPage.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Equal(expected[1], Assert.Single(secondPage.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Trimmed_reference_matches_and_a_fully_allocated_row_stays_visible()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction allocated = Create(organizationId, 40m, new DateOnly(2026, 7, 1), "PAY-FULL-LOOKUP");
+        allocated.Allocate(new Money(40m, PersistenceTestData.Pln));
+        await SaveAsync(allocated);
+        using HttpClient client = Client(organizationId);
+
+        using JsonDocument document = await ReadOkAsync(await client.GetAsync(ReferenceQuery("  PAY-FULL-LOOKUP  ")));
+
+        JsonElement item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(allocated.Id.Value, item.GetProperty("id").GetGuid());
+        AssertMoney(item.GetProperty("unappliedAmount"), 0m, "PLN");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Empty_reference_returns_400(string term)
+    {
+        using HttpClient client = Client(OrganizationId.New());
+
+        HttpResponseMessage response = await client.GetAsync(ReferenceQuery(term));
+        using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidBankTransactionReferenceLookup.Code,
+            document.RootElement.GetProperty("code").GetString());
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidBankTransactionReferenceLookup.Message,
+            document.RootElement.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task Reference_longer_than_256_characters_returns_400_without_the_term()
+    {
+        string term = "REJECTED-REFERENCE-" + new string('Q', 238);
+        Assert.Equal(257, term.Length);
+        using HttpClient client = Client(OrganizationId.New());
+
+        HttpResponseMessage response = await client.GetAsync(ReferenceQuery(term));
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.DoesNotContain("REJECTED-REFERENCE", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Same_reference_in_another_organization_stays_hidden()
+    {
+        OrganizationId organizationA = OrganizationId.New();
+        OrganizationId organizationB = OrganizationId.New();
+        BankTransaction transactionA = Create(organizationA, 10m, new DateOnly(2026, 8, 2), "SAME-PAY");
+        BankTransaction transactionB = Create(organizationB, 20m, new DateOnly(2026, 8, 3), "SAME-PAY");
+        await SaveAsync(transactionA, transactionB);
+        using HttpClient client = Client(organizationA);
+        client.DefaultRequestHeaders.Add("X-Organization-Id", organizationB.Value.ToString());
+
+        using JsonDocument byQuery = await ReadOkAsync(
+            await client.GetAsync(ReferenceQuery("SAME-PAY") + "&organizationId=" + organizationB.Value));
+
+        Assert.Equal(1, byQuery.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(
+            transactionA.Id.Value,
+            Assert.Single(byQuery.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Reference_equality_follows_sql_server_comparison()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction cased = Create(organizationId, 10m, new DateOnly(2026, 9, 1), "Pay-Case");
+        BankTransaction padded = Create(organizationId, 11m, new DateOnly(2026, 9, 2), "PAY-PAD");
+        await SaveAsync(cased, padded);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE [reconciliation].[BankTransactions] SET [Reference] = {"PAY-PAD "} WHERE [Id] = {padded.Id.Value}");
+        }
+
+        bool caseEquals = await SqlEqualsAsync("Pay-Case", "pay-case");
+        bool trailingSpaceEquals = await SqlEqualsAsync("PAY-PAD", "PAY-PAD ");
+        using HttpClient client = Client(organizationId);
+        using JsonDocument caseDocument = await ReadOkAsync(await client.GetAsync(ReferenceQuery("pay-case")));
+        using JsonDocument spaceDocument = await ReadOkAsync(await client.GetAsync(ReferenceQuery("PAY-PAD")));
+
+        Assert.Equal(caseEquals ? 1 : 0, caseDocument.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(trailingSpaceEquals ? 1 : 0, spaceDocument.RootElement.GetProperty("totalCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Inconsistent_money_on_the_filtered_page_returns_500_without_leaking_values()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction bankTransaction = Create(organizationId, 50m, new DateOnly(2026, 8, 1), "SECRET-PAY");
+        await SaveAsync(bankTransaction);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE [reconciliation].[BankTransactions] SET [Amount] = {-1m} WHERE [Id] = {bankTransaction.Id.Value}");
+        }
+
+        using HttpClient client = Client(organizationId);
+        HttpResponseMessage response = await client.GetAsync(ReferenceQuery("SECRET-PAY"));
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.DoesNotContain("SECRET-PAY", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("items", body, StringComparison.Ordinal);
+        using JsonDocument document = JsonDocument.Parse(body);
+        Assert.Equal(
+            ReconciliationApplicationErrors.BankTransactionListInconsistentMoney.Code,
+            document.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Inconsistent_money_outside_the_filter_does_not_fail_a_valid_page()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        BankTransaction valid = Create(organizationId, 15m, new DateOnly(2026, 8, 4), "KEEP-OK");
+        BankTransaction broken = Create(organizationId, 50m, new DateOnly(2026, 8, 5), "OTHER-BAD");
+        await SaveAsync(valid, broken);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE [reconciliation].[BankTransactions] SET [Currency] = {"12X"} WHERE [Id] = {broken.Id.Value}");
+        }
+
+        using HttpClient client = Client(organizationId);
+        using JsonDocument document = await ReadOkAsync(await client.GetAsync(ReferenceQuery("KEEP-OK")));
+
+        Assert.Equal(1, document.RootElement.GetProperty("totalCount").GetInt32());
+        Assert.Equal(valid.Id.Value, Assert.Single(document.RootElement.GetProperty("items").EnumerateArray()).GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task Invalid_pagination_still_wins_when_a_reference_is_supplied()
+    {
+        using HttpClient client = Client(OrganizationId.New());
+
+        HttpResponseMessage response = await client.GetAsync("/api/bank-transactions?page=0&reference=PAY");
+        using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidBankTransactionPagination.Code,
+            document.RootElement.GetProperty("code").GetString());
+    }
+
     public void Dispose()
     {
         _factory.Dispose();
@@ -306,6 +507,35 @@ public sealed class BankTransactionEndpointTests : IDisposable
         context.BankTransactions.AddRange(bankTransactions);
         await context.SaveChangesAsync();
     }
+
+    private async Task<List<Guid>> LoadMatchingOrderAsync(OrganizationId organizationId, string reference)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        return await context.BankTransactions
+            .AsNoTracking()
+            .Where(bankTransaction => bankTransaction.OrganizationId == organizationId && bankTransaction.Reference == reference)
+            .OrderBy(bankTransaction => bankTransaction.Id)
+            .Select(bankTransaction => bankTransaction.Id.Value)
+            .ToListAsync();
+    }
+
+    private async Task<bool> SqlEqualsAsync(string left, string right)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        List<FlagRow> rows = await context.Database.SqlQuery<FlagRow>(
+            $"""
+            SELECT CAST(CASE WHEN {left} = {right} THEN 1 ELSE 0 END AS int) AS [Flag]
+            """)
+            .ToListAsync();
+        return Assert.Single(rows).Flag == 1;
+    }
+
+    private static string ReferenceQuery(string term)
+    {
+        return "/api/bank-transactions?reference=" + Uri.EscapeDataString(term);
+    }
+
+    private sealed record FlagRow(int Flag);
 
     private async Task<List<Guid>> LoadOrderAsync(OrganizationId organizationId)
     {

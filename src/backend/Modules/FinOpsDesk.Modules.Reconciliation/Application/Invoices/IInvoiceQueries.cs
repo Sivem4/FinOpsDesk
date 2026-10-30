@@ -8,5 +8,6 @@ public interface IInvoiceQueries
         OrganizationId organizationId,
         int page,
         int pageSize,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? invoiceNumber = null);
 }

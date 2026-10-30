@@ -22,6 +22,7 @@ internal static class InvoiceEndpoints
 
     private static async Task<Results<Ok<InvoiceListResponse>, ProblemHttpResult>> ListInvoicesAsync(
         ListInvoicesHandler handler,
+        HttpRequest request,
         int? page,
         int? pageSize,
         CancellationToken cancellationToken)
@@ -29,7 +30,8 @@ internal static class InvoiceEndpoints
         Result<InvoiceListResponse> result = await handler.Handle(
             new ListInvoicesQuery(
                 page ?? InvoiceListPagination.DefaultPage,
-                pageSize ?? InvoiceListPagination.DefaultPageSize),
+                pageSize ?? InvoiceListPagination.DefaultPageSize,
+                SuppliedQuery(request.Query, "invoiceNumber")),
             cancellationToken);
 
         if (result.IsSuccess)
@@ -37,19 +39,34 @@ internal static class InvoiceEndpoints
             return TypedResults.Ok(result.Value);
         }
 
-        if (result.Error.Code != ReconciliationApplicationErrors.InvalidInvoicePagination.Code)
+        if (result.Error.Code == ReconciliationApplicationErrors.InvalidInvoicePagination.Code)
         {
-            throw new InvalidOperationException(
-                $"Unexpected invoice list failure '{result.Error.Code}'.");
+            return Problem(StatusCodes.Status400BadRequest, "Invalid pagination.", result.Error);
         }
 
+        if (result.Error.Code == ReconciliationApplicationErrors.InvalidInvoiceNumberLookup.Code)
+        {
+            return Problem(StatusCodes.Status400BadRequest, "Invalid invoice number.", result.Error);
+        }
+
+        throw new InvalidOperationException(
+            $"Unexpected invoice list failure '{result.Error.Code}'.");
+    }
+
+    private static string? SuppliedQuery(IQueryCollection query, string name)
+    {
+        return query.ContainsKey(name) ? query[name].ToString() : null;
+    }
+
+    private static ProblemHttpResult Problem(int statusCode, string title, Error error)
+    {
         return TypedResults.Problem(
-            detail: result.Error.Message,
-            statusCode: StatusCodes.Status400BadRequest,
-            title: "Invalid pagination.",
+            detail: error.Message,
+            statusCode: statusCode,
+            title: title,
             extensions: new Dictionary<string, object?>
             {
-                ["code"] = result.Error.Code,
+                ["code"] = error.Code,
             });
     }
 }

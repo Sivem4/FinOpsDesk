@@ -34,12 +34,19 @@ public sealed class ListBankTransactionsHandler
                 ReconciliationApplicationErrors.InvalidBankTransactionPagination);
         }
 
+        if (!ExactLookupTerm.TryNormalize(query.Reference, out string? reference))
+        {
+            return Result<BankTransactionListResponse>.Failure(
+                ReconciliationApplicationErrors.InvalidBankTransactionReferenceLookup);
+        }
+
         OrganizationId organizationId = _currentOrganizationContext.OrganizationId;
         BankTransactionListRead read = await _bankTransactionQueries.ListAsync(
             organizationId,
             query.Page,
             query.PageSize,
-            cancellationToken);
+            cancellationToken,
+            reference);
 
         List<BankTransactionListItemDto> items = new(read.Items.Count);
 

@@ -6,9 +6,12 @@ public sealed class ListInvoicesQuery
 
     public int PageSize { get; }
 
-    public ListInvoicesQuery(int page, int pageSize)
+    public string? InvoiceNumber { get; }
+
+    public ListInvoicesQuery(int page, int pageSize, string? invoiceNumber = null)
     {
         Page = page;
         PageSize = pageSize;
+        InvoiceNumber = invoiceNumber;
     }
 }

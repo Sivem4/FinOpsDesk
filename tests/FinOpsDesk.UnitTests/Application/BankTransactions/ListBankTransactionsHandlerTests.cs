@@ -127,6 +127,67 @@ public sealed class ListBankTransactionsHandlerTests
         Assert.Equal(0, queries.CallCount);
     }
 
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("  Pay-1  ", "Pay-1")]
+    public async Task Handle_should_forward_a_trimmed_reference(string? supplied, string? expected)
+    {
+        RecordingOrganizationContext organizationContext = new(TestOrganizationId);
+        FakeBankTransactionQueries queries = new();
+        ListBankTransactionsHandler handler = CreateHandler(organizationContext, queries);
+        using CancellationTokenSource cancellationTokenSource = new();
+
+        Result<BankTransactionListResponse> result = await handler.Handle(
+            new ListBankTransactionsQuery(1, 50, supplied),
+            cancellationTokenSource.Token);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(expected, queries.Reference);
+        Assert.Equal(TestOrganizationId, queries.OrganizationId);
+        Assert.Equal(cancellationTokenSource.Token, queries.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Handle_should_reject_an_empty_reference_before_querying(string supplied)
+    {
+        RecordingOrganizationContext organizationContext = new(TestOrganizationId);
+        FakeBankTransactionQueries queries = new();
+        ListBankTransactionsHandler handler = CreateHandler(organizationContext, queries);
+
+        Result<BankTransactionListResponse> result = await handler.Handle(
+            new ListBankTransactionsQuery(1, 50, supplied),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidBankTransactionReferenceLookup,
+            result.Error);
+        Assert.Equal(0, organizationContext.ReadCount);
+        Assert.Equal(0, queries.CallCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_a_reference_longer_than_256_characters()
+    {
+        FakeBankTransactionQueries queries = new();
+        ListBankTransactionsHandler handler = CreateHandler(
+            new RecordingOrganizationContext(TestOrganizationId),
+            queries);
+
+        Result<BankTransactionListResponse> result = await handler.Handle(
+            new ListBankTransactionsQuery(1, 50, new string('R', 257)),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(
+            ReconciliationApplicationErrors.InvalidBankTransactionReferenceLookup,
+            result.Error);
+        Assert.DoesNotContain("R", result.Error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, queries.CallCount);
+    }
+
     private static ListBankTransactionsHandler CreateHandler(
         ICurrentOrganizationContext organizationContext,
         IBankTransactionQueries queries)
@@ -198,18 +259,22 @@ public sealed class ListBankTransactionsHandlerTests
 
         public int PageSize { get; private set; }
 
+        public string? Reference { get; private set; }
+
         public CancellationToken CancellationToken { get; private set; }
 
         public Task<BankTransactionListRead> ListAsync(
             OrganizationId organizationId,
             int page,
             int pageSize,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string? reference = null)
         {
             CallCount++;
             OrganizationId = organizationId;
             Page = page;
             PageSize = pageSize;
+            Reference = reference;
             CancellationToken = cancellationToken;
             return Task.FromResult(_read);
         }
