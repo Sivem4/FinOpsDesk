@@ -1,6 +1,6 @@
 # Frontend development
 
-The operations workspace is a Vite application in `src/frontend`. It shows the invoice register from `GET /api/invoices`, CSV import at `/imports`, and a read-only reconciliation queue at `/reconciliation`. It does not issue tokens. The import screen sends the selected file to the existing import endpoints and does not change amounts in the browser. The reconciliation screen reads `GET /api/matches` and `GET /api/matches/smart` and does not allocate money.
+The operations workspace is a Vite application in `src/frontend`. It shows the invoice register from `GET /api/invoices`, CSV import at `/imports`, and the reconciliation queue at `/reconciliation`. It does not issue tokens. The import screen sends the selected file to the existing import endpoints and does not change amounts in the browser. The reconciliation screen reads `GET /api/matches` and `GET /api/matches/smart`. An exact match can be confirmed with `POST /api/matches/confirm`. Smart suggestions are not confirmed, and the screen does not call `POST /api/allocations`.
 
 Production browser authentication is Phase 7. The development token screen is compiled only into the Vite development build. A production build shows that browser sign-in is not configured.
 
@@ -93,7 +93,13 @@ A confirmed invoice import or replay refreshes the invoice register and the reco
 
 ## Reconciliation
 
-Open `http://localhost:5173/reconciliation`. **Exact** calls `GET /api/matches` and shows `exact-1` pairs, ambiguous groups, unmatched rows, and ineligible rows in the returned order. **Smart** calls `GET /api/matches/smart` with no query string and shows `smart-1` suggestions. Scores are points. The screen does not turn them into percentages and does not confirm a match. Only the selected view requests its endpoint. A book larger than 5,000 open rows on either side returns HTTP 409 and is not matched. Inconsistent stored money returns the matching HTTP 500 problem and is not matched. Exact and Smart are separate reads.
+Open `http://localhost:5173/reconciliation`. **Exact** calls `GET /api/matches` and shows `exact-1` pairs, ambiguous groups, unmatched rows, and ineligible rows in the returned order. **Smart** calls `GET /api/matches/smart` with no query string and shows `smart-1` suggestions. Scores are points. The screen does not turn them into percentages. Only the selected view requests its read endpoint. A book larger than 5,000 open rows on either side returns HTTP 409 and is not matched. Inconsistent stored money returns the matching HTTP 500 problem and is not matched. Exact and Smart are separate reads.
+
+**Confirm** is available only on an exact-match row. Ambiguous groups, unmatched rows, ineligible rows, and smart suggestions have no confirmation action. The dialog shows the reference, the amount from that read, and both identifiers. The displayed pair is not reserved. The books can change before the server accepts the request, so that amount can be stale. The request body is only `invoiceId` and `bankTransactionId`. It does not send an amount, a currency, an actor, or an organization id. `Idempotency-Key` is one new UUID in `D` format for a new confirmation. The server calculates the full current open amount and checks that pair. It does not check whether the pair is still the only exact match in the book.
+
+HTTP 201 with `replayed` false means the allocation was recorded. HTTP 200 with `replayed` true means the same key and the same pair were already recorded. The screen shows the allocation id and the amount from that response. A verified 201 or 200 refreshes the invoice register and both reconciliation reads for the current session. An unreadable success or a lost response keeps the same key and does not refresh the caches as a confirmed success. The operator can send that same request again. The screen does not create a new key after an error. The attempt stays in memory only while the Reconciliation page stays mounted. Reloading the browser or leaving `/reconciliation` discards it. The application does not keep an unresolved attempt across that navigation. Opening the page again can start a new confirmation with a new idempotency key, and that new operation cannot tell whether the earlier POST was saved. Refreshing the list is a GET and does not prove the result of a particular POST.
+
+Manual allocation through `POST /api/allocations` is not part of this screen.
 
 The same call can be made directly:
 
