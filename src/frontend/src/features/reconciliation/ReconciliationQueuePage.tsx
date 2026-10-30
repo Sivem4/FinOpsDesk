@@ -174,6 +174,7 @@ export function ReconciliationQueuePage() {
       setActiveConfirmation(null);
       setSuccessDismissed(false);
       void queryClient.invalidateQueries({ queryKey: ['invoices', epoch] });
+      void queryClient.invalidateQueries({ queryKey: ['bank-transactions', epoch] });
       void queryClient.invalidateQueries({ queryKey: ['matches', epoch] });
     },
     onError: (error) => {

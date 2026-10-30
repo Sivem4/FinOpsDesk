@@ -38,6 +38,8 @@ public static class ReconciliationModule
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
         services.AddScoped<IInvoiceQueries, InvoiceQueries>();
         services.AddScoped<ListInvoicesHandler>();
+        services.AddScoped<IBankTransactionQueries, BankTransactionQueries>();
+        services.AddScoped<ListBankTransactionsHandler>();
         services.AddScoped<IAllocationContextQueries, AllocationContextQueries>();
         services.AddScoped<GetAllocationContextHandler>();
         services.AddScoped<IExactMatchCandidateQueries, ExactMatchCandidateQueries>();

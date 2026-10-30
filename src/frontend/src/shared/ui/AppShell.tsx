@@ -21,6 +21,9 @@ export function AppShell({
           <Button component={NavLink} to="/invoices" color="inherit">
             Invoices
           </Button>
+          <Button component={NavLink} to="/bank-transactions" color="inherit">
+            Bank transactions
+          </Button>
           <Button component={NavLink} to="/imports" color="inherit">
             Imports
           </Button>
