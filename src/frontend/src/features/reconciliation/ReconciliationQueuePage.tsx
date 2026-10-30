@@ -15,12 +15,24 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState, type ReactNode } from 'react';
 
-import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
+import { ApiError, NetworkError, StaleSessionError, UnexpectedResponseError } from '../../shared/api/errors';
+import { sessionStore } from '../../shared/api/session-store';
 import { endSession, useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
+import {
+  ConfirmationAttemptBanner,
+  ExactMatchConfirmationDialog,
+  type ConfirmationPairView,
+} from './ExactMatchConfirmationDialog';
+import {
+  createConfirmationAttempt,
+  postExactConfirmation,
+  type ConfirmationAttempt,
+  type ExactConfirmationResult,
+} from './confirmation-api';
 import {
   getExactMatches,
   getSmartMatches,
@@ -57,9 +69,43 @@ const signalLabels: Record<string, string> = {
   ExactMatchAmbiguous: 'This pair is also an ambiguous exact match',
 };
 
+interface ConfirmationDraft {
+  pair: ConfirmationPairView;
+  epoch: number;
+}
+
+interface ActiveConfirmation {
+  attempt: ConfirmationAttempt;
+  pair: ConfirmationPairView;
+}
+
 export function ReconciliationQueuePage() {
   const session = useSession();
+  const queryClient = useQueryClient();
   const [view, setView] = useState<MatchingView>('exact');
+  const [draft, setDraft] = useState<ConfirmationDraft | null>(null);
+  const [activeConfirmation, setActiveConfirmation] = useState<ActiveConfirmation | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [operationEpoch, setOperationEpoch] = useState<number | null>(null);
+  const [successDismissed, setSuccessDismissed] = useState(true);
+  const submitting = useRef(false);
+  const requestController = useRef<AbortController | null>(null);
+  const visibleAttempt = activeConfirmation !== null && activeConfirmation.attempt.epoch === session.epoch
+    ? activeConfirmation
+    : null;
+  const visibleDraft = draft !== null && draft.epoch === session.epoch ? draft : null;
+
+  if (activeConfirmation !== null && visibleAttempt === null) {
+    setActiveConfirmation(null);
+  }
+
+  if (draft !== null && visibleDraft === null) {
+    setDraft(null);
+  }
+
+  if (dialogOpen && visibleAttempt === null && visibleDraft === null) {
+    setDialogOpen(false);
+  }
   const exact = useQuery({
     queryKey: ['matches', session.epoch, 'exact'],
     enabled: session.token !== null && view === 'exact',
@@ -70,7 +116,53 @@ export function ReconciliationQueuePage() {
     enabled: session.token !== null && view === 'smart',
     queryFn: ({ signal }) => getSmartMatches(signal),
   });
+  const confirmation = useMutation({
+    networkMode: 'always',
+    retry: false,
+    onMutate: (attempt: ConfirmationAttempt) => {
+      setOperationEpoch(attempt.epoch);
+      return attempt.epoch;
+    },
+    mutationFn: (attempt: ConfirmationAttempt) => {
+      const controller = new AbortController();
+      requestController.current = controller;
+      return postExactConfirmation(attempt, controller.signal).finally(() => {
+        if (requestController.current === controller) {
+          requestController.current = null;
+        }
+      });
+    },
+    onSuccess: (_result, _attempt, epoch) => {
+      if (sessionStore.getSnapshot().epoch !== epoch) {
+        return;
+      }
+
+      setActiveConfirmation(null);
+      setSuccessDismissed(false);
+      void queryClient.invalidateQueries({ queryKey: ['invoices', epoch] });
+      void queryClient.invalidateQueries({ queryKey: ['matches', epoch] });
+    },
+    onError: (error) => {
+      if (error instanceof StaleSessionError) {
+        setActiveConfirmation(null);
+      }
+    },
+    onSettled: () => {
+      submitting.current = false;
+    },
+  });
   const active = view === 'exact' ? exact : smart;
+  const sameSession = operationEpoch === session.epoch;
+  const confirmationResult: ExactConfirmationResult | null = confirmation.isSuccess && sameSession && !successDismissed
+    ? confirmation.data
+    : null;
+  const confirmationError = confirmation.isError && (sameSession || confirmation.error instanceof StaleSessionError)
+    ? confirmation.error
+    : null;
+  const pair = visibleAttempt?.pair ?? visibleDraft?.pair ?? null;
+  const showDialog = dialogOpen && pair !== null;
+  const successRefreshing = confirmation.isSuccess && sameSession && exact.isFetching;
+  const attemptOpen = visibleAttempt !== null && (confirmation.isPending || confirmationError !== null);
 
   return (
     <Stack spacing={2}>
@@ -85,11 +177,24 @@ export function ReconciliationQueuePage() {
         ) : null}
       </Stack>
       <Typography color="text.secondary">
-        Inspect matching candidates for this organization. This screen does not allocate money.
+        Inspect exact and smart candidates. An exact match can be confirmed explicitly. Smart suggestions stay advisory and do not allocate money.
       </Typography>
       <Typography color="text.secondary">
         Exact and Smart are separate reads and can come from different moments in the books.
       </Typography>
+      {showDialog ? null : (
+        <ConfirmationAttemptBanner
+          pair={visibleAttempt?.pair ?? null}
+          pending={confirmation.isPending && sameSession}
+          result={confirmationResult}
+          error={confirmationError}
+          onReview={() => setDialogOpen(true)}
+          onDismissSuccess={() => {
+            setSuccessDismissed(true);
+            setDialogOpen(false);
+          }}
+        />
+      )}
       <ToggleButtonGroup
         exclusive
         value={view}
@@ -107,13 +212,147 @@ export function ReconciliationQueuePage() {
       {active.isError ? (
         <ErrorState error={active.error} onRetry={() => void active.refetch()} retrying={active.isFetching} />
       ) : null}
-      {view === 'exact' && exact.isSuccess ? <ExactResult result={exact.data} resetKey={exact.dataUpdatedAt} /> : null}
+      {view === 'exact' && exact.isSuccess ? (
+        <ExactResult
+          result={exact.data}
+          resetKey={exact.dataUpdatedAt}
+          onConfirm={openExactMatch}
+          actionFor={actionFor}
+        />
+      ) : null}
       {view === 'smart' && smart.isSuccess ? <SmartResult result={smart.data} resetKey={smart.dataUpdatedAt} /> : null}
+      <ExactMatchConfirmationDialog
+        open={showDialog}
+        pair={pair}
+        pending={confirmation.isPending && sameSession}
+        result={dialogOpen ? confirmationResult : null}
+        error={dialogOpen ? confirmationError : null}
+        onClose={() => setDialogOpen(false)}
+        onConfirm={submitConfirmation}
+        onLeave={leaveAttempt}
+      />
     </Stack>
   );
+
+  function actionFor(item: ExactMatchItem): { disabled: boolean; label: string } {
+    const activePair = visibleAttempt?.attempt;
+    const samePair = activePair !== undefined && activePair.invoiceId === item.invoiceId && activePair.bankTransactionId === item.bankTransactionId;
+
+    if (samePair && attemptOpen) {
+      return { disabled: false, label: 'Review' };
+    }
+
+    if (attemptOpen || confirmationResult !== null || successRefreshing) {
+      return { disabled: true, label: 'Confirm' };
+    }
+
+    return { disabled: false, label: 'Confirm' };
+  }
+
+  function openExactMatch(item: ExactMatchItem): void {
+    if (session.epoch !== sessionStore.getSnapshot().epoch) {
+      return;
+    }
+
+    const action = actionFor(item);
+
+    if (action.disabled) {
+      return;
+    }
+
+    if (confirmation.isSuccess) {
+      confirmation.reset();
+    }
+
+    if (!attemptOpen) {
+      setDraft({
+        pair: pairFromItem(item),
+        epoch: sessionStore.getSnapshot().epoch,
+      });
+    }
+
+    setDialogOpen(true);
+  }
+
+  function submitConfirmation(): void {
+    if (submitting.current || confirmation.isPending) {
+      return;
+    }
+
+    const existing = visibleAttempt;
+
+    if (existing) {
+      if (sessionStore.getSnapshot().epoch !== existing.attempt.epoch) {
+        return;
+      }
+
+      submitting.current = true;
+      confirmation.mutate(existing.attempt);
+      return;
+    }
+
+    const epoch = sessionStore.getSnapshot().epoch;
+
+    if (visibleDraft === null || visibleDraft.epoch !== epoch) {
+      return;
+    }
+
+    let attempt: ConfirmationAttempt;
+
+    try {
+      attempt = createConfirmationAttempt(
+        visibleDraft.pair.invoiceId,
+        visibleDraft.pair.bankTransactionId,
+        epoch,
+      );
+    } catch {
+      return;
+    }
+
+    const next = { attempt, pair: visibleDraft.pair };
+    setActiveConfirmation(next);
+    setSuccessDismissed(true);
+    submitting.current = true;
+    confirmation.mutate(attempt);
+  }
+
+  function leaveAttempt(): void {
+    if (confirmation.isPending || !isDefinitiveRejection(confirmationError)) {
+      return;
+    }
+
+    setActiveConfirmation(null);
+    setDraft(null);
+    setDialogOpen(false);
+    confirmation.reset();
+  }
 }
 
-function ExactResult({ result, resetKey }: { result: ExactMatchResponse; resetKey: number }) {
+function pairFromItem(item: ExactMatchItem): ConfirmationPairView {
+  return {
+    invoiceId: item.invoiceId,
+    bankTransactionId: item.bankTransactionId,
+    reference: item.normalizedReference,
+    displayedAmount: item.amount,
+    displayedCurrency: item.currency,
+  };
+}
+
+function isDefinitiveRejection(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 400 || error.status === 404 || error.status === 409);
+}
+
+function ExactResult({
+  result,
+  resetKey,
+  onConfirm,
+  actionFor,
+}: {
+  result: ExactMatchResponse;
+  resetKey: number;
+  onConfirm: (item: ExactMatchItem) => void;
+  actionFor: (item: ExactMatchItem) => { disabled: boolean; label: string };
+}) {
   const empty = result.exactMatches.length === 0
     && result.ambiguousGroups.length === 0
     && result.unmatched.length === 0
@@ -127,7 +366,7 @@ function ExactResult({ result, resetKey }: { result: ExactMatchResponse; resetKe
     <Stack spacing={2}>
       <Typography color="text.secondary">Algorithm {result.algorithmVersion}.</Typography>
       <RecordSection title="Exact matches" count={result.exactMatches.length}>
-        <PagedSection items={result.exactMatches} resetKey={resetKey} label="exact matches" renderPage={(items) => <ExactMatchTable items={items} />} />
+        <PagedSection items={result.exactMatches} resetKey={resetKey} label="exact matches" renderPage={(items) => <ExactMatchTable items={items} onConfirm={onConfirm} actionFor={actionFor} />} />
       </RecordSection>
       <RecordSection title="Ambiguous groups" count={result.ambiguousGroups.length}>
         <PagedSection items={result.ambiguousGroups} resetKey={resetKey} label="ambiguous groups" renderPage={(items) => <AmbiguousTable items={items} />} />
@@ -185,19 +424,41 @@ function RecordSection({ title, count, children }: { title: string; count: numbe
   );
 }
 
-function ExactMatchTable({ items }: { items: ExactMatchItem[] }) {
+function ExactMatchTable({
+  items,
+  onConfirm,
+  actionFor,
+}: {
+  items: ExactMatchItem[];
+  onConfirm: (item: ExactMatchItem) => void;
+  actionFor: (item: ExactMatchItem) => { disabled: boolean; label: string };
+}) {
   return (
     <MatchTable
-      headings={['Reference', 'Amount', 'Invoice', 'Bank transaction', 'Reason']}
-      rows={items.map((item) => (
-        <TableRow key={`${item.invoiceId}-${item.bankTransactionId}`}>
-          <TableCell>{item.normalizedReference}</TableCell>
-          <TableCell>{formatMoney(item.amount, item.currency)}</TableCell>
-          <TableCell><Identifier id={item.invoiceId} kind="Invoice" /></TableCell>
-          <TableCell><Identifier id={item.bankTransactionId} kind="Bank transaction" /></TableCell>
-          <TableCell>{reasonLabel(item.reason)}</TableCell>
-        </TableRow>
-      ))}
+      headings={['Reference', 'Amount', 'Invoice', 'Bank transaction', 'Reason', 'Action']}
+      rows={items.map((item) => {
+        const action = actionFor(item);
+        return (
+          <TableRow key={`${item.invoiceId}-${item.bankTransactionId}`}>
+            <TableCell>{item.normalizedReference}</TableCell>
+            <TableCell>{formatMoney(item.amount, item.currency)}</TableCell>
+            <TableCell><Identifier id={item.invoiceId} kind="Invoice" /></TableCell>
+            <TableCell><Identifier id={item.bankTransactionId} kind="Bank transaction" /></TableCell>
+            <TableCell>{reasonLabel(item.reason)}</TableCell>
+            <TableCell>
+              <Button
+                type="button"
+                size="small"
+                disabled={action.disabled}
+                aria-label={`${action.label} exact match for invoice ${item.invoiceId} and bank transaction ${item.bankTransactionId}`}
+                onClick={() => onConfirm(item)}
+              >
+                {action.label}
+              </Button>
+            </TableCell>
+          </TableRow>
+        );
+      })}
     />
   );
 }
