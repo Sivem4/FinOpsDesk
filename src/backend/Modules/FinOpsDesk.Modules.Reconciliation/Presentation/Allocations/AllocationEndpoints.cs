@@ -123,6 +123,22 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .AddOpenApiOperationTransformer(DocumentAuditOperation);
 
+        group.MapGet("/allocations/{allocationId}/reversal-context", GetReversalContextAsync)
+            .WithName("GetAllocationReversalContext")
+            .WithSummary("Read the current reversal context of one allocation.")
+            .WithDescription(
+                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
+                + "A missing JWT sub is allowed. The read returns the current persisted allocation, including reversed rows and rows without a confirmation audit. "
+                + "The amount is the original allocation amount. Invoice number and bank reference are current source labels. "
+                + "The response does not include rowversion, idempotency keys, actor, audit, or balances. Any query parameter is rejected. "
+                + "This read does not lock or reserve the allocation and does not authorize POST /api/allocations/{allocationId}/reverse.")
+            .Produces<AllocationReversalContextResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .AddOpenApiOperationTransformer(DocumentReversalContextOperation);
+
         return group;
     }
 
@@ -241,6 +257,37 @@ internal static class AllocationEndpoints
 
         Result<FinancialAuditListResponse> result = await handler.Handle(
             new GetAllocationAuditQuery(new AllocationId(parsedAllocationId), page, pageSize),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return Problem(result.Error, StatusCodeFor(result.Error), TitleFor(result.Error));
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
+    private static async Task<Results<Ok<AllocationReversalContextResponse>, ProblemHttpResult>> GetReversalContextAsync(
+        string allocationId,
+        HttpRequest httpRequest,
+        GetAllocationReversalContextHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadReversalContextAllocationId(allocationId, out Guid parsedAllocationId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (httpRequest.Query.Count > 0)
+        {
+            return Problem(
+                ReconciliationApplicationErrors.AllocationReversalContextInvalidRequest,
+                StatusCodes.Status400BadRequest,
+                "Reversal context request is invalid.");
+        }
+
+        Result<AllocationReversalContextResponse> result = await handler.Handle(
+            new GetAllocationReversalContextQuery(new AllocationId(parsedAllocationId)),
             cancellationToken);
 
         if (result.IsFailure)
@@ -796,6 +843,7 @@ internal static class AllocationEndpoints
             || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code
             || error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidPagination.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationReversalContextInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.AllocationContextInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.ExplicitAmountInvalid.Code)
         {
@@ -887,6 +935,11 @@ internal static class AllocationEndpoints
         if (error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidRequest.Code)
         {
             return "Allocation history request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationReversalContextInvalidRequest.Code)
+        {
+            return "Reversal context request is invalid.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidPagination.Code)
@@ -1503,6 +1556,51 @@ internal static class AllocationEndpoints
                 Maximum = "100",
             },
         });
+        return Task.CompletedTask;
+    }
+
+    private static bool TryReadReversalContextAllocationId(
+        string allocationId,
+        out Guid parsedAllocationId,
+        out ProblemHttpResult? problem)
+    {
+        if (!Guid.TryParse(allocationId, out parsedAllocationId) || parsedAllocationId == Guid.Empty)
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationReversalContextInvalidRequest,
+                StatusCodes.Status400BadRequest,
+                "Reversal context request is invalid.");
+            return false;
+        }
+
+        problem = null;
+        return true;
+    }
+
+    private static Task DocumentReversalContextOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        operation.Parameters ??= [];
+        foreach (IOpenApiParameter parameter in operation.Parameters)
+        {
+            if (string.Equals(parameter.Name, "allocationId", StringComparison.OrdinalIgnoreCase)
+                && parameter.In == ParameterLocation.Path
+                && parameter is OpenApiParameter pathParameter)
+            {
+                pathParameter.Description = "Allocation id. An empty or malformed GUID is rejected.";
+                pathParameter.Schema = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String,
+                    Format = "uuid",
+                };
+            }
+        }
+
         return Task.CompletedTask;
     }
 

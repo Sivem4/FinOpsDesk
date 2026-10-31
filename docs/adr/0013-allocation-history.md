@@ -42,6 +42,14 @@ Ordering is `ConfirmedAt` descending, then allocation id descending. Page defaul
 
 This GET does not clear `finopsdesk.explicit-amount-attempt`, does not mint an idempotency key, and does not call POST. A history row with the same pair and amount does not prove that a particular idempotent attempt committed.
 
+### Reversal context
+
+`GET /api/allocations/{allocationId}/reversal-context` is a separate current-status read of one allocation. It uses the same tenant predicate and the same current invoice number and bank reference. It does not join `FinancialAuditEntry` and it does not return `rowversion`, idempotency keys, actor, or balances. The read does not lock or reserve the allocation.
+
+`POST /api/allocations/{allocationId}/reverse` does not accept a client concurrency token. EF Core compares the tracked `rowversion` values inside the reversal save. An idempotent replay is decided from the stored reversal key before that save starts. A history row is not that token and is not authorization for the POST.
+
+Phase 6H.1 adds only the read. The browser reversal workflow remains Phase 6H.2.
+
 ## Consequences
 
-The history screen can be added later against this contract without changing confirmation or reversal. Drill-in to the existing audit endpoint remains the way to see actor and batch. Phase 6 stays planned. The reversal screen remains a separate increment and must read a fresh `rowversion` at reversal time, not a token from this list.
+The history screen reads this contract. Drill-in to the existing audit endpoint remains the way to see actor and batch. Phase 6 stays planned. A later reversal screen reads current status from `GET /api/allocations/{allocationId}/reversal-context`. That response is not a `rowversion` and it does not reserve the allocation. The reversal POST remains authoritative.

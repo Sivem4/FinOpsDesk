@@ -52,6 +52,8 @@ public static class ReconciliationModule
         services.AddScoped<GetAllocationAuditHandler>();
         services.AddScoped<IAllocationHistoryQueries, AllocationHistoryQueries>();
         services.AddScoped<ListAllocationHistoryHandler>();
+        services.AddScoped<IAllocationReversalContextQueries, AllocationReversalContextQueries>();
+        services.AddScoped<GetAllocationReversalContextHandler>();
         services.AddScoped<IAllocationIdempotencyLookup, AllocationIdempotencyLookup>();
         services.AddScoped<IAllocationIdempotencyConflict, AllocationIdempotencyConflict>();
         services.AddScoped<IAllocationReversalLookup, AllocationReversalLookup>();
