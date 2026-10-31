@@ -21,17 +21,29 @@ public sealed class FinOpsDeskApiFactoryEnvironmentTests
                 Assert.Equal(
                     "Server=outer;",
                     Environment.GetEnvironmentVariable(ConnectionStringVariable));
+                Assert.Equal(
+                    "DevelopmentJwt",
+                    Environment.GetEnvironmentVariable("Authentication__Composition"));
 
-                using (FinOpsDeskApiFactory inner = new("Server=inner;"))
+                using (FinOpsDeskApiFactory inner = new(
+                    "Server=inner;",
+                    environmentName: "Production",
+                    authenticationComposition: "ProductionCookie"))
                 {
                     Assert.Equal(
                         "Server=inner;",
                         Environment.GetEnvironmentVariable(ConnectionStringVariable));
+                    Assert.Equal(
+                        "ProductionCookie",
+                        Environment.GetEnvironmentVariable("Authentication__Composition"));
                 }
 
                 Assert.Equal(
                     "Server=outer;",
                     Environment.GetEnvironmentVariable(ConnectionStringVariable));
+                Assert.Equal(
+                    "DevelopmentJwt",
+                    Environment.GetEnvironmentVariable("Authentication__Composition"));
             }
 
             Assert.Equal(

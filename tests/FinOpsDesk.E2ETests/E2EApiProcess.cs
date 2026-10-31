@@ -91,6 +91,7 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         start.Environment["DOTNET_NOLOGO"] = "1";
         start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "E2E";
+        start.Environment["Authentication__Composition"] = "DevelopmentJwt";
         start.Environment["ASPNETCORE_URLS"] = origin;
         start.Environment["ConnectionStrings__FinOpsDesk"] = connectionString;
         start.Environment["Authentication__JwtBearer__Authority"] = string.Empty;
