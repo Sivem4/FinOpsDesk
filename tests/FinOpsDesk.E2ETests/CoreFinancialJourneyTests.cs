@@ -16,6 +16,7 @@ using Microsoft.Playwright;
 
 namespace FinOpsDesk.E2ETests;
 
+[Collection(E2ECollection.Name)]
 public sealed class CoreFinancialJourneyTests : IAsyncLifetime
 {
     private const decimal Amount = 40.2500m;

@@ -17,7 +17,7 @@ One organization, one operator, and one run-scoped fixture:
 7. Allocation history shows that confirmed allocation and its confirmation audit, including the test actor.
 8. SQL Server checks the decimal amounts, the allocated balances, the single allocation, the single confirmation audit, and the organization id.
 
-Reversal, a lost HTTP response, explicit-amount recovery, Smart-1, and a second organization are not part of this journey. Those remain Phase 6I.2 or later.
+Reversal, a lost HTTP response, explicit-amount recovery, and a second organization are covered by the later Phase 6I.2 browser tests in the same project. Smart-1 and production browser sign-in are not part of these journeys.
 
 ## Prerequisites
 
@@ -72,6 +72,28 @@ A failure names the component that stopped: browser, Vite, API, database, or fix
 - Vite exits immediately: port collision. The host passes `--strictPort` on a free loopback port and does not use port 7257.
 - The ordinary Development API on port 7257 is a different process. Leave `FINOPSDESK_E2E_API_ORIGIN` unset when you run `scripts/dev-frontend.ps1`.
 
-## Deferred
+## Phase 6I.2
 
-Phase 6I.2 is expected to add reversal, replay after a response that the browser does not receive, one explicit-amount recovery, and one cross-tenant browser check. Production browser sign-in remains Phase 7. This journey does not change matching or allocation rules.
+The same project adds browser tests for reversal and recovery. They use the Phase 6I.1 host, a new xUnit collection named `FinOpsDesk.BrowserE2E` with parallelization disabled, and one disposable database per test. `E2ELifecycleTests` stays outside that collection. `CoreFinancialJourneyTests` is in the collection and keeps its original assertions.
+
+The added scenarios are:
+
+1. A confirmed Exact-1 allocation is reversed in the browser. History shows Reversed, the original amount, Confirmation and Reversal audit rows, and no further Reverse action. SQL Server checks the restored balances, the single reversal audit, the reason, and the actor.
+2. `POST /api/allocations/{allocationId}/reverse` is sent to the real API with Playwright `Route.FetchAsync` (`MaxRetries = 0`, `MaxRedirects = 0`). The test reads HTTP 200, `replayed: false`, and the committed SQL reversal before `Route.AbortAsync` drops that response. The browser shows the unknown-outcome copy, keeps `finopsdesk.reversal-attempt`, and does not send a second POST. Reload shows the development token screen again. After the operator signs in and chooses **Send the same reversal again**, `Route.FetchAsync` plus `Route.FulfillAsync` delivers the real HTTP 200 `replayed: true` response. The key and raw body match the first POST. SQL still has one reversal.
+3. Choose records allocates `10.0000` of `40.2500` PLN. The same lost-response pattern applies to `POST /api/allocations`. The first response is HTTP 201. The manual replay is HTTP 200 `replayed: true`. One partial allocation and one confirmation audit remain.
+4. Organization B cannot see, retry, or delete organization A's stored reversal, and no further reversal POST is sent while B is signed in. Returning to A replays the original request.
+5. `finopsdesk.explicit-amount-attempt` and `finopsdesk.reversal-attempt` can both be pending. Recovering one leaves the other byte-for-byte in place. A foreign organization's descriptors stay hidden. A malformed explicit-amount value is shown as unreadable and is not replaced.
+
+A lost response is accepted only when SQL already shows the commit and the real HTTP response was a first success. A transport failure without that commit is not treated as the recovery case. The tests do not fabricate session storage for a successful attempt, do not fulfill a synthetic success, and do not add production middleware.
+
+Screenshots, video, and Playwright traces stay off. Intercepted requests are compared in memory. Failure output still goes through the host redaction and does not include authorization headers or JWTs. Idempotency keys and reversal reasons are not written to the host diagnostic log.
+
+Phase 6 stays Planned. Production browser sign-in remains Phase 7. These tests do not change matching, allocation, or reversal rules.
+
+Run one scenario from the repository root after the build and Chromium install above:
+
+```powershell
+dotnet test tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj --filter "FullyQualifiedName~Committed_reversal_survives_a_lost_response_and_replays"
+```
+
+Replace the filter with `Committed_explicit_amount_survives_a_lost_response_and_replays`, `Other_organization_cannot_retry_a_stored_reversal`, or `Pending_reversal_and_explicit_amount_attempts_stay_independent` for the other new tests. The full project run remains `dotnet test tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj`. Browser scenarios in the collection run one at a time. Each still creates and drops only its own `FinOpsDesk_E2E_<guid>` database, and only after the owned API process is confirmed stopped.
