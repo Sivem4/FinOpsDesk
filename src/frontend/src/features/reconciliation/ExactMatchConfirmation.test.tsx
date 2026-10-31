@@ -412,6 +412,7 @@ describe('exact match confirmation', () => {
     queryClient.setQueryData(['invoices', createdEpoch, 1, 50], { items: [] });
     queryClient.setQueryData(['bank-transactions', createdEpoch, 1, 50], { items: [] });
     queryClient.setQueryData(['matches', createdEpoch, 'smart'], { algorithmVersion: 'smart-1' });
+    queryClient.setQueryData(['allocations', 'history', createdEpoch, 1, 50, invoiceId, ''], { items: [] });
     await openExact(user, invoiceId, bankTransactionId);
     await user.click(screen.getByRole('button', { name: 'Confirm allocation' }));
     expect(await screen.findByText('Allocation recorded.')).toBeVisible();
@@ -419,6 +420,7 @@ describe('exact match confirmation', () => {
       expect(queryClient.getQueryState(['invoices', createdEpoch, 1, 50])?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(['bank-transactions', createdEpoch, 1, 50])?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(['matches', createdEpoch, 'smart'])?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(['allocations', 'history', createdEpoch, 1, 50, invoiceId, ''])?.isInvalidated).toBe(true);
     });
     created.unmount();
 
@@ -428,6 +430,7 @@ describe('exact match confirmation', () => {
     queryClient.setQueryData(['invoices', replayEpoch, 1, 50], { items: [] });
     queryClient.setQueryData(['bank-transactions', replayEpoch, 1, 50], { items: [] });
     queryClient.setQueryData(['matches', replayEpoch, 'smart'], { algorithmVersion: 'smart-1' });
+    queryClient.setQueryData(['allocations', 'history', replayEpoch, 2, 25, '', bankTransactionId], { items: [] });
     await openExact(user, invoiceId, bankTransactionId);
     await user.click(screen.getByRole('button', { name: 'Confirm allocation' }));
     expect(await screen.findByText('This confirmation was already recorded.')).toBeVisible();
@@ -435,6 +438,7 @@ describe('exact match confirmation', () => {
       expect(queryClient.getQueryState(['invoices', replayEpoch, 1, 50])?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(['bank-transactions', replayEpoch, 1, 50])?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(['matches', replayEpoch, 'smart'])?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(['allocations', 'history', replayEpoch, 2, 25, '', bankTransactionId])?.isInvalidated).toBe(true);
     });
     replayed.unmount();
   });

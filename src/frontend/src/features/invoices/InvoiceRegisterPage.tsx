@@ -190,6 +190,14 @@ function SelectedInvoice({ item }: { item: InvoiceListItem }) {
       <Typography>
         Outstanding {formatMoney(item.outstandingAmount, item.outstandingCurrency)}
       </Typography>
+      <Button
+        component={Link}
+        to={`/allocations?invoiceId=${item.id}`}
+        variant="outlined"
+        sx={{ mt: 1 }}
+      >
+        {`View allocations for invoice ${item.id}`}
+      </Button>
     </Paper>
   );
 }

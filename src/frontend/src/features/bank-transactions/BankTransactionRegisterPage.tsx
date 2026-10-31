@@ -138,6 +138,7 @@ function BankTransactionTable({
               </TableCell>
               <TableCell scope="col">Source</TableCell>
               <TableCell scope="col">State</TableCell>
+              <TableCell scope="col">Allocations</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -150,6 +151,15 @@ function BankTransactionTable({
                 <TableCell align="right">{formatMoney(item.unappliedAmount, item.unappliedCurrency)}</TableCell>
                 <TableCell>{sourceLabel(item)}</TableCell>
                 <TableCell>{allocationState(item.allocatedAmount, item.unappliedAmount)}</TableCell>
+                <TableCell>
+                  <Button
+                    component={Link}
+                    to={`/allocations?bankTransactionId=${item.id}`}
+                    variant="text"
+                  >
+                    {`View allocations for bank transaction ${item.id}`}
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

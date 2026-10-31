@@ -470,6 +470,7 @@ describe('manual allocation', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['invoices', epoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['bank-transactions', epoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['matches', epoch] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['allocations', 'history', epoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['allocations', 'context', epoch, invoiceId, bankTransactionId] });
     mounted.unmount();
     invalidate.mockClear();
@@ -494,6 +495,7 @@ describe('manual allocation', () => {
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['bank-transactions', leavingEpoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['matches', leavingEpoch] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['allocations', 'history', leavingEpoch] });
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: ['allocations', 'context', leavingEpoch, invoiceId, bankTransactionId],
     });

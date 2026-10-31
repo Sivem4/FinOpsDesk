@@ -12,6 +12,7 @@ export function invalidateVerifiedAllocation(result: VerifiedExplicitAmount): vo
     ['invoices', epoch],
     ['bank-transactions', epoch],
     ['matches', epoch],
+    ['allocations', 'history', epoch],
     ['allocations', 'context', epoch, result.invoiceId, result.bankTransactionId],
   ] as const;
 
