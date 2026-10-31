@@ -37,6 +37,8 @@ import {
   ExactMatchConfirmationDialog,
   type ConfirmationPairView,
 } from './ExactMatchConfirmationDialog';
+import { ReversalDiscoveryNotice } from '../allocations/ReversalDialog';
+import { useReversalAttempt } from '../allocations/reversal-attempt';
 import { AllocationRecoveryBanner, ManualAllocationDialog } from './ManualAllocationDialog';
 import { assessAllocationAmount, describeAllocationBalances } from './manual-allocation-rules';
 import { useManualAllocation } from './useManualAllocation';
@@ -104,6 +106,7 @@ export function ReconciliationQueuePage() {
   const submitting = useRef(false);
   const requestController = useRef<AbortController | null>(null);
   const allocationAttempt = useAllocationAttempt();
+  const reversalAttempt = useReversalAttempt();
   const manualAllocation = useManualAllocation();
   const [allocationOpen, setAllocationOpen] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -256,6 +259,7 @@ export function ReconciliationQueuePage() {
           onDismiss={() => manualAllocation.dismiss()}
         />
       )}
+      <ReversalDiscoveryNotice view={reversalAttempt} />
       {showDialog ? null : (
         <ConfirmationAttemptBanner
           pair={visibleAttempt?.pair ?? null}

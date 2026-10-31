@@ -377,12 +377,12 @@ describe('allocation history', () => {
     renderHistory();
     expect(await screen.findByLabelText(`Allocation ${confirmedId}`)).toBeVisible();
     expect(auditUrls).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument();
 
     const confirmedRow = screen.getByLabelText(`Allocation ${confirmedId}`).closest('tr');
     if (confirmedRow === null) {
       throw new Error('Missing confirmed row');
     }
+    expect(within(confirmedRow).getByRole('button', { name: `Reverse allocation ${confirmedId}` })).toBeVisible();
     await user.click(within(confirmedRow).getByRole('button', { name: 'View audit' }));
     const confirmedAudit = await screen.findByRole('table', { name: `Audit entries for allocation ${confirmedId}` });
     expect(within(confirmedAudit).getByText('exact-actor')).toBeVisible();
@@ -398,6 +398,7 @@ describe('allocation history', () => {
     if (reversedRow === null) {
       throw new Error('Missing reversed row');
     }
+    expect(within(reversedRow).queryByRole('button', { name: `Reverse allocation ${reversedId}` })).not.toBeInTheDocument();
     await user.click(within(reversedRow).getByRole('button', { name: 'View audit' }));
     const reversedAudit = await screen.findByRole('table', { name: `Audit entries for allocation ${reversedId}` });
     expect(within(reversedAudit).getByText('Confirmation')).toBeVisible();

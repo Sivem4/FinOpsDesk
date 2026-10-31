@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 
+import { resetReversalAttemptStateForTests } from '../features/allocations/reversal-attempt';
 import { resetAllocationAttemptStateForTests } from '../features/reconciliation/allocation-attempt';
 import { queryClient } from '../shared/api/query-client';
 import { sessionStore } from '../shared/api/session-store';
@@ -21,6 +22,7 @@ afterEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   resetAllocationAttemptStateForTests();
+  resetReversalAttemptStateForTests();
 });
 
 afterAll(() => {
