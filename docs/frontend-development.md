@@ -138,6 +138,10 @@ Use the public certificate trust from `dev-frontend.ps1` for `curl.exe` as well,
 
 Open `http://localhost:5173/invoices`. Amounts are read from the JSON number tokens, including a zero allocated amount.
 
+## Browser end-to-end
+
+`npm run dev` still proxies `/api` and `/health` to `https://localhost:7257`. A local end-to-end run can set `FINOPSDESK_E2E_API_ORIGIN` for that one Vite process. The variable is not a `VITE_` variable, so it is not compiled into the browser bundle. Leave it unset for ordinary development. The journey, the disposable database, and the run commands are documented in `docs/e2e-testing.md`. Ordinary `npm test` stays on Vitest and jsdom.
+
 ## Checks
 
 From `src/frontend`:

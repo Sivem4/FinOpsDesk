@@ -17,7 +17,10 @@ FinOpsDesk.Modules.Reconciliation
 FinOpsDesk.UnitTests
 FinOpsDesk.IntegrationTests
 FinOpsDesk.ArchitectureTests
+FinOpsDesk.E2ETests
 ```
+
+`FinOpsDesk.E2ETests` is a local Chromium journey. It is not a project in `FinOpsDesk.slnx`, so `dotnet test FinOpsDesk.slnx` does not install a browser or start the journey. The project creates one `FinOpsDesk_E2E_<guid>` database, applies the existing Reconciliation migrations, and starts a loopback API process plus the Vite development server. It does not target the Development database `FinOpsDesk`. See `docs/e2e-testing.md`.
 
 ### FinOpsDesk.Api
 
