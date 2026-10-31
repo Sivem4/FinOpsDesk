@@ -33,7 +33,7 @@ An empty database is valid. The register then shows that the organization has no
 
 ## API signing key
 
-Set these variables in the same PowerShell session that starts the API. Do not commit them and do not put them in a `VITE_` variable.
+`appsettings.Development.json` sets `Authentication:Composition` to `DevelopmentJwt`. The `https` launch profile sets the environment to `Development`. Do not select `DevelopmentJwt` for a Production host. Set these variables in the same PowerShell session that starts the API. Do not commit them and do not put them in a `VITE_` variable.
 
 ```powershell
 $env:Authentication__JwtBearer__Authority = ''

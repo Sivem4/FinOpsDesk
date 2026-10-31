@@ -306,6 +306,8 @@ Status: Planned.
 
 Phase 2B.3 already validates JWT access tokens and requires an organization claim on Reconciliation routes. This phase adds the browser session and finer authorization.
 
+Phase 7A selects the host composition. `DevelopmentJwt` remains available only for the `Development` and `E2E` environments and keeps the existing JWT bearer handler. Every other environment uses `ProductionCookie`: a cookie scheme, no JWT bearer handler, and no acceptance of an `Authorization` bearer token. That composition does not sign a browser in, and financial routes stay fail-closed until organization membership exists. OpenID Connect, CSRF, membership, roles, resource authorization, cross-organization tests, BOLA/IDOR tests, and OpenAPI security metadata remain in this phase.
+
 Add:
 
 - OpenID Connect BFF authentication;

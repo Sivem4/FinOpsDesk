@@ -56,7 +56,7 @@ CSV files are written under the user temp directory and deleted with the test ho
 
 ## JWT
 
-The API process receives an ephemeral HMAC key through its environment. The test builds a short-lived JWT with issuer `https://finopsdesk.local`, audience `finopsdesk-e2e`, a non-empty `org_id`, and subject `e2e-operator`. The key is not the integration-test signing key. The test does not print the key or the token. Screenshots, video, and Playwright traces are off. Do not enable `DEBUG=pw:api` for this run, because Playwright would then log the token typed into the form.
+The API process environment is `E2E`, and `Authentication:Composition` is `DevelopmentJwt`. The process receives an ephemeral HMAC key through its environment. The test builds a short-lived JWT with issuer `https://finopsdesk.local`, audience `finopsdesk-e2e`, a non-empty `org_id`, and subject `e2e-operator`. The key is not the integration-test signing key. The test does not print the key or the token. Screenshots, video, and Playwright traces are off. Do not enable `DEBUG=pw:api` for this run, because Playwright would then log the token typed into the form.
 
 ## Failure output
 

@@ -31,22 +31,12 @@ Override the connection string with configuration or environment variables. Do n
 
 ### API authentication
 
-The API validates JWT access tokens. It does not issue them.
+`Authentication:Composition` selects one authentication scheme. The host does not register both, and it does not choose a scheme from the `Authorization` header.
 
-`Authentication:JwtBearer` is required before the host will start:
+- `DevelopmentJwt` validates JWT access tokens and does not issue them. It is allowed only when the host environment is `Development` or `E2E`. `appsettings.Development.json` selects it. Set `Issuer`, `Audience`, and `SigningKey` (at least 32 UTF-8 bytes), or set `Authority` and `Audience` instead of a signing key. Do not set `Authority` and `SigningKey` together, and do not commit the signing key.
+- `ProductionCookie` is the default in `appsettings.json`. It registers only an ASP.NET Core cookie scheme. It does not register JWT bearer and it does not accept a bearer token, including when JWT settings are present in the environment. Phase 7A does not sign a browser in. Financial routes stay closed until organization membership is implemented. OpenID Connect is a later Phase 7 increment.
 
-- Production: set `Authority` and `Audience`. The authority's OpenID Connect metadata supplies signing keys. `RequireHttpsMetadata` defaults to `true`. An optional `Issuer` overrides the issuer published by that metadata.
-- Local or test validation without an identity provider: set `Issuer`, `Audience`, and `SigningKey` (at least 32 UTF-8 bytes). Do not set `Authority` in that mode, and do not commit the signing key.
-
-`OrganizationClaimType` defaults to `org_id`. The trusted issuer must place the caller's organization id in that claim. Query strings, route values, bodies, and headers such as `X-Organization-Id` are not tenant selectors.
-
-Example production environment variables:
-
-```text
-Authentication__JwtBearer__Authority=https://login.example.com
-Authentication__JwtBearer__Audience=finopsdesk-api
-Authentication__JwtBearer__OrganizationClaimType=org_id
-```
+`OrganizationClaimType` defaults to `org_id` on the development JWT path. The trusted issuer must place the caller's organization id in that claim. Query strings, route values, bodies, and headers such as `X-Organization-Id` are not tenant selectors. A claim on a production cookie is not membership.
 
 ### Migrations
 

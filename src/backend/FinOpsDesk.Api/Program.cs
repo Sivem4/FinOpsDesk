@@ -10,7 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
-builder.Services.AddFinOpsDeskJwtBearerAuthentication(builder.Configuration);
+builder.Services.AddFinOpsDeskAuthentication(builder.Configuration, builder.Environment);
 builder.Services.AddFinOpsDeskAuthorization();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentOrganizationContext, HttpContextCurrentOrganizationContext>();

@@ -20,10 +20,13 @@ internal static class FinOpsDeskAuthorizationExtensions
                 policy =>
                 {
                     policy.RequireAuthenticatedUser();
-                    policy.AddRequirements(new TenantMemberRequirement());
+                    policy.AddRequirements(
+                        new FinancialApiAccessRequirement(),
+                        new TenantMemberRequirement());
                 });
         });
 
+        services.AddSingleton<IAuthorizationHandler, FinancialApiAccessHandler>();
         services.AddSingleton<IAuthorizationHandler, TenantMemberAuthorizationHandler>();
 
         return services;
