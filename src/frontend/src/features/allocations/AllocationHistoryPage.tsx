@@ -18,10 +18,16 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { ApiError, NetworkError, StaleSessionError } from '../../shared/api/errors';
+import { sessionStore } from '../../shared/api/session-store';
 import { endSession, useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
+import { useAllocationAttempt } from '../reconciliation/allocation-attempt';
 import { listAllocationAudit, type AllocationAuditEntry } from './allocation-audit-api';
 import { listAllocationHistory, type AllocationHistoryItem } from './allocation-history-api';
+import { getReversalContext } from './reversal-api';
+import { ExplicitAmountDiscoveryNotice, ReversalDialog } from './ReversalDialog';
+import { useReversalAttempt } from './reversal-attempt';
+import { useReversal } from './useReversal';
 
 const defaultPage = 1;
 const defaultPageSize = 50;
@@ -42,6 +48,35 @@ export function AllocationHistoryPage() {
   const invoiceId = invoiceFilter === 'absent' ? null : invoiceFilter === 'invalid' ? null : invoiceFilter;
   const bankTransactionId = bankFilter === 'absent' ? null : bankFilter === 'invalid' ? null : bankFilter;
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{ epoch: number; allocationId: string } | null>(null);
+  const allocationAttempt = useAllocationAttempt();
+  const reversalAttempt = useReversalAttempt();
+  const reversal = useReversal();
+
+  if (selection !== null && selection.epoch !== session.epoch && reversalAttempt.status !== 'pending') {
+    setSelection(null);
+  }
+
+  const dialogAllocationId = reversalAttempt.status === 'pending'
+    ? reversalAttempt.attempt.allocationId
+    : selection !== null && selection.epoch === session.epoch
+      ? selection.allocationId
+      : null;
+  const contextAllocationId = selection !== null && selection.epoch === session.epoch && reversalAttempt.status === 'none'
+    ? selection.allocationId
+    : null;
+  const contextQuery = useQuery({
+    queryKey: ['allocations', 'reversal-context', session.epoch, contextAllocationId ?? ''],
+    enabled: contextAllocationId !== null && session.token !== null,
+    retry: false,
+    queryFn: ({ signal }) => {
+      if (contextAllocationId === null) {
+        throw new Error('Reversal context was requested without an allocation.');
+      }
+
+      return getReversalContext(contextAllocationId, signal);
+    },
+  });
 
   const query = useQuery({
     queryKey: [
@@ -97,8 +132,26 @@ export function AllocationHistoryPage() {
         ) : null}
       </Stack>
       <Typography color="text.secondary">
-        These are persisted allocations. A reversed row keeps its original amount. This list does not recover an unfinished allocation attempt.
+        These are persisted allocations. A reversed row keeps its original amount. An unfinished reversal stays in this browser tab. An unfinished explicit-amount allocation stays on Reconciliation.
       </Typography>
+      <ExplicitAmountDiscoveryNotice status={allocationAttempt.status} />
+      {reversalAttempt.status === 'pending' ? (
+        <Alert
+          severity="warning"
+          action={<Button color="inherit" onClick={() => setSelection({ epoch: session.epoch, allocationId: reversalAttempt.attempt.allocationId })}>Review reversal attempt</Button>}
+        >
+          An unresolved reversal attempt is stored for this organization.
+        </Alert>
+      ) : null}
+      {reversalAttempt.status === 'blocked-authentication' ? (
+        <Alert severity="warning">Sign in before this browser can show a stored reversal.</Alert>
+      ) : null}
+      {reversalAttempt.status === 'blocked-tenant' ? (
+        <Alert severity="warning">A stored reversal belongs to another organization. Its details stay hidden.</Alert>
+      ) : null}
+      {reversalAttempt.status === 'invalid-storage' ? (
+        <Alert severity="error">A stored reversal cannot be read safely. It was not replaced.</Alert>
+      ) : null}
       {filtered && filtersValid ? (
         <Alert
           severity="info"
@@ -138,8 +191,30 @@ export function AllocationHistoryPage() {
           epoch={session.epoch}
           onToggle={(allocationId) => setExpandedId((current) => (current === allocationId ? null : allocationId))}
           onPageChange={(nextPage, nextPageSize) => replaceQuery(nextPage, nextPageSize, invoiceId, bankTransactionId)}
+          onReverse={(allocationId) => {
+            reversal.dismiss();
+            setSelection({ epoch: sessionStore.getSnapshot().epoch, allocationId });
+          }}
+          reversing={reversal.submitting}
         />
       ) : null}
+      <ReversalDialog
+        open={selection !== null && dialogAllocationId !== null}
+        allocationId={dialogAllocationId}
+        attempt={reversalAttempt}
+        context={contextQuery}
+        submitting={reversal.submitting}
+        error={reversal.error}
+        result={reversal.result}
+        onClose={() => setSelection(null)}
+        onReverse={(reason) => {
+          if (contextAllocationId !== null) {
+            void reversal.reverseNew(contextAllocationId, reason);
+          }
+        }}
+        onRetry={() => void reversal.retryStoredAttempt()}
+        onAbandon={(idempotencyKey) => reversal.abandonStoredAttempt(idempotencyKey)}
+      />
     </Stack>
   );
 }
@@ -153,6 +228,8 @@ function HistoryTable({
   epoch,
   onToggle,
   onPageChange,
+  onReverse,
+  reversing,
 }: {
   items: AllocationHistoryItem[];
   page: number;
@@ -162,6 +239,8 @@ function HistoryTable({
   epoch: number;
   onToggle: (allocationId: string) => void;
   onPageChange: (page: number, pageSize: number) => void;
+  onReverse: (allocationId: string) => void;
+  reversing: boolean;
 }) {
   return (
     <Paper>
@@ -187,6 +266,8 @@ function HistoryTable({
                 expanded={expandedId === item.allocationId}
                 epoch={epoch}
                 onToggle={onToggle}
+                onReverse={onReverse}
+                reversing={reversing}
               />
             ))}
           </TableBody>
@@ -210,11 +291,15 @@ function HistoryRows({
   expanded,
   epoch,
   onToggle,
+  onReverse,
+  reversing,
 }: {
   item: AllocationHistoryItem;
   expanded: boolean;
   epoch: number;
   onToggle: (allocationId: string) => void;
+  onReverse: (allocationId: string) => void;
+  reversing: boolean;
 }) {
   const auditId = `allocation-audit-${item.allocationId}`;
   return (
@@ -236,8 +321,25 @@ function HistoryRows({
         <TableCell align="right">{formatMoney(item.amount, item.currency)}</TableCell>
         <TableCell>{item.status === 'confirmed' ? 'Confirmed' : 'Reversed'}</TableCell>
         <TableCell>
-          {item.reversedAt === null ? 'Not reversed' : item.reversedAt}
-          {item.reversalReason !== null ? ` · ${item.reversalReason}` : ''}
+          {item.status === 'confirmed' ? (
+            <Stack spacing={0.5} sx={{ alignItems: 'flex-start' }}>
+              <span>Not reversed</span>
+              <Button
+                type="button"
+                color="warning"
+                aria-label={`Reverse allocation ${item.allocationId}`}
+                onClick={() => onReverse(item.allocationId)}
+                disabled={reversing}
+              >
+                Reverse
+              </Button>
+            </Stack>
+          ) : (
+            <>
+              {item.reversedAt}
+              {item.reversalReason !== null ? ` · ${item.reversalReason}` : ''}
+            </>
+          )}
         </TableCell>
         <TableCell>
           <RecordId id={item.allocationId} label="Allocation" />
