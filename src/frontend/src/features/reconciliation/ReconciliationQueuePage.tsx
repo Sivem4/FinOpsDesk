@@ -22,6 +22,9 @@ import { ApiError, NetworkError, StaleSessionError, UnexpectedResponseError } fr
 import { sessionStore } from '../../shared/api/session-store';
 import { endSession, useSession } from '../../shared/auth/session';
 import { formatMoney, type DecimalString } from '../../shared/money/money';
+import type { BankTransactionListItem } from '../bank-transactions/bank-transaction-api';
+import type { InvoiceListItem } from '../invoices/invoice-api';
+import { ManualPairSelectionDialog } from './ManualPairSelectionDialog';
 import { getAllocationContext } from './allocation-context-api';
 import {
   AllocationStorageCleanupError,
@@ -103,8 +106,12 @@ export function ReconciliationQueuePage() {
   const allocationAttempt = useAllocationAttempt();
   const manualAllocation = useManualAllocation();
   const [allocationOpen, setAllocationOpen] = useState(false);
+  const [selectorOpen, setSelectorOpen] = useState(false);
   const [redirectedFromOtherPair, setRedirectedFromOtherPair] = useState(false);
   const [draftPair, setDraftPair] = useState<AllocationDraft | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<EpochSelection<InvoiceListItem> | null>(null);
+  const [selectedBankTransaction, setSelectedBankTransaction] = useState<EpochSelection<BankTransactionListItem> | null>(null);
+  const [selectionEpoch, setSelectionEpoch] = useState(session.epoch);
   const visibleAttempt = activeConfirmation !== null && activeConfirmation.attempt.epoch === session.epoch
     ? activeConfirmation
     : null;
@@ -121,11 +128,28 @@ export function ReconciliationQueuePage() {
   if (dialogOpen && visibleAttempt === null && visibleDraft === null) {
     setDialogOpen(false);
   }
+
+  const visibleInvoice = selectedInvoice !== null && selectedInvoice.epoch === session.epoch ? selectedInvoice.item : null;
+  const visibleBankTransaction = selectedBankTransaction !== null && selectedBankTransaction.epoch === session.epoch
+    ? selectedBankTransaction.item
+    : null;
+  const visibleAllocationDraft = draftPair !== null && draftPair.epoch === session.epoch ? draftPair : null;
+
+  if (session.epoch !== selectionEpoch) {
+    setSelectionEpoch(session.epoch);
+    setSelectorOpen(false);
+    setSelectedInvoice(null);
+    setSelectedBankTransaction(null);
+    setDraftPair(null);
+    if (allocationAttempt.status === 'none') {
+      setAllocationOpen(false);
+    }
+  }
   const storedAllocationPair = allocationAttempt.status === 'pending'
     ? { invoiceId: allocationAttempt.attempt.invoiceId, bankTransactionId: allocationAttempt.attempt.bankTransactionId }
     : null;
   const allocationContextPair = allocationOpen
-    ? storedAllocationPair ?? (allocationAttempt.status === 'none' ? draftPair : null)
+    ? storedAllocationPair ?? (allocationAttempt.status === 'none' ? visibleAllocationDraft : null)
     : null;
   const allocationContext = useQuery({
     queryKey: allocationContextPair === null
@@ -205,11 +229,16 @@ export function ReconciliationQueuePage() {
         <Typography variant="h4" component="h1">
           Reconciliation
         </Typography>
-        {active.isSuccess ? (
-          <Button type="button" onClick={() => void active.refetch()} disabled={active.isFetching}>
-            Refresh
+        <Stack direction="row" spacing={1}>
+          <Button type="button" variant="outlined" onClick={openChooseRecords}>
+            Choose records
           </Button>
-        ) : null}
+          {active.isSuccess ? (
+            <Button type="button" onClick={() => void active.refetch()} disabled={active.isFetching}>
+              Refresh
+            </Button>
+          ) : null}
+        </Stack>
       </Stack>
       <Typography color="text.secondary">
         Inspect exact and smart candidates. An exact match can be confirmed explicitly. Smart suggestions stay advisory and do not allocate money.
@@ -277,12 +306,24 @@ export function ReconciliationQueuePage() {
         onConfirm={submitConfirmation}
         onLeave={leaveAttempt}
       />
+      <ManualPairSelectionDialog
+        open={selectorOpen}
+        epoch={session.epoch}
+        invoice={visibleInvoice}
+        bankTransaction={visibleBankTransaction}
+        onSelectInvoice={(item) => setSelectedInvoice({ epoch: sessionStore.getSnapshot().epoch, item })}
+        onClearInvoice={() => setSelectedInvoice(null)}
+        onSelectBankTransaction={(item) => setSelectedBankTransaction({ epoch: sessionStore.getSnapshot().epoch, item })}
+        onClearBankTransaction={() => setSelectedBankTransaction(null)}
+        onClose={() => setSelectorOpen(false)}
+        onReview={reviewSelectedPair}
+      />
       <ManualAllocationDialog
         open={allocationOpen}
         context={allocationContext}
         attempt={allocationAttempt}
-        suggestedAmount={draftPair?.suggestedAmount ?? null}
-        draftPairKey={draftPair === null ? null : `${draftPair.invoiceId}:${draftPair.bankTransactionId}`}
+        suggestedAmount={visibleAllocationDraft?.suggestedAmount ?? null}
+        draftPairKey={visibleAllocationDraft === null ? null : `${visibleAllocationDraft.invoiceId}:${visibleAllocationDraft.bankTransactionId}`}
         redirectedFromOtherPair={redirectedFromOtherPair}
         submitting={manualAllocation.submitting}
         error={manualAllocation.error}
@@ -382,6 +423,55 @@ export function ReconciliationQueuePage() {
     confirmation.mutate(attempt);
   }
 
+  function openChooseRecords(): void {
+    if (session.epoch !== sessionStore.getSnapshot().epoch) {
+      return;
+    }
+
+    const stored = inspectAllocationAttempt();
+
+    if (manualAllocation.error instanceof AllocationStorageCleanupError && stored.status === 'none') {
+      setAllocationOpen(true);
+      return;
+    }
+
+    if (stored.status !== 'none') {
+      setRedirectedFromOtherPair(true);
+      setSelectorOpen(false);
+      setAllocationOpen(true);
+      return;
+    }
+
+    setSelectorOpen(true);
+  }
+
+  function reviewSelectedPair(): void {
+    if (visibleInvoice === null || visibleBankTransaction === null || session.epoch !== sessionStore.getSnapshot().epoch) {
+      return;
+    }
+
+    const stored = inspectAllocationAttempt();
+
+    if (stored.status !== 'none') {
+      setRedirectedFromOtherPair(true);
+      setSelectorOpen(false);
+      setAllocationOpen(true);
+      return;
+    }
+
+    manualAllocation.dismiss();
+    setRedirectedFromOtherPair(false);
+    setDraftPair({
+      epoch: sessionStore.getSnapshot().epoch,
+      invoiceId: visibleInvoice.id,
+      bankTransactionId: visibleBankTransaction.id,
+      suggestedAmount: null,
+      suggestedCurrency: null,
+    });
+    setSelectorOpen(false);
+    setAllocationOpen(true);
+  }
+
   function openStoredAllocation(): void {
     setRedirectedFromOtherPair(false);
     setAllocationOpen(true);
@@ -404,6 +494,7 @@ export function ReconciliationQueuePage() {
     manualAllocation.dismiss();
     setRedirectedFromOtherPair(false);
     setDraftPair({
+      epoch: sessionStore.getSnapshot().epoch,
       invoiceId: item.invoiceId,
       bankTransactionId: item.bankTransactionId,
       suggestedAmount: item.suggestedAmount,
@@ -413,7 +504,13 @@ export function ReconciliationQueuePage() {
   }
 
   function submitManualAllocation(amountText: string, currency: string): void {
-    if (draftPair === null || !allocationContext.isSuccess || allocationContext.isFetching || allocationContext.data === undefined) {
+    if (
+      visibleAllocationDraft === null
+      || visibleAllocationDraft.epoch !== sessionStore.getSnapshot().epoch
+      || !allocationContext.isSuccess
+      || allocationContext.isFetching
+      || allocationContext.data === undefined
+    ) {
       return;
     }
 
@@ -436,8 +533,8 @@ export function ReconciliationQueuePage() {
     }
 
     void manualAllocation.allocateNew({
-      invoiceId: draftPair.invoiceId,
-      bankTransactionId: draftPair.bankTransactionId,
+      invoiceId: visibleAllocationDraft.invoiceId,
+      bankTransactionId: visibleAllocationDraft.bankTransactionId,
       amount: decision.amount,
       currency: balances.currency,
       organizationId,
@@ -760,11 +857,17 @@ const hiddenIdentifier = {
   border: 0,
 } as const;
 
+interface EpochSelection<T> {
+  epoch: number;
+  item: T;
+}
+
 interface AllocationDraft {
+  epoch: number;
   invoiceId: string;
   bankTransactionId: string;
-  suggestedAmount: DecimalString;
-  suggestedCurrency: string;
+  suggestedAmount: DecimalString | null;
+  suggestedCurrency: string | null;
 }
 
 function reasonLabel(reason: string): string {

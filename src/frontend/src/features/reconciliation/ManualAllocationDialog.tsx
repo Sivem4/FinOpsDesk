@@ -100,7 +100,10 @@ export function ManualAllocationDialog({
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Typography id="manual-allocation-description" color="text.secondary">
-            {observation} A suggestion score does not authorize an allocation.
+            {observation}{' '}
+            {suggestedAmount === null
+              ? 'Choosing both records does not authorize an allocation.'
+              : 'A suggestion score does not authorize an allocation.'}
           </Typography>
           {redirectedFromOtherPair && attempt.status === 'pending' ? (
             <Alert severity="info">
@@ -142,7 +145,9 @@ export function ManualAllocationDialog({
               error={amountDecision !== null && !amountDecision.ok && amountText.trim().length > 0}
               helperText={amountText.trim().length > 0 && amountDecision !== null && !amountDecision.ok
                 ? amountDecision.message
-                : 'Enter the amount as text. The suggestion amount is only a starting value.'}
+                : suggestedAmount === null
+                  ? 'Enter the amount as text.'
+                  : 'Enter the amount as text. The suggestion amount is only a starting value.'}
               slotProps={{ htmlInput: { inputMode: 'decimal' } }}
               disabled={submitting}
             />

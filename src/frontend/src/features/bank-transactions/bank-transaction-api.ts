@@ -31,11 +31,15 @@ export async function listBankTransactions(
   page: number,
   pageSize: number,
   signal: AbortSignal,
+  reference?: string,
 ): Promise<BankTransactionListResponse> {
   const params = new URLSearchParams({
     page: String(page),
     pageSize: String(pageSize),
   });
+  if (reference !== undefined) {
+    params.set('reference', reference);
+  }
   const body = await apiGet(`/api/bank-transactions?${params.toString()}`, signal);
 
   try {
