@@ -52,4 +52,4 @@ Phase 6H.1 adds only the read. The browser reversal workflow remains Phase 6H.2.
 
 ## Consequences
 
-The history screen reads this contract. Drill-in to the existing audit endpoint remains the way to see actor and batch. Phase 6 stays planned. A later reversal screen reads current status from `GET /api/allocations/{allocationId}/reversal-context`. That response is not a `rowversion` and it does not reserve the allocation. The reversal POST remains authoritative.
+The history screen reads this contract. Drill-in to the existing audit endpoint remains the way to see actor and batch. Phase 6 completion is recorded in `../roadmap.md`. The reversal screen reads current status from `GET /api/allocations/{allocationId}/reversal-context`. That response is not a `rowversion` and it does not reserve the allocation. The reversal POST remains authoritative.
