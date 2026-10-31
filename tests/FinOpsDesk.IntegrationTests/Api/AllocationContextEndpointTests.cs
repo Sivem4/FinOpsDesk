@@ -491,8 +491,8 @@ public sealed class AllocationContextEndpointTests : IDisposable
             ReconciliationApplicationErrors.AllocationContextInconsistentMoney.Code,
             "SECRET-OVER-INV");
         Assert.DoesNotContain("SECRET-OVER-PAY", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("120", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("100", body, StringComparison.Ordinal);
+        AssertDoesNotContainOutsideTrace(body, "120");
+        AssertDoesNotContainOutsideTrace(body, "100");
         AssertNoContextDto(body);
         await AssertStoredPairUnchangedAsync(
             organizationId,
@@ -523,6 +523,20 @@ public sealed class AllocationContextEndpointTests : IDisposable
         }
 
         await context.SaveChangesAsync();
+    }
+
+    private static void AssertDoesNotContainOutsideTrace(string body, string value)
+    {
+        using JsonDocument document = JsonDocument.Parse(body);
+        foreach (JsonProperty property in document.RootElement.EnumerateObject())
+        {
+            if (property.NameEquals("traceId"))
+            {
+                continue;
+            }
+
+            Assert.DoesNotContain(value, property.Value.GetRawText(), StringComparison.Ordinal);
+        }
     }
 
     private static async Task<JsonDocument> ReadOkAsync(HttpClient client, Guid invoiceId, Guid bankTransactionId)

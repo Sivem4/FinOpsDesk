@@ -17,7 +17,7 @@ One organization, one operator, and one run-scoped fixture:
 7. Allocation history shows that confirmed allocation and its confirmation audit, including the test actor.
 8. SQL Server checks the decimal amounts, the allocated balances, the single allocation, the single confirmation audit, and the organization id.
 
-Reversal, a lost HTTP response, explicit-amount recovery, and a second organization are covered by the later Phase 6I.2 browser tests in the same project. Smart-1 and production browser sign-in are not part of these journeys.
+Reversal, a lost HTTP response, explicit-amount recovery, and a second organization are covered by the Phase 6I.2 browser tests in the same project. Smart-1 and production browser sign-in are not part of these journeys.
 
 ## Prerequisites
 
@@ -88,7 +88,7 @@ A lost response is accepted only when SQL already shows the commit and the real 
 
 Screenshots, video, and Playwright traces stay off. Intercepted requests are compared in memory. Failure output still goes through the host redaction and does not include authorization headers or JWTs. Idempotency keys and reversal reasons are not written to the host diagnostic log.
 
-Phase 6 stays Planned. Production browser sign-in remains Phase 7. These tests do not change matching, allocation, or reversal rules.
+Phase 6I.1 and Phase 6I.2 are implemented local browser coverage for the completed Phase 6 workspace. They run against Chromium, real Vite, real ASP.NET Core, and a disposable `FinOpsDesk_E2E_<guid>` SQL Server database. SQL assertions prove the committed financial state. A lost-response test accepts the case only after that commit and then checks that the manual retry repeats the same idempotency key and the same raw body. These tests stay outside `FinOpsDesk.slnx` and outside mandatory pull-request CI. Production browser sign-in remains Phase 7. These tests do not change matching, allocation, or reversal rules.
 
 Run one scenario from the repository root after the build and Chromium install above:
 
