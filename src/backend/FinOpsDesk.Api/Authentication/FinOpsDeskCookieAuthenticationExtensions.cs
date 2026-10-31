@@ -33,6 +33,18 @@ internal static class FinOpsDeskCookieAuthenticationExtensions
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
                     return Task.CompletedTask;
                 };
+                options.Events.OnSigningOut = context =>
+                {
+                    context.Response.Headers.CacheControl = "no-store";
+                    context.Response.StatusCode = StatusCodes.Status204NoContent;
+                    return Task.CompletedTask;
+                };
+                options.Events.OnRedirectToReturnUrl = context =>
+                {
+                    context.Response.Headers.CacheControl = "no-store";
+                    context.Response.StatusCode = StatusCodes.Status204NoContent;
+                    return Task.CompletedTask;
+                };
             });
 
         return services;

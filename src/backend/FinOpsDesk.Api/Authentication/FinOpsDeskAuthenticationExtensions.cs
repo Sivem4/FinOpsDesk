@@ -26,6 +26,7 @@ internal static class FinOpsDeskAuthenticationExtensions
             EnsureDevelopmentJwtIsAllowed(environment);
             services.AddSingleton(new AuthenticationCompositionState
             {
+                UsesProductionCookie = false,
                 ProductionFinancialAccessFailClosed = false,
             });
             services.AddFinOpsDeskJwtBearerAuthentication(configuration);
@@ -43,9 +44,12 @@ internal static class FinOpsDeskAuthenticationExtensions
                 .Bind(configuration.GetSection(JwtBearerAuthenticationSettings.SectionName));
             services.AddSingleton(new AuthenticationCompositionState
             {
+                UsesProductionCookie = true,
                 ProductionFinancialAccessFailClosed = true,
             });
             services.AddFinOpsDeskCookieAuthentication();
+            services.AddFinOpsDeskOpenIdConnect(configuration);
+            services.AddFinOpsDeskAntiforgery();
             return services;
         }
 

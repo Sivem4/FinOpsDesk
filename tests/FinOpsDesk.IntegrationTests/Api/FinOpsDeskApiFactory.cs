@@ -21,12 +21,14 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
     private readonly Action<IServiceCollection>? _configureServices;
     private readonly string _environmentName;
     private readonly string _authenticationComposition;
+    private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
 
     public FinOpsDeskApiFactory(
         string connectionString,
         Action<IServiceCollection>? configureServices = null,
         string? environmentName = null,
-        string? authenticationComposition = null)
+        string? authenticationComposition = null,
+        IReadOnlyDictionary<string, string?>? configurationOverrides = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -38,6 +40,7 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         _authenticationComposition = string.IsNullOrWhiteSpace(authenticationComposition)
             ? AuthenticationCompositions.DevelopmentJwt
             : authenticationComposition;
+        _configurationOverrides = configurationOverrides;
 
         // Program reads the connection string and authentication composition
         // while the host is composed. Environment variables are already loaded
@@ -68,12 +71,22 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         return client;
     }
 
+    public HttpClient CreateBrowserClient()
+    {
+        return CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            AllowAutoRedirect = false,
+            HandleCookies = true,
+        });
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(_environmentName);
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
-            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            Dictionary<string, string?> settings = new()
             {
                 ["ConnectionStrings:FinOpsDesk"] = _connectionString,
                 [AuthenticationCompositions.ConfigurationKey] = _authenticationComposition,
@@ -83,7 +96,29 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
                 ["Authentication:JwtBearer:SigningKey"] = TestAccessTokens.SigningKey,
                 ["Authentication:JwtBearer:RequireHttpsMetadata"] = "false",
                 ["Authentication:JwtBearer:OrganizationClaimType"] = TestAccessTokens.OrganizationClaimType,
-            });
+            };
+
+            if (string.Equals(
+                _authenticationComposition,
+                AuthenticationCompositions.ProductionCookie,
+                StringComparison.Ordinal))
+            {
+                settings["Authentication:Oidc:Authority"] = "https://oidc.invalid";
+                settings["Authentication:Oidc:ClientId"] = "finopsdesk-test-client";
+                settings["Authentication:Oidc:ClientSecret"] = "finopsdesk-test-client-secret-not-production";
+                settings["Authentication:Oidc:BrowserOrigin"] = "https://localhost";
+                settings["Authentication:Oidc:RequireHttpsMetadata"] = "true";
+            }
+
+            if (_configurationOverrides is not null)
+            {
+                foreach ((string key, string? value) in _configurationOverrides)
+                {
+                    settings[key] = value;
+                }
+            }
+
+            configuration.AddInMemoryCollection(settings);
         });
 
         if (_configureServices is not null)
