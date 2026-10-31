@@ -348,7 +348,7 @@ public sealed class SmartMatchEndpointTests : IDisposable
         Assert.DoesNotContain("Exact matching", body, StringComparison.Ordinal);
         Assert.DoesNotContain("CORRUPT-ROW", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SAFE-PAIR", body, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("12345", body, StringComparison.Ordinal);
+        AssertDoesNotContainOutsideTrace(body, "12345");
         Assert.DoesNotContain("SqlException", body, StringComparison.Ordinal);
         Assert.DoesNotContain("SELECT", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(organizationId.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
@@ -601,6 +601,20 @@ public sealed class SmartMatchEndpointTests : IDisposable
         int sum = suggestion.GetProperty("signals").EnumerateArray().Sum(
             signal => signal.GetProperty("points").GetInt32());
         Assert.Equal(suggestion.GetProperty("score").GetInt32(), sum);
+    }
+
+    private static void AssertDoesNotContainOutsideTrace(string body, string value)
+    {
+        using JsonDocument document = JsonDocument.Parse(body);
+        foreach (JsonProperty property in document.RootElement.EnumerateObject())
+        {
+            if (property.NameEquals("traceId"))
+            {
+                continue;
+            }
+
+            Assert.DoesNotContain(value, property.Value.GetRawText(), StringComparison.Ordinal);
+        }
     }
 
     private static void AssertMoney(JsonElement money, decimal amount, string currency)

@@ -265,7 +265,7 @@ public sealed class ExactMatchEndpointTests : IDisposable
         Assert.False(root.TryGetProperty("exception", out _));
         Assert.DoesNotContain("CORRUPT-ROW", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SAFE-PAIR", body, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("12345", body, StringComparison.Ordinal);
+        AssertDoesNotContainOutsideTrace(body, "12345");
         Assert.DoesNotContain("SqlException", body, StringComparison.Ordinal);
         Assert.DoesNotContain("SELECT", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(organizationId.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
@@ -434,6 +434,20 @@ public sealed class ExactMatchEndpointTests : IDisposable
         await using ReconciliationDbContext context = _fixture.CreateContext();
         return await context.Allocations.CountAsync(
             allocation => allocation.OrganizationId == organizationId);
+    }
+
+    private static void AssertDoesNotContainOutsideTrace(string body, string value)
+    {
+        using JsonDocument document = JsonDocument.Parse(body);
+        foreach (JsonProperty property in document.RootElement.EnumerateObject())
+        {
+            if (property.NameEquals("traceId"))
+            {
+                continue;
+            }
+
+            Assert.DoesNotContain(value, property.Value.GetRawText(), StringComparison.Ordinal);
+        }
     }
 
     private static void AssertMoney(JsonElement money, decimal amount, string currency)

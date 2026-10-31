@@ -188,19 +188,10 @@ public sealed class AllocationReversalContextEndpointTests : IDisposable
         using JsonDocument missingDocument = JsonDocument.Parse(missing);
         using JsonDocument foreignDocument = JsonDocument.Parse(foreign);
         Assert.Equal(
-            missingDocument.RootElement.GetProperty("title").GetString(),
-            foreignDocument.RootElement.GetProperty("title").GetString());
-        Assert.Equal(
-            missingDocument.RootElement.GetProperty("detail").GetString(),
-            foreignDocument.RootElement.GetProperty("detail").GetString());
-        Assert.Equal(
             ReconciliationApplicationErrors.AllocationNotFound.Code,
             missingDocument.RootElement.GetProperty("code").GetString());
-        Assert.Equal(
-            missingDocument.RootElement.GetProperty("code").GetString(),
-            foreignDocument.RootElement.GetProperty("code").GetString());
+        AssertSameProblemExceptTrace(missingDocument.RootElement, foreignDocument.RootElement);
         Assert.DoesNotContain("FOREIGN-ONLY-991", foreign, StringComparison.Ordinal);
-        Assert.DoesNotContain("77", foreign, StringComparison.Ordinal);
         Assert.Equal(77m, await AllocatedAmountAsync(invoice.Id));
     }
 
@@ -439,6 +430,25 @@ public sealed class AllocationReversalContextEndpointTests : IDisposable
             .Where(allocation => allocation.Id == allocationId)
             .Select(allocation => allocation.ConfirmedAt)
             .SingleAsync();
+    }
+
+    private static void AssertSameProblemExceptTrace(JsonElement missing, JsonElement foreign)
+    {
+        string[] missingNames = missing.EnumerateObject().Select(property => property.Name).ToArray();
+        string[] foreignNames = foreign.EnumerateObject().Select(property => property.Name).ToArray();
+        Assert.Equal(missingNames, foreignNames);
+
+        foreach (string name in missingNames)
+        {
+            if (name.Equals("traceId", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            Assert.Equal(
+                missing.GetProperty(name).GetRawText(),
+                foreign.GetProperty(name).GetRawText());
+        }
     }
 
     private static string Path(AllocationId allocationId)
