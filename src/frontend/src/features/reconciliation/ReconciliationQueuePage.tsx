@@ -200,6 +200,7 @@ export function ReconciliationQueuePage() {
       void queryClient.invalidateQueries({ queryKey: ['invoices', epoch] });
       void queryClient.invalidateQueries({ queryKey: ['bank-transactions', epoch] });
       void queryClient.invalidateQueries({ queryKey: ['matches', epoch] });
+      void queryClient.invalidateQueries({ queryKey: ['allocations', 'history', epoch] });
     },
     onError: (error) => {
       if (error instanceof StaleSessionError) {

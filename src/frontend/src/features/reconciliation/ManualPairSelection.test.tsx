@@ -629,6 +629,7 @@ describe('manual pair selection', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['invoices', epoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['bank-transactions', epoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['matches', epoch] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['allocations', 'history', epoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['allocations', 'context', epoch, invoiceA, bankPay] });
     mounted.unmount();
     invalidate.mockClear();
@@ -654,6 +655,7 @@ describe('manual pair selection', () => {
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['bank-transactions', leavingEpoch] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['matches', leavingEpoch] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['allocations', 'history', leavingEpoch] });
     expect(consoleError.mock.calls.some((call) => String(call[0]).includes('unmounted'))).toBe(false);
     consoleError.mockRestore();
     invalidate.mockRestore();

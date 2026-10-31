@@ -30,6 +30,9 @@ export function AppShell({
           <Button component={NavLink} to="/reconciliation" color="inherit">
             Reconciliation
           </Button>
+          <Button component={NavLink} to="/allocations" color="inherit">
+            Allocation history
+          </Button>
           <Button color="inherit" onClick={onReplace}>
             Replace token
           </Button>
