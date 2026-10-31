@@ -306,13 +306,13 @@ Status: Planned.
 
 Phase 2B.3 already validates JWT access tokens and requires an organization claim on Reconciliation routes. This phase adds the browser session and finer authorization.
 
-Phase 7A selects the host composition. `DevelopmentJwt` remains available only for the `Development` and `E2E` environments and keeps the existing JWT bearer handler. Every other environment uses `ProductionCookie`: a cookie scheme, no JWT bearer handler, and no acceptance of an `Authorization` bearer token. That composition does not sign a browser in, and financial routes stay fail-closed until organization membership exists. OpenID Connect, CSRF, membership, roles, resource authorization, cross-organization tests, BOLA/IDOR tests, and OpenAPI security metadata remain in this phase.
+Phase 7A selects the host composition. `DevelopmentJwt` remains available only for the `Development` and `E2E` environments and keeps the existing JWT bearer handler. Every other environment uses `ProductionCookie`: cookie authentication as the default scheme, no JWT bearer handler, and no acceptance of an `Authorization` bearer token.
 
-Add:
+Phase 7B.1 adds the confidential OpenID Connect authorization-code handler, `POST /login`, the `/signin-oidc` callback, the `__Host-finopsdesk-session` cookie, `GET /api/session`, local `POST /logout`, and CSRF enforcement for unsafe `ProductionCookie` requests. Financial routes stay fail-closed. The session does not carry an organization id or a role. Provider end-session, the React client, and the Vite proxy are not part of this increment. A production identity provider is not deployed from this repository. Normal CI uses an in-process protocol stub and does not call Keycloak or Entra ID.
 
-- OpenID Connect BFF authentication;
-- secure session cookie;
-- CSRF protection;
+Still in this phase:
+
+- React and development-proxy routing for the browser session;
 - organization membership;
 - roles;
 - policies;

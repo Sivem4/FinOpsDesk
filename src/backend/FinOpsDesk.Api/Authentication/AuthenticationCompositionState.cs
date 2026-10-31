@@ -4,5 +4,7 @@ namespace FinOpsDesk.Api.Authentication;
 // financial routes fail-closed until Phase 7C checks organization membership.
 internal sealed class AuthenticationCompositionState
 {
+    public required bool UsesProductionCookie { get; init; }
+
     public required bool ProductionFinancialAccessFailClosed { get; init; }
 }

@@ -2,7 +2,7 @@
 
 The operations workspace is a Vite application in `src/frontend`. It shows the invoice register from `GET /api/invoices`, the bank transaction register from `GET /api/bank-transactions`, CSV import at `/imports`, the reconciliation queue at `/reconciliation`, and allocation history at `/allocations`. It does not issue tokens. The import screen sends the selected file to the existing import endpoints and does not change amounts in the browser. The reconciliation screen reads `GET /api/matches` and `GET /api/matches/smart`. An exact match can be confirmed with `POST /api/matches/confirm`. A Smart-1 suggestion can start one explicit-amount allocation with `POST /api/allocations`. **Choose records** on that same screen can browse or exactly search the invoice and bank-transaction lists, then open that same allocation dialog. The invoice register and the bank transaction register do not start an allocation.
 
-Production browser authentication is Phase 7. The development token screen is compiled only into the Vite development build. A production build shows that browser sign-in is not configured.
+The API can start a production cookie session, but this UI does not use it yet. Local development still sends a `DevelopmentJwt` bearer token. The Vite proxy forwards `/api` and `/health` only. `/login`, `/logout`, and `/signin-oidc` are not proxied. The development token screen is compiled only into the Vite development build. A production build shows that browser sign-in is not configured.
 
 ## Prerequisites
 

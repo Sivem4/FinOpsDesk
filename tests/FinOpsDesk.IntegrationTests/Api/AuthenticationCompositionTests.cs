@@ -38,7 +38,7 @@ public sealed class AuthenticationCompositionTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
-        await AssertSchemesAsync(factory, bearer: true, cookie: false);
+        await AssertSchemesAsync(factory, bearer: true, cookie: false, oidc: false);
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public sealed class AuthenticationCompositionTests
         Assert.False(invoices.Headers.Contains("Set-Cookie"));
         Assert.Equal(HttpStatusCode.Unauthorized, allocation.StatusCode);
         Assert.Equal(HttpStatusCode.OK, healthResponse.StatusCode);
-        await AssertSchemesAsync(factory, bearer: false, cookie: true);
+        await AssertSchemesAsync(factory, bearer: false, cookie: true, oidc: true);
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public sealed class AuthenticationCompositionTests
         HttpResponseMessage response = await client.GetAsync("/api/invoices");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        await AssertSchemesAsync(factory, bearer: false, cookie: true);
+        await AssertSchemesAsync(factory, bearer: false, cookie: true, oidc: true);
     }
 
     [Theory]
@@ -149,13 +149,15 @@ public sealed class AuthenticationCompositionTests
     private static async Task AssertSchemesAsync(
         FinOpsDeskApiFactory factory,
         bool bearer,
-        bool cookie)
+        bool cookie,
+        bool oidc)
     {
         IAuthenticationSchemeProvider schemes = factory.Services
             .GetRequiredService<IAuthenticationSchemeProvider>();
 
         Assert.Equal(bearer, await schemes.GetSchemeAsync("Bearer") is not null);
         Assert.Equal(cookie, await schemes.GetSchemeAsync("Cookies") is not null);
+        Assert.Equal(oidc, await schemes.GetSchemeAsync("OpenIdConnect") is not null);
     }
 
     private sealed class AlwaysAuthenticatedHandler : AuthenticationHandler<AuthenticationSchemeOptions>

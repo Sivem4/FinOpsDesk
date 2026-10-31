@@ -40,9 +40,21 @@ if (app.Environment.IsDevelopment())
 app.MapHealthChecks("/health")
     .AllowAnonymous();
 
-app.MapGroup("/api")
-    .RequireAuthorization(FinOpsDeskAuthorizationPolicies.TenantMember)
-    .MapReconciliationEndpoints();
+AuthenticationCompositionState composition = app.Services.GetRequiredService<AuthenticationCompositionState>();
+if (composition.UsesProductionCookie)
+{
+    app.UseMiddleware<ProductionCsrfMiddleware>();
+    app.MapFinOpsDeskBrowserSession();
+}
+
+var reconciliation = app.MapGroup("/api")
+    .RequireAuthorization(FinOpsDeskAuthorizationPolicies.TenantMember);
+if (composition.UsesProductionCookie)
+{
+    reconciliation.WithMetadata(new ProductionCsrfMetadata());
+}
+
+reconciliation.MapReconciliationEndpoints();
 
 app.Run();
 
