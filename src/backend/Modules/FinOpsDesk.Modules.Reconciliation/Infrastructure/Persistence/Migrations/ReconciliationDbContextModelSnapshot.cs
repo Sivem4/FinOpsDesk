@@ -99,6 +99,10 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasDatabaseName("UX_Allocations_OrganizationId_ReversalIdempotencyKey")
                         .HasFilter("[ReversalIdempotencyKey] IS NOT NULL");
 
+                    b.HasIndex("OrganizationId", "ConfirmedAt", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("IX_Allocations_OrganizationId_ConfirmedAt_Id");
+
                     b.ToTable("Allocations", "reconciliation", t =>
                         {
                             t.HasCheckConstraint("CK_Allocations_IdempotencyOperation", "([IdempotencyKey] IS NULL AND [IdempotencyOperation] IS NULL) OR ([IdempotencyKey] IS NOT NULL AND [IdempotencyOperation] IS NOT NULL AND [IdempotencyOperation] IN (1, 2, 3))");

@@ -50,6 +50,8 @@ public static class ReconciliationModule
         services.AddScoped<IFinancialAuditWriter, FinancialAuditWriter>();
         services.AddScoped<IFinancialAuditQueries, FinancialAuditQueries>();
         services.AddScoped<GetAllocationAuditHandler>();
+        services.AddScoped<IAllocationHistoryQueries, AllocationHistoryQueries>();
+        services.AddScoped<ListAllocationHistoryHandler>();
         services.AddScoped<IAllocationIdempotencyLookup, AllocationIdempotencyLookup>();
         services.AddScoped<IAllocationIdempotencyConflict, AllocationIdempotencyConflict>();
         services.AddScoped<IAllocationReversalLookup, AllocationReversalLookup>();
