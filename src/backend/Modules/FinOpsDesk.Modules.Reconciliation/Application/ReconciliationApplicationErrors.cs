@@ -144,6 +144,16 @@ public static class ReconciliationApplicationErrors
             "reconciliation.allocation_audit.invalid_pagination",
             "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
 
+    public static Error AllocationHistoryInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation_history.invalid_request",
+            "The allocation history request has a malformed filter or an unsupported query parameter.");
+
+    public static Error AllocationHistoryInvalidPagination { get; } =
+        new(
+            "reconciliation.allocation_history.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
     public static Error AllocationRequestTooLarge { get; } =
         new(
             "reconciliation.allocation.request_too_large",

@@ -32,6 +32,9 @@ internal static class AllocationEndpoints
 
     private static readonly string[] AuditQueryNames = ["page", "pageSize"];
 
+    private static readonly string[] HistoryQueryNames =
+        ["page", "pageSize", "invoiceId", "bankTransactionId"];
+
     private static readonly string[] ContextQueryNames = ["invoiceId", "bankTransactionId"];
 
     public static RouteGroupBuilder MapAllocationEndpoints(this RouteGroupBuilder group)
@@ -79,6 +82,28 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .AddOpenApiOperationTransformer(DocumentReverseOperation);
+
+        group.MapGet("/allocations", GetHistoryAsync)
+            .WithName("ListAllocationHistory")
+            .WithSummary("List persisted allocations for the authenticated organization.")
+            .WithDescription(
+                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
+                + "A missing JWT sub is allowed. Optional invoiceId and bankTransactionId filters are exact and combined with AND. "
+                + "A missing filter is unfiltered. An empty or malformed filter is rejected. "
+                + "An id from another organization returns an empty page, not that organization's rows. "
+                + "Results are ordered by ConfirmedAt descending, then allocation id descending. "
+                + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. "
+                + "A valid filter with no matches returns an empty page. "
+                + "The amount is the original allocation amount, including reversed rows. "
+                + "Invoice number and bank reference are the current source values, not confirmation-time snapshots. "
+                + "The response does not include the actor, the idempotency key, rowversion, or current balances. "
+                + "The count and the page are separate statements and are not one snapshot. "
+                + "This read does not confirm, reverse, or recover an idempotent POST.")
+            .Produces<AllocationHistoryListResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .AddOpenApiOperationTransformer(DocumentHistoryOperation);
 
         group.MapGet("/allocations/{allocationId}/audit", GetAuditAsync)
             .WithName("GetAllocationAudit")
@@ -164,6 +189,38 @@ internal static class AllocationEndpoints
 
             return TypedResults.Ok(result.Value);
         }
+    }
+
+    private static async Task<Results<Ok<AllocationHistoryListResponse>, ProblemHttpResult>> GetHistoryAsync(
+        HttpRequest httpRequest,
+        ListAllocationHistoryHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryBindHistoryQuery(
+                httpRequest,
+                out int page,
+                out int pageSize,
+                out Guid? invoiceId,
+                out Guid? bankTransactionId,
+                out ProblemHttpResult? queryProblem))
+        {
+            return queryProblem!;
+        }
+
+        Result<AllocationHistoryListResponse> result = await handler.Handle(
+            new ListAllocationHistoryQuery(
+                page,
+                pageSize,
+                invoiceId is null ? null : new InvoiceId(invoiceId.Value),
+                bankTransactionId is null ? null : new BankTransactionId(bankTransactionId.Value)),
+            cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return Problem(result.Error, StatusCodeFor(result.Error), TitleFor(result.Error));
+        }
+
+        return TypedResults.Ok(result.Value);
     }
 
     private static async Task<Results<Ok<FinancialAuditListResponse>, ProblemHttpResult>> GetAuditAsync(
@@ -737,6 +794,8 @@ internal static class AllocationEndpoints
             || error.Code == ReconciliationApplicationErrors.AllocationInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidPagination.Code
             || error.Code == ReconciliationApplicationErrors.AllocationContextInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.ExplicitAmountInvalid.Code)
         {
@@ -823,6 +882,16 @@ internal static class AllocationEndpoints
         if (error.Code == ReconciliationApplicationErrors.AllocationAuditInvalidPagination.Code)
         {
             return "Allocation audit page is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidRequest.Code)
+        {
+            return "Allocation history request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationHistoryInvalidPagination.Code)
+        {
+            return "Allocation history page is invalid.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.ExplicitAmountInvalid.Code)
@@ -1079,6 +1148,199 @@ internal static class AllocationEndpoints
             Name = name,
             In = ParameterLocation.Query,
             Required = true,
+            Description = description,
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
+            },
+        };
+    }
+
+    private static bool TryBindHistoryQuery(
+        HttpRequest httpRequest,
+        out int page,
+        out int pageSize,
+        out Guid? invoiceId,
+        out Guid? bankTransactionId,
+        out ProblemHttpResult? problem)
+    {
+        page = AllocationHistoryListPagination.DefaultPage;
+        pageSize = AllocationHistoryListPagination.DefaultPageSize;
+        invoiceId = null;
+        bankTransactionId = null;
+        problem = RejectUnexpectedHistoryQuery(httpRequest);
+        if (problem is not null)
+        {
+            return false;
+        }
+
+        if (!TryReadHistoryPage(httpRequest, "page", AllocationHistoryListPagination.DefaultPage, out page, out problem)
+            || !TryReadHistoryPage(
+                httpRequest,
+                "pageSize",
+                AllocationHistoryListPagination.DefaultPageSize,
+                out pageSize,
+                out problem)
+            || !TryReadHistoryGuid(httpRequest, "invoiceId", out invoiceId, out problem)
+            || !TryReadHistoryGuid(httpRequest, "bankTransactionId", out bankTransactionId, out problem))
+        {
+            return false;
+        }
+
+        if (!AllocationHistoryListPagination.IsValid(page, pageSize))
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationHistoryInvalidPagination,
+                StatusCodes.Status400BadRequest,
+                "Allocation history page is invalid.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ProblemHttpResult? RejectUnexpectedHistoryQuery(HttpRequest httpRequest)
+    {
+        foreach (string key in httpRequest.Query.Keys)
+        {
+            if (!HistoryQueryNames.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                return Problem(
+                    ReconciliationApplicationErrors.AllocationHistoryInvalidRequest,
+                    StatusCodes.Status400BadRequest,
+                    "Allocation history request is invalid.");
+            }
+
+            if (httpRequest.Query[key].Count != 1)
+            {
+                Error error = IsHistoryPaginationName(key)
+                    ? ReconciliationApplicationErrors.AllocationHistoryInvalidPagination
+                    : ReconciliationApplicationErrors.AllocationHistoryInvalidRequest;
+                string title = IsHistoryPaginationName(key)
+                    ? "Allocation history page is invalid."
+                    : "Allocation history request is invalid.";
+                return Problem(error, StatusCodes.Status400BadRequest, title);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsHistoryPaginationName(string key)
+    {
+        return string.Equals(key, "page", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "pageSize", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryReadHistoryPage(
+        HttpRequest httpRequest,
+        string name,
+        int defaultValue,
+        out int page,
+        out ProblemHttpResult? problem)
+    {
+        page = defaultValue;
+        problem = null;
+        if (!httpRequest.Query.TryGetValue(name, out StringValues values))
+        {
+            return true;
+        }
+
+        if (values.Count != 1
+            || !int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out page))
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationHistoryInvalidPagination,
+                StatusCodes.Status400BadRequest,
+                "Allocation history page is invalid.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadHistoryGuid(
+        HttpRequest httpRequest,
+        string name,
+        out Guid? value,
+        out ProblemHttpResult? problem)
+    {
+        value = null;
+        problem = null;
+        if (!httpRequest.Query.ContainsKey(name))
+        {
+            return true;
+        }
+
+        StringValues values = httpRequest.Query[name];
+        if (values.Count != 1
+            || !Guid.TryParse(values[0], out Guid parsed)
+            || parsed == Guid.Empty)
+        {
+            problem = Problem(
+                ReconciliationApplicationErrors.AllocationHistoryInvalidRequest,
+                StatusCodes.Status400BadRequest,
+                "Allocation history request is invalid.");
+            return false;
+        }
+
+        value = parsed;
+        return true;
+    }
+
+    private static Task DocumentHistoryOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "page",
+            In = ParameterLocation.Query,
+            Required = false,
+            Description = "Page number. Defaults to 1. The zero-based offset must fit in a 32-bit integer.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(AllocationHistoryListPagination.DefaultPage),
+                Minimum = "1",
+            },
+        });
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "pageSize",
+            In = ParameterLocation.Query,
+            Required = false,
+            Description = "Page size. Defaults to 50. Maximum is 100.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(AllocationHistoryListPagination.DefaultPageSize),
+                Minimum = "1",
+                Maximum = "100",
+            },
+        });
+        operation.Parameters.Add(HistoryGuidParameter(
+            "invoiceId",
+            "Optional invoice id. Omitted means no invoice filter. An empty GUID is rejected."));
+        operation.Parameters.Add(HistoryGuidParameter(
+            "bankTransactionId",
+            "Optional bank transaction id. Omitted means no bank-transaction filter. An empty GUID is rejected."));
+        return Task.CompletedTask;
+    }
+
+    private static OpenApiParameter HistoryGuidParameter(string name, string description)
+    {
+        return new OpenApiParameter
+        {
+            Name = name,
+            In = ParameterLocation.Query,
+            Required = false,
             Description = description,
             Schema = new OpenApiSchema
             {
