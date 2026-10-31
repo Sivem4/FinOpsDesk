@@ -176,13 +176,20 @@ internal sealed class E2EHost : IAsyncDisposable
         }
     }
 
-    public async Task RunWithinLimitAsync(Func<Task> journey)
+    public Task RunWithinLimitAsync(Func<Task> journey)
     {
+        return RunWithinLimitAsync(journey, TimeSpan.FromSeconds(150));
+    }
+
+    public async Task RunWithinLimitAsync(Func<Task> journey, TimeSpan limit)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(limit, TimeSpan.Zero);
+
         try
         {
             await E2EJourneyLimit.WaitAsync(
                 journey(),
-                TimeSpan.FromSeconds(150),
+                limit,
                 StopBrowserAsync,
                 TimeSpan.FromSeconds(20));
         }
@@ -196,10 +203,55 @@ internal sealed class E2EHost : IAsyncDisposable
     public async Task SignInAsync()
     {
         await Page.GotoAsync(_vite.Origin + "/imports");
+        await SubmitTokenAsync(_accessToken);
+        await Assertions.Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Imports" })).ToBeVisibleAsync();
+    }
+
+    public async Task SignInThroughGateAsync()
+    {
+        await SubmitTokenAsync(_accessToken);
+    }
+
+    public async Task ReplaceTokenAsync(string accessToken)
+    {
+        await Page.GetByRole(AriaRole.Button, new() { Name = "Replace token" }).ClickAsync();
+        await SubmitTokenAsync(accessToken);
+    }
+
+    public Task ReplaceWithCurrentOrganizationAsync()
+    {
+        return ReplaceTokenAsync(_accessToken);
+    }
+
+    public string CreateAccessToken(Guid organizationId)
+    {
+        return E2EAccessToken.Create(_signingKey, organizationId);
+    }
+
+    public void AssertBrowserIsQuiet()
+    {
+        AssertBrowserIsQuiet(allowAbortedRequests: false);
+    }
+
+    public void AssertBrowserIsQuiet(bool allowAbortedRequests)
+    {
+        List<string> consoleErrors = allowAbortedRequests
+            ? _consoleErrors.FindAll(static error => !IsAbortedRequestNoise(error))
+            : _consoleErrors;
+        if (_pageErrors.Count == 0 && _serverErrors.Count == 0 && consoleErrors.Count == 0)
+        {
+            return;
+        }
+
+        throw new Xunit.Sdk.XunitException(Describe("Browser reported a fault."));
+    }
+
+    private async Task SubmitTokenAsync(string accessToken)
+    {
         ILocator tokenField = Page.GetByLabel("Development access token");
         try
         {
-            await tokenField.FillAsync(_accessToken);
+            await tokenField.FillAsync(accessToken);
         }
         catch (Exception exception)
         {
@@ -209,17 +261,12 @@ internal sealed class E2EHost : IAsyncDisposable
         }
 
         await Page.GetByRole(AriaRole.Button, new() { Name = "Use token" }).ClickAsync();
-        await Assertions.Expect(Page.GetByRole(AriaRole.Heading, new() { Name = "Imports" })).ToBeVisibleAsync();
     }
 
-    public void AssertBrowserIsQuiet()
+    private static bool IsAbortedRequestNoise(string text)
     {
-        if (_pageErrors.Count == 0 && _serverErrors.Count == 0 && _consoleErrors.Count == 0)
-        {
-            return;
-        }
-
-        throw new Xunit.Sdk.XunitException(Describe("Browser reported a fault."));
+        return text.Contains("ERR_FAILED", StringComparison.Ordinal)
+            || text.Contains("ERR_ABORTED", StringComparison.Ordinal);
     }
 
     public async ValueTask DisposeAsync()
