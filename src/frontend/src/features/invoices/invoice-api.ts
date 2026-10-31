@@ -26,11 +26,15 @@ export async function listInvoices(
   page: number,
   pageSize: number,
   signal: AbortSignal,
+  invoiceNumber?: string,
 ): Promise<InvoiceListResponse> {
   const params = new URLSearchParams({
     page: String(page),
     pageSize: String(pageSize),
   });
+  if (invoiceNumber !== undefined) {
+    params.set('invoiceNumber', invoiceNumber);
+  }
   const body = await apiGet(`/api/invoices?${params.toString()}`, signal);
 
   try {
