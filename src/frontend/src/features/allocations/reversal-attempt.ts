@@ -1,9 +1,11 @@
 import { parse } from 'lossless-json';
 import { useSyncExternalStore } from 'react';
 
+import { authenticationHeaders } from '../../shared/api/authentication';
 import { isAbortError, StaleSessionError } from '../../shared/api/errors';
 import { toApiError } from '../../shared/api/problem';
 import { sessionStore, type SessionSnapshot } from '../../shared/api/session-store';
+import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { useSession } from '../../shared/auth/session';
 import { compareDecimalAmounts, readMoney, readMoneyAmount, type DecimalString } from '../../shared/money/money';
 import { readAllocationOrganizationId } from '../reconciliation/allocation-attempt';
@@ -270,6 +272,10 @@ export function beginReversalAttempt(input: BeginReversalInput): ReversalAttempt
 }
 
 export async function submitReversalAttempt(signal?: AbortSignal): Promise<VerifiedReversal> {
+  if (browserAuthMode() === 'cookie') {
+    throw new ReversalAuthenticationError();
+  }
+
   if (submissionInFlight) {
     throw new ReversalSubmissionInProgressError();
   }
@@ -305,10 +311,11 @@ export async function submitReversalAttempt(signal?: AbortSignal): Promise<Verif
     try {
       response = await fetch(`/api/allocations/${attempt.allocationId}/reverse`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.token}`,
+          ...authenticationHeaders(session, 'POST'),
           'Idempotency-Key': attempt.idempotencyKey,
         },
         body: attempt.requestBody,

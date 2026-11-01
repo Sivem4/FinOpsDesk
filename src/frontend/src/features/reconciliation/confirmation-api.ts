@@ -1,5 +1,6 @@
 import { parse } from 'lossless-json';
 
+import { authenticationHeaders, rejectCookieFinancialRequest } from '../../shared/api/authentication';
 import { StaleSessionError } from '../../shared/api/errors';
 import { toApiError } from '../../shared/api/problem';
 import { sessionStore } from '../../shared/api/session-store';
@@ -71,6 +72,8 @@ export async function postExactConfirmation(
     throw new StaleSessionError();
   }
 
+  rejectCookieFinancialRequest(session);
+
   if (session.token === null) {
     throw toApiError(401, '');
   }
@@ -81,10 +84,11 @@ export async function postExactConfirmation(
   try {
     response = await fetch('/api/matches/confirm', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.token}`,
+        ...authenticationHeaders(session, 'POST'),
         'Idempotency-Key': attempt.idempotencyKey,
       },
       body: confirmationBody(attempt),

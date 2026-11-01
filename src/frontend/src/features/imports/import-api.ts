@@ -1,5 +1,6 @@
 import { parse } from 'lossless-json';
 
+import { authenticationHeaders, rejectCookieFinancialRequest } from '../../shared/api/authentication';
 import {
   StaleSessionError,
   UnexpectedResponseError,
@@ -63,6 +64,8 @@ export async function postImport(
     throw new StaleSessionError();
   }
 
+  rejectCookieFinancialRequest(session);
+
   if (session.token === null) {
     throw toApiError(401, '');
   }
@@ -77,9 +80,10 @@ export async function postImport(
   try {
     response = await fetch(`/api/imports/${importType}`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${session.token}`,
+        ...authenticationHeaders(session, 'POST'),
       },
       body,
       signal: AbortSignal.any([signal, session.signal]),

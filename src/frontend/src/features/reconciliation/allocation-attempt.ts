@@ -1,9 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { isLosslessNumber, parse } from 'lossless-json';
 
+import { authenticationHeaders } from '../../shared/api/authentication';
 import { isAbortError, StaleSessionError } from '../../shared/api/errors';
 import { toApiError } from '../../shared/api/problem';
 import { sessionStore, type SessionSnapshot } from '../../shared/api/session-store';
+import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { useSession } from '../../shared/auth/session';
 import {
   parseAllocationAmount,
@@ -250,6 +252,10 @@ export function beginExplicitAmountAttempt(input: BeginExplicitAmountInput): Exp
 }
 
 export async function submitExplicitAmountAttempt(signal?: AbortSignal): Promise<VerifiedExplicitAmount> {
+  if (browserAuthMode() === 'cookie') {
+    throw new AllocationAuthenticationError();
+  }
+
   if (submissionInFlight) {
     throw new AllocationSubmissionInProgressError();
   }
@@ -285,10 +291,11 @@ export async function submitExplicitAmountAttempt(signal?: AbortSignal): Promise
     try {
       response = await fetch('/api/allocations', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.token}`,
+          ...authenticationHeaders(session, 'POST'),
           'Idempotency-Key': attempt.idempotencyKey,
         },
         body: attempt.requestBody,

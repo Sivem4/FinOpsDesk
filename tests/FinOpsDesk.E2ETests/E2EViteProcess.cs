@@ -2,6 +2,17 @@ using System.Diagnostics;
 
 namespace FinOpsDesk.E2ETests;
 
+internal sealed class E2EViteLaunch
+{
+    public string Host { get; init; } = "127.0.0.1";
+
+    public int? Port { get; init; }
+
+    public bool CookieMode { get; init; }
+
+    public string? NodeExtraCaCerts { get; init; }
+}
+
 internal sealed class E2EViteProcess : IAsyncDisposable
 {
     private readonly Process _process;
@@ -22,9 +33,18 @@ internal sealed class E2EViteProcess : IAsyncDisposable
 
     public bool TerminationEstablished { get; private set; }
 
-    public static async Task<E2EViteProcess> StartAsync(string apiOrigin, CancellationToken cancellationToken)
+    public static Task<E2EViteProcess> StartAsync(string apiOrigin, CancellationToken cancellationToken)
+    {
+        return StartAsync(apiOrigin, new E2EViteLaunch(), cancellationToken);
+    }
+
+    public static async Task<E2EViteProcess> StartAsync(
+        string apiOrigin,
+        E2EViteLaunch launch,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiOrigin);
+        ArgumentNullException.ThrowIfNull(launch);
         string viteBinary = Path.Combine(RepoPaths.FrontendDirectory, "node_modules", "vite", "package.json");
         if (!File.Exists(viteBinary))
         {
@@ -32,8 +52,8 @@ internal sealed class E2EViteProcess : IAsyncDisposable
                 "Vite is not installed. From src/frontend run: npm ci");
         }
 
-        int port = LoopbackPort.Reserve();
-        string origin = $"http://127.0.0.1:{port}";
+        int port = launch.Port ?? LoopbackPort.Reserve();
+        string origin = $"http://{launch.Host}:{port}";
         E2EProcessLog log = new();
         ProcessStartInfo start = new()
         {
@@ -45,7 +65,8 @@ internal sealed class E2EViteProcess : IAsyncDisposable
             CreateNoWindow = true,
         };
 
-        string npmArguments = $"npm run dev -- --host 127.0.0.1 --port {port} --strictPort";
+        string script = launch.CookieMode ? "dev:cookie" : "dev";
+        string npmArguments = $"npm run {script} -- --host {launch.Host} --port {port} --strictPort";
         if (OperatingSystem.IsWindows())
         {
             start.ArgumentList.Add("/d");
@@ -55,10 +76,10 @@ internal sealed class E2EViteProcess : IAsyncDisposable
         else
         {
             start.ArgumentList.Add("run");
-            start.ArgumentList.Add("dev");
+            start.ArgumentList.Add(script);
             start.ArgumentList.Add("--");
             start.ArgumentList.Add("--host");
-            start.ArgumentList.Add("127.0.0.1");
+            start.ArgumentList.Add(launch.Host);
             start.ArgumentList.Add("--port");
             start.ArgumentList.Add(port.ToString());
             start.ArgumentList.Add("--strictPort");
@@ -66,6 +87,15 @@ internal sealed class E2EViteProcess : IAsyncDisposable
 
         start.Environment["FINOPSDESK_E2E_API_ORIGIN"] = apiOrigin;
         start.Environment["BROWSER"] = "none";
+        if (launch.CookieMode)
+        {
+            start.Environment["VITE_AUTH_MODE"] = "cookie";
+        }
+
+        if (!string.IsNullOrWhiteSpace(launch.NodeExtraCaCerts))
+        {
+            start.Environment["NODE_EXTRA_CA_CERTS"] = launch.NodeExtraCaCerts;
+        }
 
         Process process = new() { StartInfo = start };
         if (!process.Start())
