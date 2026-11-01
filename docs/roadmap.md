@@ -308,11 +308,12 @@ Phase 2B.3 already validates JWT access tokens and requires an organization clai
 
 Phase 7A selects the host composition. `DevelopmentJwt` remains available only for the `Development` and `E2E` environments and keeps the existing JWT bearer handler. Every other environment uses `ProductionCookie`: cookie authentication as the default scheme, no JWT bearer handler, and no acceptance of an `Authorization` bearer token.
 
-Phase 7B.1 adds the confidential OpenID Connect authorization-code handler, `POST /login`, the `/signin-oidc` callback, the `__Host-finopsdesk-session` cookie, `GET /api/session`, local `POST /logout`, and CSRF enforcement for unsafe `ProductionCookie` requests. Financial routes stay fail-closed. The session does not carry an organization id or a role. Provider end-session, the React client, and the Vite proxy are not part of this increment. A production identity provider is not deployed from this repository. Normal CI uses an in-process protocol stub and does not call Keycloak or Entra ID.
+Phase 7B.1 adds the confidential OpenID Connect authorization-code handler, `POST /login`, the `/signin-oidc` callback, the `__Host-finopsdesk-session` cookie, `GET /api/session`, local `POST /logout`, and CSRF enforcement for unsafe `ProductionCookie` requests. Financial routes stay fail-closed. The session does not carry an organization id or a role. Provider end-session is not part of this phase. A production identity provider is not deployed from this repository. Normal CI uses an in-process protocol stub and does not call Keycloak or Entra ID.
+
+Phase 7B.2 connects the React application to that cookie session. Development stays on `DevelopmentJwt` unless Vite is started in `cookie` mode. A production build always uses the cookie session and does not include the development token screen. Sign-in is a browser form POST. The restricted screen is shown while `financialAccess` is false, and the financial workspace is not mounted. Local sign-out does not end the provider session. A recovery descriptor left in `sessionStorage` is not shown or submitted. Identity-aware recovery, beyond the organization id already stored in that descriptor, is deferred until membership exists and two identities can share one browser. Financial access stays closed.
 
 Still in this phase:
 
-- React and development-proxy routing for the browser session;
 - organization membership;
 - roles;
 - policies;

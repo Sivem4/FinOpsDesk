@@ -4,12 +4,21 @@ import { queryClient } from './query-client';
 
 export type SessionReason = 'expired' | 'unauthorized' | 'forbidden' | null;
 
-export interface SessionSnapshot {
+export interface CookieSessionFields {
+  authenticated: boolean;
+  csrfToken: string | null;
+  issuer: string | null;
+  subject: string | null;
+  displayName: string | null;
+  expiresAt: number | null;
+}
+
+export interface SessionSnapshot extends CookieSessionFields {
   epoch: number;
   token: string | null;
-  expiresAt: number | null;
   reason: SessionReason;
   signal: AbortSignal;
+  financialAccess: boolean;
 }
 
 type Listener = () => void;
@@ -22,13 +31,7 @@ export class SessionStore {
   private snapshot: SessionSnapshot;
 
   constructor(private readonly queries: QueryClient) {
-    this.snapshot = {
-      epoch: 0,
-      token: null,
-      expiresAt: null,
-      reason: null,
-      signal: this.controller.signal,
-    };
+    this.snapshot = this.cleared(0, this.controller.signal);
   }
 
   subscribe = (listener: Listener): (() => void) => {
@@ -44,11 +47,38 @@ export class SessionStore {
     const previous = this.controller;
     this.controller = new AbortController();
     this.snapshot = {
-      epoch: this.snapshot.epoch + 1,
+      ...this.cleared(this.snapshot.epoch + 1, this.controller.signal),
       token,
       expiresAt,
       reason,
-      signal: this.controller.signal,
+    };
+    previous.abort();
+    this.publish();
+    void this.queries.cancelQueries();
+    this.queries.clear();
+  }
+
+  replaceCookieSession(next: CookieSessionFields, rotateEpoch: boolean): void {
+    if (!rotateEpoch) {
+      this.snapshot = {
+        ...this.snapshot,
+        ...next,
+        token: null,
+        reason: null,
+        financialAccess: false,
+      };
+      this.publish();
+      return;
+    }
+
+    const previous = this.controller;
+    this.controller = new AbortController();
+    this.snapshot = {
+      ...this.cleared(this.snapshot.epoch + 1, this.controller.signal),
+      ...next,
+      token: null,
+      reason: null,
+      financialAccess: false,
     };
     previous.abort();
     this.publish();
@@ -59,16 +89,26 @@ export class SessionStore {
   resetForTests(): void {
     const previous = this.controller;
     this.controller = new AbortController();
-    this.snapshot = {
-      epoch: 0,
-      token: null,
-      expiresAt: null,
-      reason: null,
-      signal: this.controller.signal,
-    };
+    this.snapshot = this.cleared(0, this.controller.signal);
     previous.abort();
     this.publish();
     this.queries.clear();
+  }
+
+  private cleared(epoch: number, signal: AbortSignal): SessionSnapshot {
+    return {
+      epoch,
+      token: null,
+      expiresAt: null,
+      reason: null,
+      signal,
+      csrfToken: null,
+      authenticated: false,
+      financialAccess: false,
+      issuer: null,
+      subject: null,
+      displayName: null,
+    };
   }
 
   private publish(): void {

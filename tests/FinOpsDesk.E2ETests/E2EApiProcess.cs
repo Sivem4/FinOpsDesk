@@ -125,6 +125,79 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         return api;
     }
 
+    public static async Task<E2EApiProcess> StartCookieAsync(
+        string connectionString,
+        string authority,
+        string browserOrigin,
+        string clientId,
+        string clientSecret,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(authority);
+        ArgumentException.ThrowIfNullOrWhiteSpace(browserOrigin);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientSecret);
+        string catalog = new SqlConnectionStringBuilder(connectionString).InitialCatalog;
+        E2EDatabase.RequireOwnedName(catalog);
+
+        int port = LoopbackPort.Reserve();
+        // Antiforgery refuses to issue a token unless this request is HTTPS.
+        // The browser still uses http://localhost through Vite.
+        string origin = $"https://localhost:{port}";
+        E2EProcessLog log = new(clientSecret, connectionString);
+        ProcessStartInfo start = new()
+        {
+            FileName = "dotnet",
+            WorkingDirectory = RepoPaths.Root,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("run");
+        start.ArgumentList.Add("--project");
+        start.ArgumentList.Add(RepoPaths.ApiProject);
+        start.ArgumentList.Add("--no-launch-profile");
+        start.ArgumentList.Add("--configuration");
+        start.ArgumentList.Add(RepoPaths.Configuration);
+        start.ArgumentList.Add("--no-build");
+        start.Environment["DOTNET_NOLOGO"] = "1";
+        start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        start.Environment["Authentication__Composition"] = "ProductionCookie";
+        start.Environment["ASPNETCORE_URLS"] = origin;
+        start.Environment["ConnectionStrings__FinOpsDesk"] = connectionString;
+        start.Environment["Authentication__Oidc__Authority"] = authority;
+        start.Environment["Authentication__Oidc__ClientId"] = clientId;
+        start.Environment["Authentication__Oidc__ClientSecret"] = clientSecret;
+        start.Environment["Authentication__Oidc__BrowserOrigin"] = browserOrigin;
+        start.Environment["Authentication__Oidc__RequireHttpsMetadata"] = "false";
+
+        Process process = new() { StartInfo = start };
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("E2E could not start the cookie API process.");
+        }
+
+        E2EApiProcess api;
+        try
+        {
+            log.Attach(process);
+            api = new E2EApiProcess(process, log, origin, port);
+        }
+        catch (Exception exception)
+        {
+            throw await StartupCompletion.AbandonAsync(process, exception);
+        }
+
+        await StartupCompletion.CompleteAsync(
+            () => WaitForHealthAsync(process, log, origin, cancellationToken),
+            api.DisposeAsync,
+            () => api.TerminationEstablished);
+        return api;
+    }
+
     public string Diagnostics()
     {
         return "API " + Origin + " exit=" + ProcessExit.Describe(_process) + Environment.NewLine + _log.Tail();

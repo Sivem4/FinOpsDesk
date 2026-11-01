@@ -1,11 +1,13 @@
 import { parse } from 'lossless-json';
 
+import { authenticationHeaders, rejectCookieFinancialRequest } from './authentication';
 import { isAbortError, NetworkError, StaleSessionError, UnexpectedResponseError } from './errors';
 import { toApiError } from './problem';
 import { sessionStore } from './session-store';
 
 export async function apiGet(path: string, signal: AbortSignal): Promise<unknown> {
   const session = sessionStore.getSnapshot();
+  rejectCookieFinancialRequest(session);
 
   if (session.token === null) {
     throw toApiError(401, '');
@@ -17,9 +19,10 @@ export async function apiGet(path: string, signal: AbortSignal): Promise<unknown
   try {
     response = await fetch(path, {
       method: 'GET',
+      credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${session.token}`,
+        ...authenticationHeaders(session, 'GET'),
       },
       signal: AbortSignal.any([signal, session.signal]),
     });

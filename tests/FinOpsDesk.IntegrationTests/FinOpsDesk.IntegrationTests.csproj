@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="FinOpsDesk.E2ETests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\backend\FinOpsDesk.Api\FinOpsDesk.Api.csproj" />
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />
   </ItemGroup>

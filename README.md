@@ -41,7 +41,7 @@ Override the connection string with configuration or environment variables. Do n
 Browser session routes, registered only for `ProductionCookie`:
 
 - `GET /api/session` is anonymous. It returns `authenticated`, `financialAccess`, and a CSRF request token. An authenticated cookie also returns `issuer`, `subject`, `displayName`, and `expiresAt` when the ticket has them. The response uses `Cache-Control: no-store`.
-- `POST /login` is anonymous and requires a valid anonymous CSRF token in `X-CSRF-Token`. It challenges the OpenID Connect handler. `returnUrl` must be a local path. An external URL is rejected. There is no GET login.
+- `POST /login` is anonymous and requires a valid anonymous CSRF token. The browser sends it as the form field `__RequestVerificationToken` and navigates to the provider. Other clients send `X-CSRF-Token`. It challenges the OpenID Connect handler. `returnUrl` must be a local path. An external URL is rejected. There is no GET login.
 - The callback path is `/signin-oidc`. The OpenID Connect handler redeems the authorization code. The browser redirect URI is `Authentication:Oidc:BrowserOrigin` plus the callback path. It is not taken from `Host` or `X-Forwarded-*`.
 - `POST /logout` requires the cookie session and a CSRF token issued for that session. It clears the local cookie and returns 204. It does not call the provider end-session endpoint. An anonymous CSRF token is not accepted after sign-in. There is no GET logout.
 
@@ -58,7 +58,7 @@ Unsafe `ProductionCookie` requests (`POST`, `PUT`, `PATCH`, and `DELETE`) on `/l
 
 The flow is authorization code with PKCE, scope `openid` only, `SaveTokens` false, and no `offline_access`. Provider-wide logout is not implemented: it would need an ID token hint, and tokens are not stored. Local logout does not depend on the provider. More than one API instance needs a shared ASP.NET Core Data Protection key ring. This increment does not add that key ring or a distributed session store.
 
-The React application and the Vite proxy are unchanged. Local browser sign-in still uses `DevelopmentJwt`. Routing `/login`, `/logout`, and `/signin-oidc` through the development proxy is a later increment. There is no production identity-provider deployment in this repository.
+Ordinary Vite development uses `DevelopmentJwt`. `npm run dev:cookie` uses the cookie session and proxies `/login`, `/logout`, and `/signin-oidc` as well as `/api` and `/health`. A production bundle always uses the cookie session. There is no production identity-provider deployment in this repository. The local startup, form sign-in, and sign-out limits are documented in [docs/frontend-development.md](docs/frontend-development.md).
 
 `OrganizationClaimType` defaults to `org_id` on the development JWT path. The trusted issuer must place the caller's organization id in that claim. Query strings, route values, bodies, and headers such as `X-Organization-Id` are not tenant selectors. A claim on a production cookie is not membership.
 
@@ -92,5 +92,5 @@ scripts\verify.cmd
 
 ## Local frontend
 
-The React application lives in `src/frontend`. Local setup, the development access token, HTTPS trust, and the invoice register are documented in [docs/frontend-development.md](docs/frontend-development.md). The local UI still uses `DevelopmentJwt`. It does not call the production cookie session.
+The React application lives in `src/frontend`. Local setup, the development access token, the cookie session, HTTPS trust, and the invoice register are documented in [docs/frontend-development.md](docs/frontend-development.md). The default local UI uses `DevelopmentJwt`. Cookie mode and a production build call `GET /api/session` and do not unlock financial routes.
 

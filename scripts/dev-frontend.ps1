@@ -1,5 +1,10 @@
 # Starts the Vite dev server with TLS verification against the public ASP.NET development certificate.
 # The certificate file is written outside the repository and contains no private key.
+# -Cookie selects the local OIDC cookie session. The default remains DevelopmentJwt.
+
+param(
+    [switch] $Cookie
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -41,7 +46,7 @@ $env:NODE_EXTRA_CA_CERTS = $certificatePath
 Write-Host "NODE_EXTRA_CA_CERTS=$certificatePath"
 Push-Location (Join-Path $repoRoot 'src\frontend')
 try {
-    npm run dev
+    if ($Cookie) { npm run dev:cookie } else { npm run dev }
 }
 finally {
     Pop-Location

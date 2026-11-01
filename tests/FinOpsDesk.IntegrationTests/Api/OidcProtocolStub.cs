@@ -46,28 +46,36 @@ internal sealed class OidcProtocolStub : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly RSA _signingKey;
     private readonly RSA _wrongKey;
+    private readonly string _redirectUri;
     private readonly ConcurrentDictionary<string, IssuedCode> _codes = new();
     private string _authority = "";
     private OidcTokenFault _nextFault = OidcTokenFault.None;
 
-    private OidcProtocolStub(WebApplication app, RSA signingKey, RSA wrongKey)
+    private OidcProtocolStub(WebApplication app, RSA signingKey, RSA wrongKey, string redirectUri)
     {
         _app = app;
         _signingKey = signingKey;
         _wrongKey = wrongKey;
+        _redirectUri = redirectUri;
     }
 
     public string Authority => _authority;
 
-    public static async Task<OidcProtocolStub> StartAsync()
+    public static Task<OidcProtocolStub> StartAsync()
     {
+        return StartAsync(RedirectUri);
+    }
+
+    public static async Task<OidcProtocolStub> StartAsync(string redirectUri)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(redirectUri);
         RSA signingKey = RSA.Create(2048);
         RSA wrongKey = RSA.Create(2048);
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
         WebApplication app = builder.Build();
-        OidcProtocolStub stub = new(app, signingKey, wrongKey);
+        OidcProtocolStub stub = new(app, signingKey, wrongKey, redirectUri);
         app.MapGet("/.well-known/openid-configuration", stub.Discovery);
         app.MapGet("/jwks", stub.Jwks);
         app.MapGet("/authorize", stub.Authorize);
@@ -134,7 +142,7 @@ internal sealed class OidcProtocolStub : IAsyncDisposable
         IQueryCollection query = httpContext.Request.Query;
         string? responseMode = query["response_mode"];
         if (!string.Equals(query["client_id"], ClientId, StringComparison.Ordinal)
-            || !string.Equals(query["redirect_uri"], RedirectUri, StringComparison.Ordinal)
+            || !string.Equals(query["redirect_uri"], _redirectUri, StringComparison.Ordinal)
             || !string.Equals(query["response_type"], "code", StringComparison.Ordinal)
             || (!string.IsNullOrEmpty(responseMode)
                 && !string.Equals(responseMode, "query", StringComparison.Ordinal))
@@ -162,7 +170,7 @@ internal sealed class OidcProtocolStub : IAsyncDisposable
             query["nonce"].ToString(),
             fault);
 
-        string location = RedirectUri
+        string location = _redirectUri
             + "?code=" + Uri.EscapeDataString(code)
             + "&state=" + Uri.EscapeDataString(query["state"].ToString());
         return Results.Redirect(location);

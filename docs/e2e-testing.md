@@ -56,7 +56,7 @@ CSV files are written under the user temp directory and deleted with the test ho
 
 ## JWT
 
-The API process environment is `E2E`, and `Authentication:Composition` is `DevelopmentJwt`. The process receives an ephemeral HMAC key through its environment. The test builds a short-lived JWT with issuer `https://finopsdesk.local`, audience `finopsdesk-e2e`, a non-empty `org_id`, and subject `e2e-operator`. The key is not the integration-test signing key. The test does not print the key or the token. Screenshots, video, and Playwright traces are off. Do not enable `DEBUG=pw:api` for this run, because Playwright would then log the token typed into the form. These tests do not start the production cookie composition, do not require OpenID Connect settings, and do not send a CSRF cookie.
+The financial API process environment is `E2E`, and `Authentication:Composition` is `DevelopmentJwt`. The process receives an ephemeral HMAC key through its environment. The test builds a short-lived JWT with issuer `https://finopsdesk.local`, audience `finopsdesk-e2e`, a non-empty `org_id`, and subject `e2e-operator`. The key is not the integration-test signing key. The test does not print the key or the token. Screenshots, video, and Playwright traces are off. Do not enable `DEBUG=pw:api` for this run, because Playwright would then log the token typed into the form. The financial tests do not start the production cookie composition, do not require OpenID Connect settings, and do not send a CSRF cookie. Vite for those tests stays on `npm run dev` and `127.0.0.1`.
 
 ## Failure output
 
@@ -71,6 +71,18 @@ A failure names the component that stopped: browser, Vite, API, database, or fix
 - `API health redirected`: the isolated process was given an HTTPS address. The E2E host sets `ASPNETCORE_URLS` to loopback HTTP and does not use a launch profile.
 - Vite exits immediately: port collision. The host passes `--strictPort` on a free loopback port and does not use port 7257.
 - The ordinary Development API on port 7257 is a different process. Leave `FINOPSDESK_E2E_API_ORIGIN` unset when you run `scripts/dev-frontend.ps1`.
+
+## Cookie sign-in smoke
+
+`CookieOidcBrowserTests` is a separate browser test in the same project and the same non-parallel collection. It is not a financial journey. It starts `OidcProtocolStub` with redirect URI `http://localhost:<vite port>/signin-oidc`, starts the API as `ProductionCookie` on `https://localhost:<api port>`, and starts Vite with `npm run dev:cookie` on `http://localhost:<vite port>`. The API listens on HTTPS because antiforgery will not issue a token for a non-SSL request. The host environment name is `Development` only so Kestrel can use the trusted development certificate; `Authentication:Composition` remains `ProductionCookie`. Vite receives the public certificate through `NODE_EXTRA_CA_CERTS` and keeps `secure: true`. The browser origin stays `http://localhost`. Chromium then signs in through a real form POST, returns through the proxied `/signin-oidc` callback, sees the restricted screen, and signs out locally. The test checks that the `__Host-finopsdesk-session` cookie is stored for `localhost`, that financial controls are absent, that no `Authorization: Bearer` header is sent, and that `/api/invoices` is forbidden before sign-out and unauthorized after it. Screenshots, video, and Playwright traces stay off. The test client secret is not written into the assertion text.
+
+Run it after the E2E build and Chromium install:
+
+```powershell
+dotnet test tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj --configuration Release --filter "FullyQualifiedName~CookieOidcBrowserTests"
+```
+
+The financial filter remains the way to run a money journey without this smoke. A passing E2E build is not this browser run.
 
 ## Phase 6I.2
 

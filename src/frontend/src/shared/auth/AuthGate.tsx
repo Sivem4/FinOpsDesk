@@ -1,17 +1,18 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 
-import { ProductionAuthNotice } from './ProductionAuthNotice';
+import { browserAuthMode } from './auth-mode';
+import { CookieAuthGate } from './CookieAuthGate';
 
 const DevAuthGate = import.meta.env.DEV ? lazy(() => import('./DevAuthGate')) : null;
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  if (!import.meta.env.DEV || DevAuthGate === null) {
-    return <ProductionAuthNotice />;
+  if (browserAuthMode() === 'jwt' && DevAuthGate !== null) {
+    return (
+      <Suspense fallback={null}>
+        <DevAuthGate>{children}</DevAuthGate>
+      </Suspense>
+    );
   }
 
-  return (
-    <Suspense fallback={null}>
-      <DevAuthGate>{children}</DevAuthGate>
-    </Suspense>
-  );
+  return <CookieAuthGate />;
 }
