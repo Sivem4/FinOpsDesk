@@ -1,3 +1,5 @@
+using FinOpsDesk.Modules.Access.Application;
+
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -24,10 +26,15 @@ internal static class BrowserSessionEndpoints
             .WithMetadata(new ProductionCsrfMetadata());
     }
 
-    private static async Task<IResult> GetSessionAsync(HttpContext httpContext, IAntiforgery antiforgery)
+    private static async Task<IResult> GetSessionAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        IOrganizationMembershipReader memberships,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
         ArgumentNullException.ThrowIfNull(antiforgery);
+        ArgumentNullException.ThrowIfNull(memberships);
 
         httpContext.Response.Headers.CacheControl = "no-store";
         AntiforgeryTokenSet tokens = antiforgery.GetAndStoreTokens(httpContext);
@@ -38,24 +45,70 @@ internal static class BrowserSessionEndpoints
             CookieAuthenticationDefaults.AuthenticationScheme);
         if (!authentication.Succeeded || httpContext.User.Identity?.IsAuthenticated != true)
         {
-            return Results.Json(new SessionResponse(
-                Authenticated: false,
-                FinancialAccess: false,
-                CsrfToken: csrfToken,
-                Issuer: null,
-                Subject: null,
-                DisplayName: null,
-                ExpiresAt: null));
+            return Results.Json(AnonymousSession(csrfToken));
+        }
+
+        string? issuer = httpContext.User.FindFirst("iss")?.Value;
+        string? subject = httpContext.User.FindFirst("sub")?.Value;
+        if (issuer is null || issuer.Length == 0 || subject is null || subject.Length == 0)
+        {
+            return MembershipUnavailable();
+        }
+
+        IReadOnlyList<OrganizationChoice> organizations;
+        try
+        {
+            organizations = await memberships.ListActiveAsync(issuer, subject, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return MembershipUnavailable();
+        }
+
+        SessionOrganizationResponse[] choices = new SessionOrganizationResponse[organizations.Count];
+        for (int index = 0; index < organizations.Count; index++)
+        {
+            OrganizationChoice choice = organizations[index];
+            choices[index] = new SessionOrganizationResponse(choice.OrganizationId, choice.DisplayName);
         }
 
         return Results.Json(new SessionResponse(
             Authenticated: true,
             FinancialAccess: false,
             CsrfToken: csrfToken,
-            Issuer: httpContext.User.FindFirst("iss")?.Value,
-            Subject: httpContext.User.FindFirst("sub")?.Value,
+            Issuer: issuer,
+            Subject: subject,
             DisplayName: httpContext.User.FindFirst("name")?.Value,
-            ExpiresAt: authentication.Properties?.ExpiresUtc));
+            ExpiresAt: authentication.Properties?.ExpiresUtc,
+            Organizations: choices));
+    }
+
+    private static SessionResponse AnonymousSession(string csrfToken)
+    {
+        return new SessionResponse(
+            Authenticated: false,
+            FinancialAccess: false,
+            CsrfToken: csrfToken,
+            Issuer: null,
+            Subject: null,
+            DisplayName: null,
+            ExpiresAt: null,
+            Organizations: []);
+    }
+
+    private static IResult MembershipUnavailable()
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "Organization membership could not be read.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "auth.membership.unavailable",
+            });
     }
 
     private static async Task<IResult> LoginAsync(HttpContext httpContext)
@@ -110,6 +163,8 @@ internal static class BrowserSessionEndpoints
         return value.Count == 0 || string.IsNullOrWhiteSpace(value.ToString());
     }
 
+    private sealed record SessionOrganizationResponse(Guid OrganizationId, string DisplayName);
+
     private sealed record SessionResponse(
         bool Authenticated,
         bool FinancialAccess,
@@ -117,5 +172,6 @@ internal static class BrowserSessionEndpoints
         string? Issuer,
         string? Subject,
         string? DisplayName,
-        DateTimeOffset? ExpiresAt);
+        DateTimeOffset? ExpiresAt,
+        IReadOnlyList<SessionOrganizationResponse> Organizations);
 }

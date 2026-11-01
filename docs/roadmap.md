@@ -312,6 +312,8 @@ Phase 7B.1 adds the confidential OpenID Connect authorization-code handler, `POS
 
 Phase 7B.2 connects the React application to that cookie session. Development stays on `DevelopmentJwt` unless Vite is started in `cookie` mode. A production build always uses the cookie session and does not include the development token screen. Sign-in is a browser form POST. The restricted screen is shown while `financialAccess` is false, and the financial workspace is not mounted. Local sign-out does not end the provider session. A recovery descriptor left in `sessionStorage` is not shown or submitted. Identity-aware recovery, beyond the organization id already stored in that descriptor, is deferred until membership exists and two identities can share one browser. Financial access stays closed.
 
+Phase 7C.1 persists organization membership in the Access module. A completed OIDC callback creates an application user for the exact issuer and subject and does not create a membership. `GET /api/session` can list active memberships. It does not select an active organization. Financial routes stay fail-closed. See ADR 0014.
+
 Still in this phase:
 
 - organization membership;
