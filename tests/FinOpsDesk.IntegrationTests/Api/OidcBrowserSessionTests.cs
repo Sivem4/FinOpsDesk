@@ -42,6 +42,7 @@ public sealed class OidcBrowserSessionTests : IDisposable
         using JsonDocument document = JsonDocument.Parse(body);
         Assert.False(document.RootElement.GetProperty("authenticated").GetBoolean());
         Assert.False(document.RootElement.GetProperty("financialAccess").GetBoolean());
+        Assert.Equal(0, document.RootElement.GetProperty("organizations").GetArrayLength());
         Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("csrfToken").GetString()));
         Assert.DoesNotContain(OidcProtocolStub.AccessTokenMarker, body, StringComparison.Ordinal);
     }
@@ -64,6 +65,7 @@ public sealed class OidcBrowserSessionTests : IDisposable
         using JsonDocument document = JsonDocument.Parse(body);
         Assert.True(document.RootElement.GetProperty("authenticated").GetBoolean());
         Assert.False(document.RootElement.GetProperty("financialAccess").GetBoolean());
+        Assert.Equal(JsonValueKind.Array, document.RootElement.GetProperty("organizations").ValueKind);
         Assert.Equal(_stub.Authority, document.RootElement.GetProperty("issuer").GetString());
         Assert.Equal(OidcProtocolStub.Subject, document.RootElement.GetProperty("subject").GetString());
         Assert.Equal(OidcProtocolStub.DisplayName, document.RootElement.GetProperty("displayName").GetString());

@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 
+using FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 
 using Microsoft.Data.SqlClient;
@@ -76,6 +77,8 @@ internal sealed class E2EDatabase : IAsyncDisposable
             RequireOwnedName(new SqlConnectionStringBuilder(database.ConnectionString).InitialCatalog);
             await using ReconciliationDbContext context = CreateContext(database.ConnectionString);
             await context.Database.MigrateAsync(cancellationToken);
+            await using AccessDbContext access = CreateAccessContext(database.ConnectionString);
+            await access.Database.MigrateAsync(cancellationToken);
         }
         catch
         {
@@ -100,6 +103,22 @@ internal sealed class E2EDatabase : IAsyncDisposable
             .Options;
 
         return new ReconciliationDbContext(options);
+    }
+
+    public static AccessDbContext CreateAccessContext(string connectionString)
+    {
+        SqlConnectionStringBuilder builder = new(connectionString);
+        RequireOwnedName(builder.InitialCatalog);
+
+        DbContextOptions<AccessDbContext> options = new DbContextOptionsBuilder<AccessDbContext>()
+            .UseSqlServer(
+                connectionString,
+                sqlServer => sqlServer.MigrationsHistoryTable(
+                    "__EFMigrationsHistory",
+                    "access"))
+            .Options;
+
+        return new AccessDbContext(options);
     }
 
     public async ValueTask DisposeAsync()

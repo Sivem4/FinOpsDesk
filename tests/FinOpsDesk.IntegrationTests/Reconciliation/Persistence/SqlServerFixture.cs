@@ -1,3 +1,4 @@
+using FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 using FinOpsDesk.Modules.Reconciliation;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 
@@ -61,6 +62,8 @@ public sealed class SqlServerFixture : IAsyncLifetime
         {
             await using ReconciliationDbContext context = CreateContext();
             await context.Database.MigrateAsync();
+            await using AccessDbContext access = CreateAccessContext();
+            await access.Database.MigrateAsync();
         }
         catch
         {
@@ -88,6 +91,27 @@ public sealed class SqlServerFixture : IAsyncLifetime
                 .Options;
 
         return new ReconciliationDbContext(options);
+    }
+
+    public AccessDbContext CreateAccessContext()
+    {
+        return CreateAccessContext(ConnectionString);
+    }
+
+    public static AccessDbContext CreateAccessContext(string connectionString)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        DbContextOptions<AccessDbContext> options =
+            new DbContextOptionsBuilder<AccessDbContext>()
+                .UseSqlServer(
+                    connectionString,
+                    sqlServer => sqlServer.MigrationsHistoryTable(
+                        "__EFMigrationsHistory",
+                        "access"))
+                .Options;
+
+        return new AccessDbContext(options);
     }
 
     public ServiceProvider CreateServiceProvider()

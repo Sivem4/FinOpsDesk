@@ -5,6 +5,7 @@
     <Project Path="src/backend/FinOpsDesk.SharedKernel/FinOpsDesk.SharedKernel.csproj" />
   </Folder>
   <Folder Name="/src/backend/Modules/">
+    <Project Path="src/backend/Modules/FinOpsDesk.Modules.Access/FinOpsDesk.Modules.Access.csproj" />
     <Project Path="src/backend/Modules/FinOpsDesk.Modules.Reconciliation/FinOpsDesk.Modules.Reconciliation.csproj" />
   </Folder>
   <Folder Name="/tests/">

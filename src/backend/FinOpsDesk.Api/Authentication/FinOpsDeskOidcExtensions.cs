@@ -1,9 +1,13 @@
 using System.Security.Claims;
 
+using FinOpsDesk.Modules.Access.Application;
+
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
@@ -133,6 +137,11 @@ internal static class FinOpsDeskOidcExtensions
             ReplacePrincipal(context);
             return Task.CompletedTask;
         };
+        // HandleRemoteAuthenticateAsync runs OnTokenValidated before
+        // ProtocolValidator.ValidateTokenResponse, which checks the nonce.
+        // RemoteAuthenticationHandler then raises TicketReceived and only
+        // afterwards calls SignInAsync for the application cookie.
+        options.Events.OnTicketReceived = ProvisionAuthenticatedIdentityAsync;
     }
 
     private static void ReplacePrincipal(TokenValidatedContext context)
@@ -172,5 +181,59 @@ internal static class FinOpsDeskOidcExtensions
             nameType: "name",
             roleType: null);
         context.Principal = new ClaimsPrincipal(identity);
+    }
+
+    private static async Task ProvisionAuthenticatedIdentityAsync(TicketReceivedContext context)
+    {
+        string? issuer = context.Principal?.FindFirst("iss")?.Value;
+        string? subject = context.Principal?.FindFirst("sub")?.Value;
+        if (issuer is null || issuer.Length == 0 || subject is null || subject.Length == 0)
+        {
+            await RejectSignInAsync(context, StatusCodes.Status400BadRequest, "auth.identity.invalid");
+            return;
+        }
+
+        IExternalIdentityProvisioner provisioner = context.HttpContext.RequestServices
+            .GetRequiredService<IExternalIdentityProvisioner>();
+
+        try
+        {
+            ExternalIdentityProvision provision = await provisioner.ProvisionAsync(
+                issuer,
+                subject,
+                context.Principal?.FindFirst("name")?.Value,
+                context.HttpContext.RequestAborted);
+
+            if (!provision.Allowed)
+            {
+                await RejectSignInAsync(context, StatusCodes.Status403Forbidden, "auth.user.disabled");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (ArgumentException)
+        {
+            await RejectSignInAsync(context, StatusCodes.Status400BadRequest, "auth.identity.invalid");
+        }
+        catch (Exception)
+        {
+            await RejectSignInAsync(context, StatusCodes.Status503ServiceUnavailable, "auth.identity.unavailable");
+        }
+    }
+
+    private static async Task RejectSignInAsync(TicketReceivedContext context, int statusCode, string code)
+    {
+        context.HandleResponse();
+        context.Response.Headers.CacheControl = "no-store";
+        await Results.Problem(
+                statusCode: statusCode,
+                title: "Sign-in was not completed.",
+                extensions: new Dictionary<string, object?>
+                {
+                    ["code"] = code,
+                })
+            .ExecuteAsync(context.HttpContext);
     }
 }

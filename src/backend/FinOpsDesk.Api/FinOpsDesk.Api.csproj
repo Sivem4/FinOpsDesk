@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Modules\FinOpsDesk.Modules.Access\FinOpsDesk.Modules.Access.csproj" />
     <ProjectReference Include="..\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />
   </ItemGroup>
 

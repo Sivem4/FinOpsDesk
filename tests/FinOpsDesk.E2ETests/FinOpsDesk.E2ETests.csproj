@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\FinOpsDesk.IntegrationTests\FinOpsDesk.IntegrationTests.csproj" />
     <ProjectReference Include="..\..\src\backend\FinOpsDesk.Api\FinOpsDesk.Api.csproj" />
+    <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Access\FinOpsDesk.Modules.Access.csproj" />
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />
   </ItemGroup>
 

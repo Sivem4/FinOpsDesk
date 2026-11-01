@@ -1,6 +1,7 @@
 using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.Api.Authorization;
 using FinOpsDesk.Api.Security;
+using FinOpsDesk.Modules.Access;
 using FinOpsDesk.Modules.Reconciliation;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Presentation;
@@ -23,6 +24,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
         "Connection string 'FinOpsDesk' is not configured.");
 }
 
+builder.Services.AddAccessModule(connectionString);
 builder.Services.AddReconciliationModule(connectionString);
 
 var app = builder.Build();
