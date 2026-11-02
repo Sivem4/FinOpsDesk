@@ -502,6 +502,11 @@ public sealed class BrowserSessionRevocationTests : IDisposable
         List<OrganizationMembership> memberships = await context.OrganizationMemberships
             .Where(membership => membership.UserId == userId && organizationIds.Contains(membership.OrganizationId))
             .ToListAsync();
+        List<Guid> membershipIds = memberships.Select(membership => membership.Id).ToList();
+        List<OrganizationRoleAssignment> assignments = await context.OrganizationRoleAssignments
+            .Where(assignment => membershipIds.Contains(assignment.MembershipId))
+            .ToListAsync();
+        context.OrganizationRoleAssignments.RemoveRange(assignments);
         context.OrganizationMemberships.RemoveRange(memberships);
         List<Organization> organizations = await context.Organizations
             .Where(organization => organizationIds.Contains(organization.Id))

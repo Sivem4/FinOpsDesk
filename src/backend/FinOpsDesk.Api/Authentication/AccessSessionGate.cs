@@ -1,6 +1,7 @@
 using System.Security.Claims;
 
 using FinOpsDesk.Modules.Access.Application;
+using FinOpsDesk.Modules.Access.Domain;
 
 using Microsoft.Extensions.Logging;
 
@@ -11,28 +12,50 @@ internal sealed class AccessSessionGate
 {
     private readonly IOrganizationMembershipReader _memberships;
     private readonly IBrowserSessionStore _sessions;
+    private readonly IOrganizationRoleReader _roles;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AccessSessionGate> _logger;
     private Task<AccessSessionSnapshot>? _pending;
+    private AccessPermissionResolution? _permissions;
 
     public AccessSessionGate(
         IOrganizationMembershipReader memberships,
         IBrowserSessionStore sessions,
+        IOrganizationRoleReader roles,
         TimeProvider timeProvider,
         ILogger<AccessSessionGate> logger)
     {
         ArgumentNullException.ThrowIfNull(memberships);
         ArgumentNullException.ThrowIfNull(sessions);
+        ArgumentNullException.ThrowIfNull(roles);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         _memberships = memberships;
         _sessions = sessions;
+        _roles = roles;
         _timeProvider = timeProvider;
         _logger = logger;
     }
 
     public AccessSessionSnapshot? Current { get; private set; }
+
+    // Memoized for this request only. A missing snapshot is not cached, so validation can still run.
+    public async Task<AccessPermissionResolution> ResolvePermissionsAsync(CancellationToken cancellationToken)
+    {
+        if (Current is null)
+        {
+            return AccessPermissionResolution.Untrusted("session-not-resolved");
+        }
+
+        if (_permissions is not null)
+        {
+            return _permissions;
+        }
+
+        _permissions = await ResolvePermissionsUncachedAsync(cancellationToken);
+        return _permissions;
+    }
 
     public async Task<AccessSessionSnapshot> ResolveAsync(
         ClaimsPrincipal principal,
@@ -129,8 +152,8 @@ internal sealed class AccessSessionGate
         {
             string reason = exception is InvalidOperationException invalid
                 && invalid.Message is "Identity key collision." or "Application user session stamp is missing."
-                ? "inconsistent-identity"
-                : "database";
+                    ? "inconsistent-identity"
+                    : "database";
             _logger.LogWarning(
                 "Application cookie validation did not complete. Reason: {Reason}",
                 reason);
@@ -227,5 +250,42 @@ internal sealed class AccessSessionGate
         }
 
         return true;
+    }
+
+    private async Task<AccessPermissionResolution> ResolvePermissionsUncachedAsync(CancellationToken cancellationToken)
+    {
+        AccessSessionSnapshot snapshot = Current ?? throw new InvalidOperationException("Session snapshot is missing.");
+        if (snapshot.Kind != AccessSessionKind.Active)
+        {
+            return AccessPermissionResolution.Untrusted(snapshot.Reason);
+        }
+
+        if (snapshot.ActiveOrganization is null || snapshot.UserId is not Guid userId)
+        {
+            return AccessPermissionResolution.Resolved(OrganizationRolePermissions.Empty, "no-active-organization");
+        }
+
+        try
+        {
+            IReadOnlyList<OrganizationRole> roles = await _roles.ListActiveAsync(
+                userId,
+                snapshot.ActiveOrganization.OrganizationId,
+                cancellationToken);
+            return AccessPermissionResolution.Resolved(OrganizationRolePermissions.Union(roles), "resolved");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            string reason = exception is InvalidOperationException { Message: "Organization role assignment is inconsistent." }
+                ? "inconsistent-role"
+                : "database";
+            _logger.LogWarning(
+                "Organization role resolution did not complete. Reason: {Reason}",
+                reason);
+            return AccessPermissionResolution.Unavailable(reason);
+        }
     }
 }

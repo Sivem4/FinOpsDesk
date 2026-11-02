@@ -3,6 +3,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="FinOpsDesk.IntegrationTests" />
     <InternalsVisibleTo Include="FinOpsDesk.UnitTests" />
+    <InternalsVisibleTo Include="FinOpsDesk.AccessBootstrap" />
   </ItemGroup>
 
   <ItemGroup>

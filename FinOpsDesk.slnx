@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/" />
   <Folder Name="/src/backend/">
+    <Project Path="src/backend/FinOpsDesk.AccessBootstrap/FinOpsDesk.AccessBootstrap.csproj" />
     <Project Path="src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj" />
     <Project Path="src/backend/FinOpsDesk.SharedKernel/FinOpsDesk.SharedKernel.csproj" />
   </Folder>

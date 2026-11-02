@@ -320,11 +320,12 @@ Phase 7C.3 shows that choice in the cookie screen. The browser does not treat on
 
 Phase 7D.1 persists one `BrowserSession` per completed OIDC login and copies its id to `finopsdesk_sid`. Ordinary logout revokes that row before HTTP 204 and does not rotate `SessionStamp` or sign out another browser. A cookie without that id is rejected. Organization selection keeps the same id and the original eight-hour deadline, so a late `Set-Cookie` cannot revive a revoked row. SQL unavailability stays HTTP 503 and does not clear an unexpired cookie. Financial routes stay fail-closed. See ADR 0016.
 
+Phase 7D.2 stores organization-scoped role assignments and a fixed permission map. A membership may hold several roles. Their permissions are the union, and none means an empty set. `OrganizationAdmin` can manage membership and roles and does not receive financial permissions. Login does not grant a role. The first administrator is assigned by the `FinOpsDesk.AccessBootstrap` console, which requires an explicit `--operator` id and is not an HTTP endpoint. Cookie validation does not read the role table. Permission resolution is a separate request-scoped step. Financial routes stay fail-closed. See ADR 0017.
+
 Still in this phase:
 
 - financial authorization of the selected organization;
 - identity-bound financial recovery, or recovery remaining disabled;
-- roles;
 - policies;
 - resource-based authorization;
 - cross-organization integration tests;

@@ -22,6 +22,7 @@ internal sealed class VerifiedAccessProbeStartupFilter : IStartupFilter
     }
 }
 
+// Registered only by integration-test startup filters. The API host does not map this path.
 internal sealed class VerifiedAccessProbeMiddleware
 {
     public const string Path = "/api/test/verified-access";
@@ -68,7 +69,9 @@ internal sealed class VerifiedAccessProbeMiddleware
         }
 
         AccessSessionSnapshot? snapshot = sessions.Current;
-        if (snapshot?.Kind == AccessSessionKind.Unavailable)
+        AccessPermissionResolution permissions = await sessions.ResolvePermissionsAsync(context.RequestAborted);
+        if (snapshot?.Kind == AccessSessionKind.Unavailable
+            || permissions.Kind == AccessPermissionResolutionKind.Unavailable)
         {
             context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         }
@@ -76,9 +79,15 @@ internal sealed class VerifiedAccessProbeMiddleware
         await context.Response.WriteAsJsonAsync(new
         {
             status = snapshot?.Kind.ToString() ?? "none",
+            permissionStatus = permissions.Kind.ToString(),
+            permissionReason = permissions.Reason,
             contextThrew,
             actorId,
             organizationId,
+            permissions = permissions.Permissions
+                .Select(permission => permission.Value)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray(),
         });
     }
 }

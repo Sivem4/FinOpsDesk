@@ -24,9 +24,14 @@ public static class AccessModule
                     "access")));
 
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<IOrganizationRoleMutationSync, NoOrganizationRoleMutationSync>();
         services.AddScoped<IExternalIdentityProvisioner, ExternalIdentityProvisioner>();
         services.AddScoped<IOrganizationMembershipReader, OrganizationMembershipReader>();
         services.AddScoped<IBrowserSessionStore, BrowserSessionStore>();
+        services.AddScoped<OrganizationRoleStore>();
+        services.AddScoped<IOrganizationRoleStore>(services => services.GetRequiredService<OrganizationRoleStore>());
+        services.AddScoped<IOrganizationRoleReader>(services => services.GetRequiredService<OrganizationRoleStore>());
+        services.AddScoped<IOrganizationRoleAdministration, OrganizationRoleAdministration>();
         return services;
     }
 }

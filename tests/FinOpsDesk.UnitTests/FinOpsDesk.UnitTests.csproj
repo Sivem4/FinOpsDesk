@@ -17,6 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\backend\FinOpsDesk.AccessBootstrap\FinOpsDesk.AccessBootstrap.csproj" />
+    <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Access\FinOpsDesk.Modules.Access.csproj" />
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />
     <ProjectReference Include="..\..\src\backend\FinOpsDesk.SharedKernel\FinOpsDesk.SharedKernel.csproj" />
   </ItemGroup>
