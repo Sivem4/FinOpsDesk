@@ -37,6 +37,8 @@ describe('request authentication', () => {
         subject: 'oidc-operator',
         displayName: null,
         expiresAt: null,
+        organizations: [],
+        activeOrganization: null,
       },
       false,
     );
@@ -57,6 +59,8 @@ describe('request authentication', () => {
         subject: 'oidc-operator',
         displayName: null,
         expiresAt: null,
+        organizations: [],
+        activeOrganization: null,
       },
       false,
     );
@@ -96,6 +100,8 @@ describe('request authentication', () => {
         subject: null,
         displayName: null,
         expiresAt: null,
+        organizations: [],
+        activeOrganization: null,
       },
       false,
     );

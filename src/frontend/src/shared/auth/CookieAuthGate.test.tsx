@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +44,18 @@ describe('cookie session gate', () => {
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.queryByText('Invoice workspace')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Development access token')).not.toBeInTheDocument();
+  });
+
+  it('shows the sign-in form after the development session effect runs twice', async () => {
+    server.use(http.get('/api/session', () => HttpResponse.json(anonymousBody())));
+    render(
+      <StrictMode>
+        <CookieAuthGate />
+      </StrictMode>,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.queryByText('Checking the browser session')).not.toBeInTheDocument();
   });
 
   it('posts the anonymous CSRF token in a browser form', async () => {
@@ -317,6 +330,8 @@ describe('cookie session gate', () => {
         subject: 'oidc-operator',
         displayName: 'Ada Operator',
         expiresAt: null,
+        organizations: [],
+        activeOrganization: null,
       },
       true,
     );
@@ -377,6 +392,8 @@ function anonymousBody(csrfToken = 'csrf-anonymous') {
     subject: null,
     displayName: null,
     expiresAt: null,
+    organizations: [],
+    activeOrganization: null,
   };
 }
 
@@ -389,6 +406,8 @@ function restrictedBody() {
     subject: 'oidc-operator',
     displayName: 'Ada Operator',
     expiresAt: '2099-01-01T00:00:00.000Z',
+    organizations: [],
+    activeOrganization: null,
   };
 }
 
