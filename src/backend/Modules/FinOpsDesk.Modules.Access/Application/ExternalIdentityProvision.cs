@@ -9,31 +9,46 @@ public enum ExternalIdentityProvisionStatus
 
 public sealed class ExternalIdentityProvision
 {
-    private ExternalIdentityProvision(ExternalIdentityProvisionStatus status, Guid userId)
+    private ExternalIdentityProvision(
+        ExternalIdentityProvisionStatus status,
+        Guid userId,
+        Guid sessionStamp)
     {
         Status = status;
         UserId = userId;
+        SessionStamp = sessionStamp;
     }
 
     public ExternalIdentityProvisionStatus Status { get; }
 
     public Guid UserId { get; }
 
+    public Guid SessionStamp { get; }
+
     public bool Allowed =>
         Status is ExternalIdentityProvisionStatus.Created or ExternalIdentityProvisionStatus.Reused;
 
-    public static ExternalIdentityProvision Created(Guid userId)
+    public static ExternalIdentityProvision Created(Guid userId, Guid sessionStamp)
     {
-        return new ExternalIdentityProvision(ExternalIdentityProvisionStatus.Created, userId);
+        return new ExternalIdentityProvision(
+            ExternalIdentityProvisionStatus.Created,
+            userId,
+            sessionStamp);
     }
 
-    public static ExternalIdentityProvision Reused(Guid userId)
+    public static ExternalIdentityProvision Reused(Guid userId, Guid sessionStamp)
     {
-        return new ExternalIdentityProvision(ExternalIdentityProvisionStatus.Reused, userId);
+        return new ExternalIdentityProvision(
+            ExternalIdentityProvisionStatus.Reused,
+            userId,
+            sessionStamp);
     }
 
-    public static ExternalIdentityProvision Disabled(Guid userId)
+    public static ExternalIdentityProvision Disabled(Guid userId, Guid sessionStamp)
     {
-        return new ExternalIdentityProvision(ExternalIdentityProvisionStatus.Disabled, userId);
+        return new ExternalIdentityProvision(
+            ExternalIdentityProvisionStatus.Disabled,
+            userId,
+            sessionStamp);
     }
 }

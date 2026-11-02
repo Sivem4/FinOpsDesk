@@ -1,9 +1,11 @@
 using System.Security.Claims;
 
+using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.Api.Security;
 using FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit;
 
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FinOpsDesk.IntegrationTests.Api;
 
@@ -77,7 +79,9 @@ public sealed class HttpContextCurrentActorContextTests
             User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "operator-a")])),
         };
         var context = new HttpContextCurrentActorContext(
-            new HttpContextAccessor { HttpContext = httpContext });
+            new HttpContextAccessor { HttpContext = httpContext },
+            DevelopmentJwtState(),
+            new ServiceCollection().BuildServiceProvider());
 
         bool found = context.TryGetActorId(out _);
 
@@ -96,7 +100,9 @@ public sealed class HttpContextCurrentActorContextTests
         httpContext.Request.QueryString = new QueryString("?actorId=from-query");
         httpContext.Request.Headers["X-Actor-Id"] = "from-header";
         var context = new HttpContextCurrentActorContext(
-            new HttpContextAccessor { HttpContext = httpContext });
+            new HttpContextAccessor { HttpContext = httpContext },
+            DevelopmentJwtState(),
+            new ServiceCollection().BuildServiceProvider());
 
         bool found = context.TryGetActorId(out _);
 
@@ -120,6 +126,17 @@ public sealed class HttpContextCurrentActorContextTests
         httpContext.Request.Headers["X-Actor-Id"] = "from-header";
 
         return new HttpContextCurrentActorContext(
-            new HttpContextAccessor { HttpContext = httpContext });
+            new HttpContextAccessor { HttpContext = httpContext },
+            DevelopmentJwtState(),
+            new ServiceCollection().BuildServiceProvider());
+    }
+
+    private static AuthenticationCompositionState DevelopmentJwtState()
+    {
+        return new AuthenticationCompositionState
+        {
+            UsesProductionCookie = false,
+            ProductionFinancialAccessFailClosed = false,
+        };
     }
 }

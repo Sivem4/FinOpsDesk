@@ -33,5 +33,5 @@ Positive:
 Negative:
 
 - active organization selection, per-request revocation, and identity-scoped recovery remain later Phase 7C work;
-- a cookie issued before a user is disabled is not revoked until that later check;
+- a cookie issued before a user is disabled is not revoked by this decision; ADR 0015 adds that request-time check;
 - more than one API instance still needs a shared Data Protection key ring, which this decision does not add.

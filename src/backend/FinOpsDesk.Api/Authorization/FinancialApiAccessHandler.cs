@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace FinOpsDesk.Api.Authorization;
 
-// ProductionCookie does not accept org_id as membership. The requirement stays
-// failed until Phase 7C replaces this gate with a membership check.
+// ProductionCookie stays closed through organization selection. Phase 7D
+// replaces this gate. A selected membership is not financial access.
 internal sealed class FinancialApiAccessHandler
     : AuthorizationHandler<FinancialApiAccessRequirement>
 {

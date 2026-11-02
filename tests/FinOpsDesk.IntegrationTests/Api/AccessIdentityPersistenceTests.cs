@@ -124,9 +124,28 @@ public sealed class AccessIdentityPersistenceTests
             Assert.InRange(await ScalarAsync(
                 database.ConnectionString,
                 "SELECT COUNT(*) FROM reconciliation.__EFMigrationsHistory"), 1, int.MaxValue);
-            Assert.Equal(1, await ScalarAsync(
+            Assert.Equal(2, await ScalarAsync(
                 database.ConnectionString,
                 "SELECT COUNT(*) FROM access.__EFMigrationsHistory"));
+            Assert.Equal(1, await ScalarAsync(
+                database.ConnectionString,
+                """
+                SELECT COUNT(*)
+                FROM sys.columns
+                WHERE object_id = OBJECT_ID(N'access.ApplicationUsers')
+                  AND name = N'SessionStamp'
+                """));
+            Assert.Equal(0, await ScalarAsync(
+                database.ConnectionString,
+                """
+                SELECT COUNT(*)
+                FROM sys.default_constraints AS defaultConstraint
+                INNER JOIN sys.columns AS columnDefinition
+                    ON defaultConstraint.parent_object_id = columnDefinition.object_id
+                   AND defaultConstraint.parent_column_id = columnDefinition.column_id
+                WHERE columnDefinition.object_id = OBJECT_ID(N'access.ApplicationUsers')
+                  AND columnDefinition.name = N'SessionStamp'
+                """));
             Assert.Equal(0, await ScalarAsync(
                 database.ConnectionString,
                 """

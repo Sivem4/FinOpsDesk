@@ -30,6 +30,11 @@ internal sealed class ExternalIdentityProvisioner : IExternalIdentityProvisioner
         ApplicationUser? existing = await FindAsync(identityKey, cancellationToken);
         if (existing is not null)
         {
+            if (existing.Status == ApplicationUserStatus.Active && existing.SessionStamp == Guid.Empty)
+            {
+                existing = await ReplaceEmptyStampAsync(existing.Id, cancellationToken);
+            }
+
             return ResolveExisting(existing, issuer, subject);
         }
 
@@ -44,7 +49,7 @@ internal sealed class ExternalIdentityProvisioner : IExternalIdentityProvisioner
         try
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return ExternalIdentityProvision.Created(created.Id);
+            return ExternalIdentityProvision.Created(created.Id, created.SessionStamp);
         }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception))
         {
@@ -53,6 +58,11 @@ internal sealed class ExternalIdentityProvisioner : IExternalIdentityProvisioner
             if (winner is null)
             {
                 throw;
+            }
+
+            if (winner.Status == ApplicationUserStatus.Active && winner.SessionStamp == Guid.Empty)
+            {
+                winner = await ReplaceEmptyStampAsync(winner.Id, cancellationToken);
             }
 
             return ResolveExisting(winner, issuer, subject);
@@ -73,10 +83,19 @@ internal sealed class ExternalIdentityProvisioner : IExternalIdentityProvisioner
 
         if (existing.Status != ApplicationUserStatus.Active)
         {
-            return ExternalIdentityProvision.Disabled(existing.Id);
+            return ExternalIdentityProvision.Disabled(existing.Id, existing.SessionStamp);
         }
 
-        return ExternalIdentityProvision.Reused(existing.Id);
+        return ExternalIdentityProvision.Reused(existing.Id, existing.SessionStamp);
+    }
+
+    private async Task<ApplicationUser> ReplaceEmptyStampAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        ApplicationUser tracked = await _dbContext.ApplicationUsers
+            .SingleAsync(user => user.Id == userId, cancellationToken);
+        tracked.RotateSessionStamp();
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return tracked;
     }
 
     private Task<ApplicationUser?> FindAsync(byte[] identityKey, CancellationToken cancellationToken)

@@ -20,6 +20,10 @@ public sealed class ApplicationUser
 
     public ApplicationUserStatus Status { get; private set; }
 
+    // Binds an application cookie to this row. The Active to Disabled transition
+    // rotates it. Restore does not put the previous value back.
+    public Guid SessionStamp { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     private ApplicationUser()
@@ -46,18 +50,30 @@ public sealed class ApplicationUser
             Subject = subject,
             DisplayName = AcceptDisplayName(displayName),
             Status = ApplicationUserStatus.Active,
+            SessionStamp = Guid.NewGuid(),
             CreatedAt = createdAt,
         };
     }
 
     internal void Disable()
     {
+        if (Status == ApplicationUserStatus.Disabled)
+        {
+            return;
+        }
+
         Status = ApplicationUserStatus.Disabled;
+        SessionStamp = Guid.NewGuid();
     }
 
     internal void Restore()
     {
         Status = ApplicationUserStatus.Active;
+    }
+
+    internal void RotateSessionStamp()
+    {
+        SessionStamp = Guid.NewGuid();
     }
 
     private static string? AcceptDisplayName(string? displayName)

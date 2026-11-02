@@ -43,6 +43,7 @@ internal static class FinOpsDeskOidcExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddSingleton<IAntiforgeryAdditionalDataProvider, ExternalIdentityAntiforgeryDataProvider>();
         services.AddAntiforgery(options =>
         {
             options.HeaderName = FinOpsDeskCsrf.HeaderName;
@@ -207,7 +208,15 @@ internal static class FinOpsDeskOidcExtensions
             if (!provision.Allowed)
             {
                 await RejectSignInAsync(context, StatusCodes.Status403Forbidden, "auth.user.disabled");
+                return;
             }
+
+            context.Principal = CookieSessionPrincipal.Create(
+                issuer,
+                subject,
+                context.Principal?.FindFirst("name")?.Value,
+                provision.SessionStamp,
+                organizationId: null);
         }
         catch (OperationCanceledException)
         {
