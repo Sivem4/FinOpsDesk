@@ -46,7 +46,8 @@ internal sealed class E2EViteProcess : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(apiOrigin);
         ArgumentNullException.ThrowIfNull(launch);
         string viteBinary = Path.Combine(RepoPaths.FrontendDirectory, "node_modules", "vite", "package.json");
-        if (!File.Exists(viteBinary))
+        string viteEntry = Path.Combine(RepoPaths.FrontendDirectory, "node_modules", "vite", "bin", "vite.js");
+        if (!File.Exists(viteBinary) || !File.Exists(viteEntry))
         {
             throw new InvalidOperationException(
                 "Vite is not installed. From src/frontend run: npm ci");
@@ -57,7 +58,7 @@ internal sealed class E2EViteProcess : IAsyncDisposable
         E2EProcessLog log = new();
         ProcessStartInfo start = new()
         {
-            FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "npm",
+            FileName = OperatingSystem.IsWindows() ? "node" : "npm",
             WorkingDirectory = RepoPaths.FrontendDirectory,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -66,12 +67,22 @@ internal sealed class E2EViteProcess : IAsyncDisposable
         };
 
         string script = launch.CookieMode ? "dev:cookie" : "dev";
-        string npmArguments = $"npm run {script} -- --host {launch.Host} --port {port} --strictPort";
         if (OperatingSystem.IsWindows())
         {
-            start.ArgumentList.Add("/d");
-            start.ArgumentList.Add("/c");
-            start.ArgumentList.Add(npmArguments);
+            // The retained handle is the Node process that runs Vite. A port or a
+            // command-line fragment is not used to find or stop another process.
+            start.ArgumentList.Add(viteEntry);
+            if (launch.CookieMode)
+            {
+                start.ArgumentList.Add("--mode");
+                start.ArgumentList.Add("cookie");
+            }
+
+            start.ArgumentList.Add("--host");
+            start.ArgumentList.Add(launch.Host);
+            start.ArgumentList.Add("--port");
+            start.ArgumentList.Add(port.ToString());
+            start.ArgumentList.Add("--strictPort");
         }
         else
         {

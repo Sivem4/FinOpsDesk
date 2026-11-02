@@ -4,6 +4,11 @@ import { queryClient } from './query-client';
 
 export type SessionReason = 'expired' | 'unauthorized' | 'forbidden' | null;
 
+export interface BrowserOrganization {
+  organizationId: string;
+  displayName: string;
+}
+
 export interface CookieSessionFields {
   authenticated: boolean;
   csrfToken: string | null;
@@ -11,6 +16,8 @@ export interface CookieSessionFields {
   subject: string | null;
   displayName: string | null;
   expiresAt: number | null;
+  organizations: BrowserOrganization[];
+  activeOrganization: BrowserOrganization | null;
 }
 
 export interface SessionSnapshot extends CookieSessionFields {
@@ -108,6 +115,8 @@ export class SessionStore {
       issuer: null,
       subject: null,
       displayName: null,
+      organizations: [],
+      activeOrganization: null,
     };
   }
 

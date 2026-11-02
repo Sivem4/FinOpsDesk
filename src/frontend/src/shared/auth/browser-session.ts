@@ -1,6 +1,7 @@
 import { isAbortError } from '../api/errors';
 import {
   sessionStore,
+  type BrowserOrganization,
   type CookieSessionFields,
   type SessionSnapshot,
 } from '../api/session-store';
@@ -10,6 +11,25 @@ export type BrowserSessionLoad =
   | { kind: 'invalid' }
   | { kind: 'network' }
   | { kind: 'http'; status: number };
+
+const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const emptyGuid = '00000000-0000-0000-0000-000000000000';
+const maximumOrganizationNameLength = 200;
+
+let sessionReadGeneration = 0;
+
+export function beginSessionRead(): number {
+  sessionReadGeneration += 1;
+  return sessionReadGeneration;
+}
+
+export function isCurrentSessionRead(readId: number): boolean {
+  return readId === sessionReadGeneration;
+}
+
+export function resetSessionReadsForTests(): void {
+  sessionReadGeneration = 0;
+}
 
 export async function loadBrowserSession(signal: AbortSignal): Promise<BrowserSessionLoad> {
   let response: Response;
@@ -54,6 +74,18 @@ export function parseBrowserSession(body: unknown): BrowserSessionLoad {
     return { kind: 'invalid' };
   }
 
+  const organizations = readOrganizations(body.organizations);
+
+  if (organizations === 'invalid') {
+    return { kind: 'invalid' };
+  }
+
+  const activeOrganization = readActiveOrganization(body.activeOrganization, organizations);
+
+  if (activeOrganization === 'invalid') {
+    return { kind: 'invalid' };
+  }
+
   if (body.authenticated) {
     if (
       typeof body.issuer !== 'string'
@@ -83,11 +115,20 @@ export function parseBrowserSession(body: unknown): BrowserSessionLoad {
         subject: body.subject,
         displayName: body.displayName === null || body.displayName.length === 0 ? null : body.displayName,
         expiresAt,
+        organizations,
+        activeOrganization,
       },
     };
   }
 
-  if (body.issuer !== null || body.subject !== null || body.displayName !== null || body.expiresAt !== null) {
+  if (
+    body.issuer !== null
+    || body.subject !== null
+    || body.displayName !== null
+    || body.expiresAt !== null
+    || organizations.length !== 0
+    || activeOrganization !== null
+  ) {
     return { kind: 'invalid' };
   }
 
@@ -100,14 +141,20 @@ export function parseBrowserSession(body: unknown): BrowserSessionLoad {
       subject: null,
       displayName: null,
       expiresAt: null,
+      organizations: [],
+      activeOrganization: null,
     },
   };
 }
 
-export function commitBrowserSession(observedEpoch: number, next: CookieSessionFields): 'applied' | 'stale' {
+export function commitBrowserSession(
+  observedEpoch: number,
+  observedRead: number,
+  next: CookieSessionFields,
+): 'applied' | 'stale' {
   const current = sessionStore.getSnapshot();
 
-  if (current.epoch !== observedEpoch) {
+  if (current.epoch !== observedEpoch || !isCurrentSessionRead(observedRead)) {
     return 'stale';
   }
 
@@ -129,10 +176,88 @@ export function readProblemCode(body: string): string | null {
   }
 }
 
-function sameBrowserIdentity(current: SessionSnapshot, next: CookieSessionFields): boolean {
+export function sameBrowserIdentity(current: SessionSnapshot, next: CookieSessionFields): boolean {
   return current.authenticated === next.authenticated
     && current.issuer === next.issuer
-    && current.subject === next.subject;
+    && current.subject === next.subject
+    && activeOrganizationId(current) === activeOrganizationId(next);
+}
+
+function activeOrganizationId(session: { activeOrganization: BrowserOrganization | null }): string | null {
+  return session.activeOrganization?.organizationId ?? null;
+}
+
+function readOrganizations(value: unknown): BrowserOrganization[] | 'invalid' {
+  if (!Array.isArray(value)) {
+    return 'invalid';
+  }
+
+  const organizations: BrowserOrganization[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of value) {
+    const organization = readOrganization(entry);
+
+    if (organization === null || seen.has(organization.organizationId)) {
+      return 'invalid';
+    }
+
+    seen.add(organization.organizationId);
+    organizations.push(organization);
+  }
+
+  return organizations;
+}
+
+function readActiveOrganization(
+  value: unknown,
+  organizations: BrowserOrganization[],
+): BrowserOrganization | null | 'invalid' {
+  if (value === null) {
+    return null;
+  }
+
+  const active = readOrganization(value);
+
+  if (active === null) {
+    return 'invalid';
+  }
+
+  const choice = organizations.find((organization) => organization.organizationId === active.organizationId);
+
+  if (choice === undefined || choice.displayName !== active.displayName) {
+    return 'invalid';
+  }
+
+  return choice;
+}
+
+function readOrganization(value: unknown): BrowserOrganization | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const organizationId = canonicalGuid(value.organizationId);
+
+  if (
+    organizationId === null
+    || typeof value.displayName !== 'string'
+    || value.displayName.length === 0
+    || value.displayName.length > maximumOrganizationNameLength
+  ) {
+    return null;
+  }
+
+  return { organizationId, displayName: value.displayName };
+}
+
+function canonicalGuid(value: unknown): string | null {
+  if (typeof value !== 'string' || !guidPattern.test(value)) {
+    return null;
+  }
+
+  const canonical = value.toLowerCase();
+  return canonical === emptyGuid ? null : canonical;
 }
 
 function readExpiresAt(value: unknown): number | null | 'invalid' {
