@@ -314,9 +314,11 @@ Phase 7B.2 connects the React application to that cookie session. Development st
 
 Phase 7C.1 persists organization membership in the Access module. A completed OIDC callback creates an application user for the exact issuer and subject and does not create a membership. `GET /api/session` can list active memberships. It does not select an active organization. Financial routes stay fail-closed. See ADR 0014.
 
+Phase 7C.2 validates that membership on each cookie request. `finopsdesk_org` remembers an explicit `POST /api/session/organization` choice and is not itself authorization. A disabled or missing application user is signed out, and the old ticket does not survive a later restore. A SQL failure returns HTTP 503 and keeps the unexpired cookie. Switching organizations does not extend the eight-hour lifetime. CSRF additional data is bound to the exact issuer and subject. Financial routes stay fail-closed. The React selector is Phase 7C.3. See ADR 0015.
+
 Still in this phase:
 
-- organization membership;
+- financial authorization of the selected organization;
 - roles;
 - policies;
 - resource-based authorization;

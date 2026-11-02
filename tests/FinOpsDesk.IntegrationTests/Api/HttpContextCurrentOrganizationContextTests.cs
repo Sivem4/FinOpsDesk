@@ -5,6 +5,7 @@ using FinOpsDesk.Api.Security;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace FinOpsDesk.IntegrationTests.Api;
@@ -73,6 +74,12 @@ public sealed class HttpContextCurrentOrganizationContextTests
             Options.Create(new JwtBearerAuthenticationSettings
             {
                 OrganizationClaimType = "org_id",
-            }));
+            }),
+            new AuthenticationCompositionState
+            {
+                UsesProductionCookie = false,
+                ProductionFinancialAccessFailClosed = false,
+            },
+            new ServiceCollection().BuildServiceProvider());
     }
 }

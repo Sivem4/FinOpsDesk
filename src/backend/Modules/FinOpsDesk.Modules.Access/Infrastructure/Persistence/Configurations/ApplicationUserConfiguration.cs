@@ -70,6 +70,9 @@ internal sealed class ApplicationUserConfiguration : IEntityTypeConfiguration<Ap
             .HasConversion<byte>()
             .HasColumnType("tinyint");
 
+        builder.Property(user => user.SessionStamp)
+            .ValueGeneratedNever();
+
         builder.Property(user => user.CreatedAt)
             .HasColumnType("datetimeoffset");
     }

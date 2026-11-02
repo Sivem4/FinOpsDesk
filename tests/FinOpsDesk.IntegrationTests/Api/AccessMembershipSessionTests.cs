@@ -38,6 +38,7 @@ public sealed class AccessMembershipSessionTests : IDisposable
         Assert.True(first.RootElement.GetProperty("authenticated").GetBoolean());
         Assert.False(first.RootElement.GetProperty("financialAccess").GetBoolean());
         Assert.Equal(0, first.RootElement.GetProperty("organizations").GetArrayLength());
+        Assert.Equal(JsonValueKind.Null, first.RootElement.GetProperty("activeOrganization").ValueKind);
 
         await SignInAsync(client, _stub);
         ApplicationUser again = await RequireUserAsync(_stub.Authority, OidcProtocolStub.Subject);
@@ -170,6 +171,7 @@ public sealed class AccessMembershipSessionTests : IDisposable
             Assert.Equal(1, organizations.GetArrayLength());
             Assert.Equal(activeId, organizations[0].GetProperty("organizationId").GetGuid());
             Assert.Equal("North Ledger", organizations[0].GetProperty("displayName").GetString());
+            Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("activeOrganization").ValueKind);
             Assert.DoesNotContain("Revoked Ledger", document.RootElement.ToString(), StringComparison.Ordinal);
             Assert.DoesNotContain("Closed Ledger", document.RootElement.ToString(), StringComparison.Ordinal);
 

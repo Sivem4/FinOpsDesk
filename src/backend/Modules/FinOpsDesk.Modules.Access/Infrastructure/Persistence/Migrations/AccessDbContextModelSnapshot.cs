@@ -47,6 +47,9 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
                         .HasColumnType("nvarchar(500)")
                         .UseCollation("Latin1_General_100_BIN2");
 
+                    b.Property<Guid>("SessionStamp")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<byte>("Status")
                         .HasColumnType("tinyint");
 

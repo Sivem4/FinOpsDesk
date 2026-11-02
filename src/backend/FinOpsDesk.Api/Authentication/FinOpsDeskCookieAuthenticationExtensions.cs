@@ -1,5 +1,9 @@
+using System.Security.Claims;
+
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FinOpsDesk.Api.Authentication;
 
@@ -10,6 +14,7 @@ internal static class FinOpsDeskCookieAuthenticationExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddScoped<AccessSessionGate>();
         services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
             .AddCookie(options =>
             {
@@ -36,9 +41,16 @@ internal static class FinOpsDeskCookieAuthenticationExtensions
                 options.Events.OnSigningOut = context =>
                 {
                     context.Response.Headers.CacheControl = "no-store";
-                    context.Response.StatusCode = StatusCodes.Status204NoContent;
+                    if (context.Request.Path.Equals("/logout", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status204NoContent;
+                    }
+
                     return Task.CompletedTask;
                 };
+                // RequestRefresh rewrites ExpiresUtc to now plus the original
+                // lifetime. Validation must not set ShouldRenew.
+                options.Events.OnValidatePrincipal = ValidatePrincipalAsync;
                 options.Events.OnRedirectToReturnUrl = context =>
                 {
                     context.Response.Headers.CacheControl = "no-store";
@@ -48,5 +60,21 @@ internal static class FinOpsDeskCookieAuthenticationExtensions
             });
 
         return services;
+    }
+
+    private static async Task ValidatePrincipalAsync(CookieValidatePrincipalContext context)
+    {
+        AccessSessionGate sessions = context.HttpContext.RequestServices
+            .GetRequiredService<AccessSessionGate>();
+        AccessSessionSnapshot snapshot = await sessions.ResolveAsync(
+            context.Principal ?? new ClaimsPrincipal(),
+            context.HttpContext.RequestAborted);
+        if (snapshot.Kind is not (AccessSessionKind.Rejected or AccessSessionKind.InvalidIdentity))
+        {
+            return;
+        }
+
+        context.RejectPrincipal();
+        await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     }
 }

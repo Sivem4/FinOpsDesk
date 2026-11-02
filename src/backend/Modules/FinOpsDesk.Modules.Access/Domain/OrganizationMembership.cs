@@ -58,4 +58,10 @@ public sealed class OrganizationMembership
         Status = OrganizationMembershipStatus.Revoked;
         RevokedAt = revokedAt;
     }
+
+    internal void Restore()
+    {
+        Status = OrganizationMembershipStatus.Active;
+        RevokedAt = null;
+    }
 }

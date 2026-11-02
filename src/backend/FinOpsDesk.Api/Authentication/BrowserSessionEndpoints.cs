@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using System.Text.Json;
+
 using FinOpsDesk.Modules.Access.Application;
 
 using Microsoft.AspNetCore.Antiforgery;
@@ -11,12 +14,17 @@ namespace FinOpsDesk.Api.Authentication;
 
 internal static class BrowserSessionEndpoints
 {
+    private const int MaximumOrganizationBodyBytes = 4096;
     public static void MapFinOpsDeskBrowserSession(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
 
         app.MapGet("/api/session", (Delegate)GetSessionAsync)
             .AllowAnonymous();
+
+        app.MapPost("/api/session/organization", (Delegate)SelectOrganizationAsync)
+            .RequireAuthorization()
+            .WithMetadata(new ProductionCsrfMetadata());
 
         app.MapPost("/login", (Delegate)LoginAsync)
             .AllowAnonymous()
@@ -29,12 +37,12 @@ internal static class BrowserSessionEndpoints
     private static async Task<IResult> GetSessionAsync(
         HttpContext httpContext,
         IAntiforgery antiforgery,
-        IOrganizationMembershipReader memberships,
+        AccessSessionGate sessions,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
         ArgumentNullException.ThrowIfNull(antiforgery);
-        ArgumentNullException.ThrowIfNull(memberships);
+        ArgumentNullException.ThrowIfNull(sessions);
 
         httpContext.Response.Headers.CacheControl = "no-store";
         AntiforgeryTokenSet tokens = antiforgery.GetAndStoreTokens(httpContext);
@@ -48,43 +56,187 @@ internal static class BrowserSessionEndpoints
             return Results.Json(AnonymousSession(csrfToken));
         }
 
-        string? issuer = httpContext.User.FindFirst("iss")?.Value;
-        string? subject = httpContext.User.FindFirst("sub")?.Value;
-        if (issuer is null || issuer.Length == 0 || subject is null || subject.Length == 0)
+        AccessSessionSnapshot snapshot = sessions.Current
+            ?? await sessions.ResolveAsync(httpContext.User, cancellationToken);
+        if (snapshot.Kind == AccessSessionKind.Unavailable)
         {
             return MembershipUnavailable();
         }
 
-        IReadOnlyList<OrganizationChoice> organizations;
+        if (snapshot.Kind != AccessSessionKind.Active
+            || snapshot.Issuer is null
+            || snapshot.Subject is null)
+        {
+            return Results.Json(AnonymousSession(csrfToken));
+        }
+
+        return Results.Json(AuthenticatedSession(
+            csrfToken,
+            snapshot,
+            authentication.Properties?.ExpiresUtc));
+    }
+
+    private static async Task<IResult> SelectOrganizationAsync(
+        HttpContext httpContext,
+        AccessSessionGate sessions,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(httpContext);
+        ArgumentNullException.ThrowIfNull(sessions);
+
+        httpContext.Response.Headers.CacheControl = "no-store";
+        if (httpContext.Request.ContentLength is > MaximumOrganizationBodyBytes)
+        {
+            return OrganizationInvalid();
+        }
+
+        AuthenticateResult authentication = await httpContext.AuthenticateAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme);
+        if (!authentication.Succeeded
+            || authentication.Principal is null
+            || httpContext.User.Identity?.IsAuthenticated != true)
+        {
+            return Results.Unauthorized();
+        }
+
+        AccessSessionSnapshot snapshot = sessions.Current
+            ?? await sessions.ResolveAsync(authentication.Principal, cancellationToken);
+        if (snapshot.Kind == AccessSessionKind.Unavailable)
+        {
+            return MembershipUnavailable();
+        }
+
+        if (snapshot.Kind != AccessSessionKind.Active
+            || snapshot.Issuer is null
+            || snapshot.Subject is null
+            || snapshot.SessionStamp is not Guid sessionStamp)
+        {
+            return Results.Unauthorized();
+        }
+
+        Guid? requested = await TryReadOrganizationIdAsync(httpContext.Request, cancellationToken);
+        if (requested is not Guid organizationId)
+        {
+            return OrganizationInvalid();
+        }
+
+        OrganizationChoice? selected = null;
+        foreach (OrganizationChoice choice in snapshot.Organizations)
+        {
+            if (choice.OrganizationId == organizationId)
+            {
+                selected = choice;
+                break;
+            }
+        }
+
+        if (selected is null)
+        {
+            return OrganizationForbidden();
+        }
+
+        if (authentication.Properties?.IssuedUtc is not DateTimeOffset issuedUtc
+            || authentication.Properties.ExpiresUtc is not DateTimeOffset expiresUtc)
+        {
+            throw new InvalidOperationException("The application cookie has no absolute expiry.");
+        }
+
+        ClaimsPrincipal principal = CookieSessionPrincipal.Create(
+            snapshot.Issuer,
+            snapshot.Subject,
+            snapshot.DisplayName,
+            sessionStamp,
+            organizationId);
+        await httpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            principal,
+            new AuthenticationProperties
+            {
+                IssuedUtc = issuedUtc,
+                ExpiresUtc = expiresUtc,
+                IsPersistent = authentication.Properties.IsPersistent,
+                AllowRefresh = authentication.Properties.AllowRefresh,
+            });
+        return Results.NoContent();
+    }
+
+    private static async Task<Guid?> TryReadOrganizationIdAsync(
+        HttpRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!request.HasJsonContentType())
+        {
+            return null;
+        }
+
+        byte[]? body = await ReadBoundedBodyAsync(request.Body, cancellationToken);
+        if (body is null)
+        {
+            return null;
+        }
+
         try
         {
-            organizations = await memberships.ListActiveAsync(issuer, subject, cancellationToken);
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            int count = 0;
+            string? raw = null;
+            foreach (JsonProperty property in document.RootElement.EnumerateObject())
+            {
+                count++;
+                if (count > 1 || !property.NameEquals("organizationId"u8))
+                {
+                    return null;
+                }
+
+                if (property.Value.ValueKind != JsonValueKind.String)
+                {
+                    return null;
+                }
+
+                raw = property.Value.GetString();
+            }
+
+            if (count != 1
+                || raw is null
+                || !Guid.TryParse(raw, out Guid organizationId)
+                || organizationId == Guid.Empty)
+            {
+                return null;
+            }
+
+            return organizationId;
         }
-        catch (OperationCanceledException)
+        catch (JsonException)
         {
-            throw;
+            return null;
         }
-        catch (Exception)
+    }
+
+    private static async Task<byte[]?> ReadBoundedBodyAsync(
+        Stream body,
+        CancellationToken cancellationToken)
+    {
+        byte[] buffer = new byte[MaximumOrganizationBodyBytes + 1];
+        int total = 0;
+        while (total <= MaximumOrganizationBodyBytes)
         {
-            return MembershipUnavailable();
+            int read = await body.ReadAsync(
+                buffer.AsMemory(total, MaximumOrganizationBodyBytes + 1 - total),
+                cancellationToken);
+            if (read == 0)
+            {
+                return total == 0 ? null : buffer.AsSpan(0, total).ToArray();
+            }
+
+            total += read;
         }
 
-        SessionOrganizationResponse[] choices = new SessionOrganizationResponse[organizations.Count];
-        for (int index = 0; index < organizations.Count; index++)
-        {
-            OrganizationChoice choice = organizations[index];
-            choices[index] = new SessionOrganizationResponse(choice.OrganizationId, choice.DisplayName);
-        }
-
-        return Results.Json(new SessionResponse(
-            Authenticated: true,
-            FinancialAccess: false,
-            CsrfToken: csrfToken,
-            Issuer: issuer,
-            Subject: subject,
-            DisplayName: httpContext.User.FindFirst("name")?.Value,
-            ExpiresAt: authentication.Properties?.ExpiresUtc,
-            Organizations: choices));
+        return null;
     }
 
     private static SessionResponse AnonymousSession(string csrfToken)
@@ -97,7 +249,35 @@ internal static class BrowserSessionEndpoints
             Subject: null,
             DisplayName: null,
             ExpiresAt: null,
-            Organizations: []);
+            Organizations: [],
+            ActiveOrganization: null);
+    }
+
+    private static SessionResponse AuthenticatedSession(
+        string csrfToken,
+        AccessSessionSnapshot snapshot,
+        DateTimeOffset? expiresAt)
+    {
+        SessionOrganizationResponse[] choices = new SessionOrganizationResponse[snapshot.Organizations.Count];
+        for (int index = 0; index < snapshot.Organizations.Count; index++)
+        {
+            OrganizationChoice choice = snapshot.Organizations[index];
+            choices[index] = new SessionOrganizationResponse(choice.OrganizationId, choice.DisplayName);
+        }
+
+        SessionOrganizationResponse? active = snapshot.ActiveOrganization is OrganizationChoice selected
+            ? new SessionOrganizationResponse(selected.OrganizationId, selected.DisplayName)
+            : null;
+        return new SessionResponse(
+            Authenticated: true,
+            FinancialAccess: false,
+            CsrfToken: csrfToken,
+            Issuer: snapshot.Issuer,
+            Subject: snapshot.Subject,
+            DisplayName: snapshot.DisplayName,
+            ExpiresAt: expiresAt,
+            Organizations: choices,
+            ActiveOrganization: active);
     }
 
     private static IResult MembershipUnavailable()
@@ -108,6 +288,28 @@ internal static class BrowserSessionEndpoints
             extensions: new Dictionary<string, object?>
             {
                 ["code"] = "auth.membership.unavailable",
+            });
+    }
+
+    private static IResult OrganizationInvalid()
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status400BadRequest,
+            title: "Organization selection is not valid.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "auth.organization.invalid",
+            });
+    }
+
+    private static IResult OrganizationForbidden()
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status403Forbidden,
+            title: "Organization selection was denied.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "auth.organization.forbidden",
             });
     }
 
@@ -173,5 +375,6 @@ internal static class BrowserSessionEndpoints
         string? Subject,
         string? DisplayName,
         DateTimeOffset? ExpiresAt,
-        IReadOnlyList<SessionOrganizationResponse> Organizations);
+        IReadOnlyList<SessionOrganizationResponse> Organizations,
+        SessionOrganizationResponse? ActiveOrganization);
 }
