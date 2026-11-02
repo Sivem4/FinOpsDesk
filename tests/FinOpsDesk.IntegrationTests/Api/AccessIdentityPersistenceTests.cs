@@ -124,7 +124,7 @@ public sealed class AccessIdentityPersistenceTests
             Assert.InRange(await ScalarAsync(
                 database.ConnectionString,
                 "SELECT COUNT(*) FROM reconciliation.__EFMigrationsHistory"), 1, int.MaxValue);
-            Assert.Equal(3, await ScalarAsync(
+            Assert.Equal(4, await ScalarAsync(
                 database.ConnectionString,
                 "SELECT COUNT(*) FROM access.__EFMigrationsHistory"));
             Assert.Equal(1, await ScalarAsync(

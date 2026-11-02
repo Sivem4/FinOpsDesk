@@ -187,6 +187,73 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.OrganizationRoleAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte>("GrantActorKind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid?>("GrantActorUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("GrantOperatorName")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset>("GrantedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("MembershipId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte?>("RevokeActorKind")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid?>("RevokeActorUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RevokeOperatorName")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte>("Role")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GrantActorUserId");
+
+                    b.HasIndex("MembershipId")
+                        .HasDatabaseName("IX_OrganizationRoleAssignments_MembershipId");
+
+                    b.HasIndex("RevokeActorUserId");
+
+                    b.HasIndex("MembershipId", "Role")
+                        .IsUnique()
+                        .HasDatabaseName("UX_OrganizationRoleAssignments_MembershipId_Role_Active")
+                        .HasFilter("[RevokedAt] IS NULL");
+
+                    b.ToTable("OrganizationRoleAssignments", "access", t =>
+                        {
+                            t.HasCheckConstraint("CK_OrganizationRoleAssignments_GrantActor", "([GrantActorKind] = 1 AND [GrantActorUserId] IS NOT NULL AND [GrantOperatorName] IS NULL)\r\nOR ([GrantActorKind] = 2 AND [GrantActorUserId] IS NULL AND [GrantOperatorName] IS NOT NULL AND LEN(LTRIM(RTRIM([GrantOperatorName]))) > 0 AND LEN([GrantOperatorName]) <= 128)");
+
+                            t.HasCheckConstraint("CK_OrganizationRoleAssignments_RevokeActor", "([RevokedAt] IS NULL AND [RevokeActorKind] IS NULL AND [RevokeActorUserId] IS NULL AND [RevokeOperatorName] IS NULL)\r\nOR ([RevokedAt] IS NOT NULL AND [RevokedAt] > [GrantedAt] AND (([RevokeActorKind] = 1 AND [RevokeActorUserId] IS NOT NULL AND [RevokeOperatorName] IS NULL) OR ([RevokeActorKind] = 2 AND [RevokeActorUserId] IS NULL AND [RevokeOperatorName] IS NOT NULL AND LEN(LTRIM(RTRIM([RevokeOperatorName]))) > 0 AND LEN([RevokeOperatorName]) <= 128)))");
+
+                            t.HasCheckConstraint("CK_OrganizationRoleAssignments_Role", "[Role] IN (1, 2, 3, 4)");
+                        });
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.BrowserSession", b =>
                 {
                     b.HasOne("FinOpsDesk.Modules.Access.Domain.ApplicationUser", null)
@@ -216,6 +283,28 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.OrganizationRoleAssignment", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("GrantActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_OrganizationRoleAssignments_ApplicationUsers_GrantActorUserId");
+
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.OrganizationMembership", null)
+                        .WithMany()
+                        .HasForeignKey("MembershipId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_OrganizationRoleAssignments_OrganizationMemberships_MembershipId");
+
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("RevokeActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_OrganizationRoleAssignments_ApplicationUsers_RevokeActorUserId");
                 });
 #pragma warning restore 612, 618
         }

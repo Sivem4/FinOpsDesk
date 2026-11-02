@@ -20,6 +20,8 @@ public sealed class AccessDbContext : DbContext
 
     public DbSet<BrowserSession> BrowserSessions => Set<BrowserSession>();
 
+    public DbSet<OrganizationRoleAssignment> OrganizationRoleAssignments => Set<OrganizationRoleAssignment>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("access");
@@ -27,5 +29,6 @@ public sealed class AccessDbContext : DbContext
         modelBuilder.ApplyConfiguration(new OrganizationConfiguration());
         modelBuilder.ApplyConfiguration(new OrganizationMembershipConfiguration());
         modelBuilder.ApplyConfiguration(new BrowserSessionConfiguration());
+        modelBuilder.ApplyConfiguration(new OrganizationRoleAssignmentConfiguration());
     }
 }

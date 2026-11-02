@@ -845,6 +845,13 @@ public sealed class ActiveOrganizationSessionTests : IDisposable
         List<OrganizationMembership> memberships = await context.OrganizationMemberships
             .Where(membership => membership.UserId == userId)
             .ToListAsync();
+        List<Guid> membershipIds = memberships.Select(membership => membership.Id).ToList();
+        List<OrganizationRoleAssignment> assignments = await context.OrganizationRoleAssignments
+            .Where(assignment => membershipIds.Contains(assignment.MembershipId)
+                || assignment.GrantActorUserId == userId
+                || assignment.RevokeActorUserId == userId)
+            .ToListAsync();
+        context.OrganizationRoleAssignments.RemoveRange(assignments);
         context.OrganizationMemberships.RemoveRange(memberships);
         List<BrowserSession> sessions = await context.BrowserSessions
             .Where(session => session.UserId == userId)
@@ -865,6 +872,11 @@ public sealed class ActiveOrganizationSessionTests : IDisposable
         List<OrganizationMembership> memberships = await context.OrganizationMemberships
             .Where(membership => membership.UserId == userId && organizationIds.Contains(membership.OrganizationId))
             .ToListAsync();
+        List<Guid> membershipIds = memberships.Select(membership => membership.Id).ToList();
+        List<OrganizationRoleAssignment> assignments = await context.OrganizationRoleAssignments
+            .Where(assignment => membershipIds.Contains(assignment.MembershipId))
+            .ToListAsync();
+        context.OrganizationRoleAssignments.RemoveRange(assignments);
         context.OrganizationMemberships.RemoveRange(memberships);
         List<Organization> organizations = await context.Organizations
             .Where(organization => organizationIds.Contains(organization.Id))
