@@ -69,7 +69,8 @@ internal static class BatchMatchEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
-            .AddOpenApiOperationTransformer(DocumentPreviewOperation);
+            .AddOpenApiOperationTransformer(DocumentPreviewOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("reconciliation.read"));
 
         group.MapPost("/matches/batch/execute", ExecuteAsync)
             .WithName("ExecuteBatchExactMatches")
@@ -90,7 +91,8 @@ internal static class BatchMatchEndpoints
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
-            .AddOpenApiOperationTransformer(DocumentExecuteOperation);
+            .AddOpenApiOperationTransformer(DocumentExecuteOperation)
+            .WithMetadata(FinancialEndpointClassification.Write());
 
         return group;
     }

@@ -15,7 +15,8 @@ internal static class BankTransactionEndpoints
     {
         ArgumentNullException.ThrowIfNull(group);
 
-        group.MapGet("/bank-transactions", ListBankTransactionsAsync);
+        group.MapGet("/bank-transactions", ListBankTransactionsAsync)
+            .WithMetadata(FinancialEndpointClassification.Read("bank-transactions.read"));
 
         return group;
     }

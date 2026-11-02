@@ -57,11 +57,13 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
-            .AddOpenApiOperationTransformer(DocumentContextOperation);
+            .AddOpenApiOperationTransformer(DocumentContextOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("allocations.read"));
 
         group.MapPost("/allocations", AllocateAsync)
             .WithName("AllocateExplicitAmount")
-            .AddOpenApiOperationTransformer(DocumentAllocationOperation);
+            .AddOpenApiOperationTransformer(DocumentAllocationOperation)
+            .WithMetadata(FinancialEndpointClassification.Write());
 
         group.MapPost("/allocations/{allocationId}/reverse", ReverseAsync)
             .WithName("ReverseAllocation")
@@ -81,7 +83,8 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
-            .AddOpenApiOperationTransformer(DocumentReverseOperation);
+            .AddOpenApiOperationTransformer(DocumentReverseOperation)
+            .WithMetadata(FinancialEndpointClassification.Write());
 
         group.MapGet("/allocations", GetHistoryAsync)
             .WithName("ListAllocationHistory")
@@ -103,14 +106,16 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .AddOpenApiOperationTransformer(DocumentHistoryOperation);
+            .AddOpenApiOperationTransformer(DocumentHistoryOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("allocations.read"));
 
         group.MapGet("/allocations/{allocationId}/audit", GetAuditAsync)
             .WithName("GetAllocationAudit")
             .WithSummary("List financial audit entries for one allocation.")
             .WithDescription(
                 "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
-                + "Any TenantMember may read ActorId. Finer audit permissions are future work. "
+                + "DevelopmentJwt allows any TenantMember to read ActorId. "
+                + "ProductionCookie read authorization, when enabled, requires audit.read. "
                 + "A missing JWT sub is allowed on this read. "
                 + "Results are ordered by RecordedAt ascending, then audit entry id ascending. "
                 + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. "
@@ -121,7 +126,8 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .AddOpenApiOperationTransformer(DocumentAuditOperation);
+            .AddOpenApiOperationTransformer(DocumentAuditOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("audit.read"));
 
         group.MapGet("/allocations/{allocationId}/reversal-context", GetReversalContextAsync)
             .WithName("GetAllocationReversalContext")
@@ -137,7 +143,8 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .AddOpenApiOperationTransformer(DocumentReversalContextOperation);
+            .AddOpenApiOperationTransformer(DocumentReversalContextOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("allocations.read"));
 
         return group;
     }

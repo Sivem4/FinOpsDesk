@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
 
 namespace FinOpsDesk.Api.Authorization;
 
@@ -28,6 +29,8 @@ internal static class FinOpsDeskAuthorizationExtensions
 
         services.AddSingleton<IAuthorizationHandler, FinancialApiAccessHandler>();
         services.AddSingleton<IAuthorizationHandler, TenantMemberAuthorizationHandler>();
+        services.AddSingleton<IAuthorizationMiddlewareResultHandler, FinOpsDeskAuthorizationResultHandler>();
+        services.AddSingleton<FinancialAnonymousRouteGuardMiddleware>();
 
         return services;
     }

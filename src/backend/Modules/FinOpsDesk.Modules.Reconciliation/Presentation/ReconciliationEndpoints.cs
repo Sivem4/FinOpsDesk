@@ -16,6 +16,7 @@ public static class ReconciliationEndpoints
     {
         ArgumentNullException.ThrowIfNull(group);
 
+        group.WithMetadata(new ReconciliationRouteBoundary());
         group.MapInvoiceEndpoints();
         group.MapBankTransactionEndpoints();
         group.MapImportEndpoints();

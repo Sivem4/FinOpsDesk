@@ -17,6 +17,9 @@ public sealed class ModuleDependencyTests
         Assert.DoesNotContain(
             "FinOpsDesk.Api",
             referencedAssemblyNames);
+        Assert.DoesNotContain(
+            "FinOpsDesk.Modules.Access",
+            referencedAssemblyNames);
     }
 
     [Fact]
