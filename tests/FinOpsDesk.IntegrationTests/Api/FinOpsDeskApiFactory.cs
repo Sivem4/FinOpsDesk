@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 
 using FinOpsDesk.Api.Authentication;
+using FinOpsDesk.Api.Authorization;
 
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -22,13 +23,19 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
     private readonly string _environmentName;
     private readonly string _authenticationComposition;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
+    private readonly bool _financialReadAuthorizationEnabled;
+    private readonly bool _financialClassificationProbesEnabled;
+    private readonly string? _previousFinancialReadAuthorization;
+    private readonly string? _previousFinancialClassificationProbes;
 
     public FinOpsDeskApiFactory(
         string connectionString,
         Action<IServiceCollection>? configureServices = null,
         string? environmentName = null,
         string? authenticationComposition = null,
-        IReadOnlyDictionary<string, string?>? configurationOverrides = null)
+        IReadOnlyDictionary<string, string?>? configurationOverrides = null,
+        bool financialReadAuthorizationEnabled = false,
+        bool financialClassificationProbesEnabled = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -41,6 +48,8 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
             ? AuthenticationCompositions.DevelopmentJwt
             : authenticationComposition;
         _configurationOverrides = configurationOverrides;
+        _financialReadAuthorizationEnabled = financialReadAuthorizationEnabled;
+        _financialClassificationProbesEnabled = financialClassificationProbesEnabled;
 
         // Program reads the connection string and authentication composition
         // while the host is composed. Environment variables are already loaded
@@ -50,8 +59,20 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         // a value an outer factory still needs.
         _previousConnectionString = Environment.GetEnvironmentVariable(ConnectionStringVariable);
         _previousComposition = Environment.GetEnvironmentVariable(CompositionVariable);
+        _previousFinancialReadAuthorization = Environment.GetEnvironmentVariable(
+            "Authentication__FinancialReadAuthorization");
+        _previousFinancialClassificationProbes = Environment.GetEnvironmentVariable(
+            "Authentication__FinancialClassificationProbes");
         Environment.SetEnvironmentVariable(ConnectionStringVariable, connectionString);
         Environment.SetEnvironmentVariable(CompositionVariable, _authenticationComposition);
+        Environment.SetEnvironmentVariable(
+            "Authentication__FinancialReadAuthorization",
+            _financialReadAuthorizationEnabled ? FinancialReadAuthorization.Enabled : string.Empty);
+        Environment.SetEnvironmentVariable(
+            "Authentication__FinancialClassificationProbes",
+            _financialClassificationProbesEnabled
+                ? FinancialClassificationProbeEndpoints.Enabled
+                : string.Empty);
     }
 
     public HttpClient CreateApiClient(string? accessToken = null)
@@ -110,6 +131,13 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
                 settings["Authentication:Oidc:RequireHttpsMetadata"] = "true";
             }
 
+            settings[FinancialReadAuthorization.ConfigurationKey] = _financialReadAuthorizationEnabled
+                ? FinancialReadAuthorization.Enabled
+                : string.Empty;
+            settings[FinancialClassificationProbeEndpoints.ConfigurationKey] = _financialClassificationProbesEnabled
+                ? FinancialClassificationProbeEndpoints.Enabled
+                : string.Empty;
+
             if (_configurationOverrides is not null)
             {
                 foreach ((string key, string? value) in _configurationOverrides)
@@ -132,5 +160,11 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         base.Dispose(disposing);
         Environment.SetEnvironmentVariable(ConnectionStringVariable, _previousConnectionString);
         Environment.SetEnvironmentVariable(CompositionVariable, _previousComposition);
+        Environment.SetEnvironmentVariable(
+            "Authentication__FinancialReadAuthorization",
+            _previousFinancialReadAuthorization);
+        Environment.SetEnvironmentVariable(
+            "Authentication__FinancialClassificationProbes",
+            _previousFinancialClassificationProbes);
     }
 }

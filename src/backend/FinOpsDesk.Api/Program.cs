@@ -32,6 +32,7 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseHttpsRedirection();
 app.UseAuthentication();
+app.UseMiddleware<FinancialAnonymousRouteGuardMiddleware>();
 app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
@@ -57,6 +58,10 @@ if (composition.UsesProductionCookie)
 }
 
 reconciliation.MapReconciliationEndpoints();
+if (FinancialClassificationProbeEndpoints.IsEnabled(app.Configuration))
+{
+    reconciliation.MapFinancialClassificationProbes();
+}
 
 app.Run();
 

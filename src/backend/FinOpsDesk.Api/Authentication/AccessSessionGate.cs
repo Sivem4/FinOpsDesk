@@ -3,6 +3,7 @@ using System.Security.Claims;
 using FinOpsDesk.Modules.Access.Application;
 using FinOpsDesk.Modules.Access.Domain;
 
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
 namespace FinOpsDesk.Api.Authentication;
@@ -15,46 +16,68 @@ internal sealed class AccessSessionGate
     private readonly IOrganizationRoleReader _roles;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AccessSessionGate> _logger;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly object _permissionLock = new();
     private Task<AccessSessionSnapshot>? _pending;
-    private AccessPermissionResolution? _permissions;
+    private Task<AccessPermissionResolution>? _permissionResolution;
 
     public AccessSessionGate(
         IOrganizationMembershipReader memberships,
         IBrowserSessionStore sessions,
         IOrganizationRoleReader roles,
         TimeProvider timeProvider,
-        ILogger<AccessSessionGate> logger)
+        ILogger<AccessSessionGate> logger,
+        IHttpContextAccessor httpContextAccessor)
     {
         ArgumentNullException.ThrowIfNull(memberships);
         ArgumentNullException.ThrowIfNull(sessions);
         ArgumentNullException.ThrowIfNull(roles);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(httpContextAccessor);
 
         _memberships = memberships;
         _sessions = sessions;
         _roles = roles;
         _timeProvider = timeProvider;
         _logger = logger;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public AccessSessionSnapshot? Current { get; private set; }
 
-    // Memoized for this request only. A missing snapshot is not cached, so validation can still run.
-    public async Task<AccessPermissionResolution> ResolvePermissionsAsync(CancellationToken cancellationToken)
+    // Test seam. Production leaves this null. Every caller invokes it before the shared task
+    // is published, so a test can hold those callers together. It does not read roles.
+    internal Action? BeforePublishPermissionResolution { get; set; }
+
+    // One published task per gate. The lock covers only that publication: the async method
+    // returns its Task at the first incomplete await, so the role query is not inside the lock.
+    // LazyInitializer.EnsureInitialized can invoke its factory more than once and is not used.
+    // A missing snapshot is not cached. Another request has another gate and another task.
+    public Task<AccessPermissionResolution> ResolvePermissionsAsync(CancellationToken cancellationToken)
     {
         if (Current is null)
         {
-            return AccessPermissionResolution.Untrusted("session-not-resolved");
+            return Task.FromResult(AccessPermissionResolution.Untrusted("session-not-resolved"));
         }
 
-        if (_permissions is not null)
+        BeforePublishPermissionResolution?.Invoke();
+
+        Task<AccessPermissionResolution> resolution;
+        lock (_permissionLock)
         {
-            return _permissions;
+            // The waiter token is not the query token. Request abort cancels the shared read.
+            // Cancelling only one waiter does not.
+            _permissionResolution ??= ResolvePermissionsUncachedAsync(SharedQueryCancellationToken());
+            resolution = _permissionResolution;
         }
 
-        _permissions = await ResolvePermissionsUncachedAsync(cancellationToken);
-        return _permissions;
+        return resolution.WaitAsync(cancellationToken);
+    }
+
+    private CancellationToken SharedQueryCancellationToken()
+    {
+        return _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
     }
 
     public async Task<AccessSessionSnapshot> ResolveAsync(

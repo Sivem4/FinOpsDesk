@@ -1,0 +1,92 @@
+# ADR 0018: Read-only financial authorization
+
+- Status: Accepted
+- Date: 2026-11-02
+
+## Context
+
+ADR 0017 stores organization roles and a fixed permission map, but it does not authorize financial HTTP. `ProductionCookie` still fails closed. `DevelopmentJwt` still authorizes the whole Reconciliation group from a validated `org_id` claim and does not read Access.
+
+Opening those reads in the same change as the browser session contract would let `financialAccess: true` reach the current React parser, which rejects that value. The authorization mechanism and the production activation are therefore separate.
+
+## Decision
+
+Phase 7D.3 is delivered in two increments.
+
+7D.3a adds endpoint classification and evaluates it on the existing `TenantMember` policy. Deployed `ProductionCookie` stays fail-closed. `GET /api/session` still returns `financialAccess: false` and does not grow a permissions field. Financial writes stay forbidden for the cookie.
+
+7D.3b will publish the session capability contract, mount the read-only React experience, and only then turn the same policy on for deployed cookie hosts. It does not replace this authorization model. Writes remain forbidden there too.
+
+### Classification
+
+Every route mapped by `ReconciliationEndpoints` carries `ReconciliationRouteBoundary` and exactly one `FinancialEndpointClassification`.
+
+Reads:
+
+- `invoices.read`: `GET /api/invoices`
+- `bank-transactions.read`: `GET /api/bank-transactions`
+- `reconciliation.read`: `GET /api/matches`, `GET /api/matches/smart`, `GET /api/matches/batch/preview`
+- `allocations.read`: `GET /api/allocations`, `GET /api/allocations/context`, `GET /api/allocations/{allocationId}/reversal-context`
+- `audit.read`: `GET /api/allocations/{allocationId}/audit`
+- `review-cases.read`: `GET /api/review-cases`, `GET /api/review-cases/{id}`
+
+Every current financial POST is classified as a write. A write classification has no permission that a cookie can satisfy. `DevelopmentJwt` still accepts a consistent write classification together with `org_id`.
+
+Missing metadata, more than one classification, an unknown permission, a write permission used as a read, or an HTTP method that does not match the classification does not succeed. A new financial route therefore stays denied until it is classified. The marker is read by `FinancialApiAccessHandler`. It is not documentation beside a policy that ignores it.
+
+`AllowAnonymous` on a classified route, or on any route inside the Reconciliation boundary, is rejected by `FinancialAnonymousRouteGuardMiddleware` before the authorization middleware can skip the policy. Health remains anonymous because it has neither marker.
+
+An integration test reads `EndpointDataSource`. It fails when a Reconciliation handler is mapped outside the boundary, when the classified set differs from the inventory above, when `TenantMember` is missing or joined by another policy, role, or scheme, or when `IAllowAnonymous` is present. Scanning only endpoints that already have a financial marker would not see an unmarked Reconciliation handler. The test also requires the handler `MethodInfo` to come from the Reconciliation assembly. A route mapped in a different assembly, with no boundary and no Reconciliation handler, is not identifiable as financial from metadata. The module mapping method is the boundary that makes the check possible.
+
+### Policy
+
+The `/api` group keeps one policy, `TenantMember`: authenticated user, `FinancialApiAccessRequirement`, and `TenantMemberRequirement`. Endpoint metadata does not replace that policy.
+
+`DevelopmentJwt` ignores Access, `BrowserSession`, and `Authentication:FinancialReadAuthorization`. A consistent classification plus the validated `org_id` claim preserves the existing reads, writes, and idempotency. The cookie CSRF middleware is not registered.
+
+`ProductionCookie` with the configuration absent, empty, or any value other than the ordinal string `Enabled` keeps `ProductionFinancialAccessFailClosed` true. Every financial GET and POST is then forbidden. The handler does not read roles and does not run the financial delegate. This is the deployed default. `appsettings.json` does not set the key.
+
+`Enabled` is the test-host switch and the future 7D.3b switch. It does not grant blanket access. A cookie read succeeds only when all of the following hold:
+
+- the application cookie authenticated;
+- `OnValidatePrincipal` accepted the server `BrowserSession` and the application user;
+- the trusted snapshot is active and has an active organization membership;
+- the route is one consistent read classification;
+- `ResolvePermissionsAsync` returns that exact permission for the active organization.
+
+No active organization, a membership with no role, `OrganizationAdmin` alone, a revoked role, or a revoked membership is HTTP 403. `org_id` is not added to the cookie. `X-Organization-Id` is not a tenant. Role and permission claims are not written on the cookie and are not consulted.
+
+A classified write, including a request with a valid CSRF token and an idempotency key, is HTTP 403 for every cookie role. The financial delegate does not run. `DevelopmentJwt` writes are unchanged.
+
+### Permission resolution and HTTP status
+
+`ResolvePermissionsAsync` publishes one shared `Task` for the current gate. A lock covers only that publication, so the role query starts once and is not held inside the lock. `LazyInitializer.EnsureInitialized` is not used: its factory may run more than once before one reference is stored. Callers wait with `WaitAsync` on their own cancellation token. That waiter token is not passed to the query. An HTTP request supplies `HttpContext.RequestAborted` for the shared read; without an HTTP context the query uses `CancellationToken.None`. Cancelling one waiter does not cancel the query while another caller of the same gate still needs it. Aborting the request does. The task is not stored for another request. There is no distributed cache.
+
+HTTP 401 remains the authentication result: missing cookie, rejected identity, or a revoked or expired `BrowserSession`. Those paths sign the caller out as they do today.
+
+HTTP 403 is an authenticated refusal: no selected organization, no active membership, no required permission, fail-closed configuration, a write, or invalid classification.
+
+HTTP 404 stays the existing handler result when an authorized caller asks for an identifier outside the active organization. Lists stay empty. The handler filters on `ICurrentOrganizationContext` inside SQL.
+
+HTTP 503 `auth.authorization.unavailable` is only the explicit marker set when the snapshot or the role read is unavailable, including a role value outside 1–4. `FinOpsDeskAuthorizationResultHandler` converts that marker and delegates every other result to the framework handler, so a normal 401 or 403 is not turned into 503. The response does not include the provider exception. The cookie is not cleared. `GET /api/session` still uses the basic snapshot and does not read the role table, so it remains HTTP 200 while financial reads return 503. A successful read with zero roles is 403, not 503.
+
+The financial delegate does not run for 401, 403, or 503.
+
+### Known limits
+
+Endpoint enumeration cannot name a future financial route that is mapped outside the Reconciliation assembly and carries neither the boundary nor a classification. The architecture test locks the module reference direction. A review of a new module mapping is still required.
+
+OpenAPI Bearer security metadata for the existing routes remains incomplete. Runtime authorization does not wait for that document.
+
+Batch preview remains a full-book read. It runs only after authorization. This increment does not cache it and does not add an index or a migration.
+
+`financialAccess` stays false while the test host exercises authorized GETs. That split is deliberate. 7D.3b must change the session contract and the React parser together before a deployed host sets `Authentication:FinancialReadAuthorization` to `Enabled`. Setting it earlier would open API reads while the public session contract and the current browser parser still say that finance is closed.
+
+`Authentication:FinancialClassificationProbes` is a test mapping switch. It is unset in deployed configuration. When its value is exactly `Enabled`, the host adds routes under `/api/test/financial-*` so integration tests can prove that missing, unknown, and inconsistent classifications are denied. Those routes are not a product feature and must not be enabled in deployment.
+
+## Consequences
+
+- Cookie financial writes stay unavailable to Operator and ReversalApprover.
+- Identity-bound recovery and public role administration stay out of this increment.
+- Phase 7 remains Planned.
+- 7D.3b activates the prepared read path without a second authorization design. It still does not authorize writes.

@@ -15,7 +15,8 @@ internal static class InvoiceEndpoints
     {
         ArgumentNullException.ThrowIfNull(group);
 
-        group.MapGet("/invoices", ListInvoicesAsync);
+        group.MapGet("/invoices", ListInvoicesAsync)
+            .WithMetadata(FinancialEndpointClassification.Read("invoices.read"));
 
         return group;
     }

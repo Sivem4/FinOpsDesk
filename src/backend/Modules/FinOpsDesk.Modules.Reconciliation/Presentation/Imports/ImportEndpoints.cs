@@ -19,8 +19,10 @@ internal static class ImportEndpoints
     {
         ArgumentNullException.ThrowIfNull(group);
 
-        LimitUploads(group.MapPost("/imports/invoices", ImportInvoicesAsync));
-        LimitUploads(group.MapPost("/imports/bank-transactions", ImportBankTransactionsAsync));
+        LimitUploads(group.MapPost("/imports/invoices", ImportInvoicesAsync))
+            .WithMetadata(FinancialEndpointClassification.Write());
+        LimitUploads(group.MapPost("/imports/bank-transactions", ImportBankTransactionsAsync))
+            .WithMetadata(FinancialEndpointClassification.Write());
 
         return group;
     }

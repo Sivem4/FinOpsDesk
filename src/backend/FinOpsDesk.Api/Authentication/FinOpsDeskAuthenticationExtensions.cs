@@ -45,7 +45,7 @@ internal static class FinOpsDeskAuthenticationExtensions
             services.AddSingleton(new AuthenticationCompositionState
             {
                 UsesProductionCookie = true,
-                ProductionFinancialAccessFailClosed = true,
+                ProductionFinancialAccessFailClosed = !FinancialReadAuthorization.IsEnabled(configuration),
             });
             services.AddFinOpsDeskCookieAuthentication();
             services.AddFinOpsDeskOpenIdConnect(configuration);

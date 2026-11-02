@@ -23,7 +23,8 @@ internal static class MatchEndpoints
     {
         ArgumentNullException.ThrowIfNull(group);
 
-        group.MapGet("/matches", GetMatchesAsync);
+        group.MapGet("/matches", GetMatchesAsync)
+            .WithMetadata(FinancialEndpointClassification.Read("reconciliation.read"));
         group.MapGet("/matches/smart", GetSmartMatchesAsync)
             .WithName("GetSmartMatches")
             .WithSummary("Return advisory smart-1 suggestions for the authenticated organization.")
@@ -39,9 +40,11 @@ internal static class MatchEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status500InternalServerError);
+            .ProducesProblem(StatusCodes.Status500InternalServerError)
+            .WithMetadata(FinancialEndpointClassification.Read("reconciliation.read"));
         group.MapPost("/matches/confirm", ConfirmMatchAsync)
-            .Accepts<ConfirmMatchRequest>("application/json");
+            .Accepts<ConfirmMatchRequest>("application/json")
+            .WithMetadata(FinancialEndpointClassification.Write());
 
         return group;
     }

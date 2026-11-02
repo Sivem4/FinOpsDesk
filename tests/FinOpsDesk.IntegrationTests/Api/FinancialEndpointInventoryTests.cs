@@ -1,0 +1,129 @@
+using System.Reflection;
+
+using FinOpsDesk.Api.Authentication;
+using FinOpsDesk.Api.Authorization;
+using FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
+using FinOpsDesk.Modules.Access.Domain;
+using FinOpsDesk.Modules.Reconciliation.Presentation;
+
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace FinOpsDesk.IntegrationTests.Api;
+
+[Collection(SqlServerCollection.Name)]
+public sealed class FinancialEndpointInventoryTests : IDisposable
+{
+    private readonly FinOpsDeskApiFactory _factory;
+
+    public FinancialEndpointInventoryTests(SqlServerFixture fixture)
+    {
+        _factory = new FinOpsDeskApiFactory(fixture.ConnectionString);
+    }
+
+    [Fact]
+    public void Registered_reconciliation_routes_have_one_explicit_classification()
+    {
+        Dictionary<string, string?> expected = new(StringComparer.Ordinal)
+        {
+            ["GET /api/invoices"] = AccessPermission.InvoicesRead.Value,
+            ["GET /api/bank-transactions"] = AccessPermission.BankTransactionsRead.Value,
+            ["GET /api/matches"] = AccessPermission.ReconciliationRead.Value,
+            ["GET /api/matches/smart"] = AccessPermission.ReconciliationRead.Value,
+            ["GET /api/matches/batch/preview"] = AccessPermission.ReconciliationRead.Value,
+            ["GET /api/allocations"] = AccessPermission.AllocationsRead.Value,
+            ["GET /api/allocations/context"] = AccessPermission.AllocationsRead.Value,
+            ["GET /api/allocations/{allocationId}/reversal-context"] = AccessPermission.AllocationsRead.Value,
+            ["GET /api/allocations/{allocationId}/audit"] = AccessPermission.AuditRead.Value,
+            ["GET /api/review-cases"] = AccessPermission.ReviewCasesRead.Value,
+            ["GET /api/review-cases/{id}"] = AccessPermission.ReviewCasesRead.Value,
+            ["POST /api/imports/invoices"] = null,
+            ["POST /api/imports/bank-transactions"] = null,
+            ["POST /api/matches/confirm"] = null,
+            ["POST /api/matches/batch/execute"] = null,
+            ["POST /api/allocations"] = null,
+            ["POST /api/allocations/{allocationId}/reverse"] = null,
+            ["POST /api/review-cases"] = null,
+            ["POST /api/review-cases/{id}/resolve"] = null,
+            ["POST /api/review-cases/{id}/dismiss"] = null,
+        };
+
+        EndpointDataSource dataSource = _factory.Services.GetRequiredService<EndpointDataSource>();
+        List<RouteEndpoint> reconciliation = [];
+        int reconciliationHandlers = 0;
+        foreach (Endpoint endpoint in dataSource.Endpoints)
+        {
+            if (endpoint is not RouteEndpoint route)
+            {
+                continue;
+            }
+
+            MethodInfo? method = route.Metadata.GetMetadata<MethodInfo>();
+            bool fromModule = method?.DeclaringType?.Assembly == typeof(ReconciliationEndpoints).Assembly;
+            bool insideBoundary = route.Metadata.GetMetadata<ReconciliationRouteBoundary>() is not null;
+            if (fromModule)
+            {
+                reconciliationHandlers++;
+                Assert.True(insideBoundary, route.RoutePattern.RawText);
+            }
+
+            if (insideBoundary)
+            {
+                reconciliation.Add(route);
+            }
+        }
+
+        Assert.Equal(expected.Count, reconciliationHandlers);
+        Dictionary<string, string?> actual = [];
+        foreach (RouteEndpoint route in reconciliation)
+        {
+            Assert.Null(route.Metadata.GetMetadata<IAllowAnonymous>());
+            Assert.Empty(route.Metadata.GetOrderedMetadata<AuthorizationPolicy>());
+            IAuthorizeData authorize = Assert.Single(route.Metadata.GetOrderedMetadata<IAuthorizeData>());
+            Assert.Equal(FinOpsDeskAuthorizationPolicies.TenantMember, authorize.Policy);
+            Assert.True(string.IsNullOrEmpty(authorize.Roles));
+            Assert.True(string.IsNullOrEmpty(authorize.AuthenticationSchemes));
+
+            FinancialEndpointClassification classification = Assert.Single(
+                route.Metadata.GetOrderedMetadata<FinancialEndpointClassification>());
+            HttpMethodMetadata methods = Assert.IsType<HttpMethodMetadata>(
+                Assert.Single(route.Metadata.GetOrderedMetadata<IHttpMethodMetadata>()));
+            string httpMethod = Assert.Single(methods.HttpMethods);
+            string pattern = Normalize(route.RoutePattern.RawText);
+            string key = httpMethod + " " + pattern;
+            bool added = actual.TryAdd(key, classification.Permission);
+            Assert.True(added, key);
+
+            if (classification.Kind == FinancialEndpointClassification.OperationKind.Read)
+            {
+                Assert.Equal("GET", httpMethod);
+                Assert.Equal(expected[key], classification.Permission);
+            }
+            else
+            {
+                Assert.Equal(FinancialEndpointClassification.OperationKind.Write, classification.Kind);
+                Assert.Equal("POST", httpMethod);
+                Assert.Null(classification.Permission);
+                Assert.Null(expected[key]);
+            }
+        }
+
+        Assert.Equal(expected.Keys.OrderBy(key => key, StringComparer.Ordinal), actual.Keys.OrderBy(key => key, StringComparer.Ordinal));
+        Assert.DoesNotContain(
+            dataSource.Endpoints.OfType<RouteEndpoint>(),
+            route => Normalize(route.RoutePattern.RawText).StartsWith("/api/test/", StringComparison.Ordinal));
+    }
+
+    public void Dispose()
+    {
+        _factory.Dispose();
+    }
+
+    private static string Normalize(string? rawText)
+    {
+        string text = rawText ?? string.Empty;
+        return text.StartsWith('/') ? text : "/" + text;
+    }
+}
