@@ -20,6 +20,7 @@ internal sealed class AccessSessionSnapshot
         string? displayName,
         Guid? userId,
         Guid? sessionStamp,
+        Guid? browserSessionId,
         IReadOnlyList<OrganizationChoice> organizations,
         OrganizationChoice? activeOrganization)
     {
@@ -30,6 +31,7 @@ internal sealed class AccessSessionSnapshot
         DisplayName = displayName;
         UserId = userId;
         SessionStamp = sessionStamp;
+        BrowserSessionId = browserSessionId;
         Organizations = organizations;
         ActiveOrganization = activeOrganization;
     }
@@ -48,6 +50,8 @@ internal sealed class AccessSessionSnapshot
 
     public Guid? SessionStamp { get; }
 
+    public Guid? BrowserSessionId { get; }
+
     public IReadOnlyList<OrganizationChoice> Organizations { get; }
 
     public OrganizationChoice? ActiveOrganization { get; }
@@ -58,6 +62,7 @@ internal sealed class AccessSessionSnapshot
         string? displayName,
         Guid userId,
         Guid sessionStamp,
+        Guid browserSessionId,
         IReadOnlyList<OrganizationChoice> organizations,
         OrganizationChoice? activeOrganization)
     {
@@ -69,6 +74,7 @@ internal sealed class AccessSessionSnapshot
             displayName,
             userId,
             sessionStamp,
+            browserSessionId,
             organizations,
             activeOrganization);
     }
@@ -78,6 +84,7 @@ internal sealed class AccessSessionSnapshot
         return new AccessSessionSnapshot(
             AccessSessionKind.Rejected,
             reason,
+            null,
             null,
             null,
             null,
@@ -97,6 +104,7 @@ internal sealed class AccessSessionSnapshot
             null,
             null,
             null,
+            null,
             [],
             null);
     }
@@ -106,6 +114,7 @@ internal sealed class AccessSessionSnapshot
         return new AccessSessionSnapshot(
             AccessSessionKind.Unavailable,
             reason,
+            null,
             null,
             null,
             null,

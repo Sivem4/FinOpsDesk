@@ -18,11 +18,14 @@ public sealed class AccessDbContext : DbContext
 
     public DbSet<OrganizationMembership> OrganizationMemberships => Set<OrganizationMembership>();
 
+    public DbSet<BrowserSession> BrowserSessions => Set<BrowserSession>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("access");
         modelBuilder.ApplyConfiguration(new ApplicationUserConfiguration());
         modelBuilder.ApplyConfiguration(new OrganizationConfiguration());
         modelBuilder.ApplyConfiguration(new OrganizationMembershipConfiguration());
+        modelBuilder.ApplyConfiguration(new BrowserSessionConfiguration());
     }
 }

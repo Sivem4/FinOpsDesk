@@ -79,6 +79,40 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.BrowserSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_BrowserSessions_UserId");
+
+                    b.ToTable("BrowserSessions", "access", t =>
+                        {
+                            t.HasCheckConstraint("CK_BrowserSessions_ExpiresAt", "[ExpiresAt] > [CreatedAt]");
+                        });
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.Organization", b =>
                 {
                     b.Property<Guid>("Id")
@@ -151,6 +185,16 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_OrganizationMemberships_Status", "[Status] IN (1, 2)");
                         });
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.BrowserSession", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BrowserSessions_ApplicationUsers_UserId");
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.OrganizationMembership", b =>

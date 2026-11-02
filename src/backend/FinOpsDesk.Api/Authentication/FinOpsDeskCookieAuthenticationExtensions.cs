@@ -41,11 +41,6 @@ internal static class FinOpsDeskCookieAuthenticationExtensions
                 options.Events.OnSigningOut = context =>
                 {
                     context.Response.Headers.CacheControl = "no-store";
-                    if (context.Request.Path.Equals("/logout", StringComparison.OrdinalIgnoreCase))
-                    {
-                        context.Response.StatusCode = StatusCodes.Status204NoContent;
-                    }
-
                     return Task.CompletedTask;
                 };
                 // RequestRefresh rewrites ExpiresUtc to now plus the original

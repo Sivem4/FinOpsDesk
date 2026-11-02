@@ -11,6 +11,7 @@ internal static class CookieSessionPrincipal
         string subject,
         string? displayName,
         Guid sessionStamp,
+        Guid sessionId,
         Guid? organizationId)
     {
         ArgumentException.ThrowIfNullOrEmpty(issuer);
@@ -20,11 +21,17 @@ internal static class CookieSessionPrincipal
             throw new ArgumentException("Session stamp cannot be empty.", nameof(sessionStamp));
         }
 
+        if (sessionId == Guid.Empty)
+        {
+            throw new ArgumentException("Session id cannot be empty.", nameof(sessionId));
+        }
+
         var claims = new List<Claim>
         {
             new("iss", issuer, ClaimValueTypes.String, issuer),
             new("sub", subject, ClaimValueTypes.String, issuer),
             new(FinOpsDeskCookieClaims.SessionStamp, sessionStamp.ToString("D"), ClaimValueTypes.String, issuer),
+            new(FinOpsDeskCookieClaims.SessionId, sessionId.ToString("D"), ClaimValueTypes.String, issuer),
         };
 
         if (!string.IsNullOrEmpty(displayName) && displayName.Length <= 256)
