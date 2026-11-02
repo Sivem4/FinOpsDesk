@@ -151,6 +151,78 @@ public sealed class CookieOrganizationBrowserTests
         Assert.True(probe.GetProperty("activeOrganizationId").ValueKind == JsonValueKind.Null);
     }
 
+    [Fact]
+    public async Task Delayed_organization_cookie_cannot_restore_a_revoked_session()
+    {
+        await using CookieBrowserHost host = await CookieBrowserHost.StartAsync();
+        IBrowserContext context = await host.NewContextAsync();
+        IPage first = await context.NewPageAsync();
+        int bearerCount = 0;
+        first.Request += (_, request) =>
+        {
+            if (HasBearer(request))
+            {
+                bearerCount++;
+            }
+        };
+        await SignInAsync(host, first);
+        await first.GetByRole(AriaRole.Button, new() { Name = "Select North Ledger" }).WaitForAsync();
+        (int total, int revoked) signedIn = await host.CountSessionsAsync();
+        Assert.Equal(1, signedIn.total);
+        Assert.Equal(0, signedIn.revoked);
+
+        TaskCompletionSource<IAPIResponse> captured = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await first.RouteAsync("**/api/session/organization", async route =>
+        {
+            IAPIResponse response = await route.FetchAsync(new RouteFetchOptions
+            {
+                MaxRetries = 0,
+                MaxRedirects = 0,
+                Timeout = 20_000,
+            });
+            captured.TrySetResult(response);
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await route.FulfillAsync(new RouteFulfillOptions { Response = response });
+        });
+
+        await first.GetByRole(AriaRole.Button, new() { Name = "Select North Ledger" })
+            .EvaluateAsync("button => button.click()");
+        IAPIResponse held = await captured.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal(204, held.Status);
+        (int total, int revoked) selected = await host.CountSessionsAsync();
+        Assert.Equal(1, selected.total);
+        Assert.Equal(0, selected.revoked);
+
+        IPage second = await context.NewPageAsync();
+        second.Request += (_, request) =>
+        {
+            if (HasBearer(request))
+            {
+                bearerCount++;
+            }
+        };
+        await second.GotoAsync(host.Origin);
+        await second.GetByRole(AriaRole.Button, new() { Name = "Sign out" }).ClickAsync();
+        await second.GetByText("FinOpsDesk signed out in this browser.").WaitForAsync();
+        (int total, int revoked) signedOut = await host.CountSessionsAsync();
+        Assert.Equal(1, signedOut.total);
+        Assert.Equal(1, signedOut.revoked);
+
+        release.TrySetResult(true);
+        await first.GetByRole(AriaRole.Button, new() { Name = "Sign in" }).WaitForAsync();
+        JsonElement probe = await ReadOrganizationProbeAsync(first);
+        Assert.Equal(200, probe.GetProperty("status").GetInt32());
+        Assert.False(probe.GetProperty("authenticated").GetBoolean());
+        Assert.True(probe.GetProperty("activeOrganizationId").ValueKind == JsonValueKind.Null);
+        Assert.False(probe.GetProperty("financialAccess").GetBoolean());
+        Assert.Equal(0, await first.GetByRole(AriaRole.Button, new() { Name = "Invoices" }).CountAsync());
+        Assert.Equal(0, bearerCount);
+        (int total, int revoked) after = await host.CountSessionsAsync();
+        Assert.Equal(1, after.total);
+        Assert.Equal(1, after.revoked);
+    }
+
     private static async Task SignInAsync(CookieBrowserHost host, IPage page)
     {
         await page.GotoAsync(host.Origin);
@@ -379,6 +451,14 @@ public sealed class CookieOrganizationBrowserTests
                 .SingleAsync(candidate => candidate.Id == _northMembershipId);
             membership.Revoke(DateTimeOffset.UtcNow);
             await access.SaveChangesAsync();
+        }
+
+        public async Task<(int Total, int Revoked)> CountSessionsAsync()
+        {
+            await using AccessDbContext access = E2EDatabase.CreateAccessContext(Database.ConnectionString);
+            int total = await access.BrowserSessions.CountAsync();
+            int revoked = await access.BrowserSessions.CountAsync(session => session.RevokedAt != null);
+            return (total, revoked);
         }
 
         public async ValueTask DisposeAsync()

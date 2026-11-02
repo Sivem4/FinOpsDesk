@@ -26,6 +26,7 @@ public static class AccessModule
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IExternalIdentityProvisioner, ExternalIdentityProvisioner>();
         services.AddScoped<IOrganizationMembershipReader, OrganizationMembershipReader>();
+        services.AddScoped<IBrowserSessionStore, BrowserSessionStore>();
         return services;
     }
 }

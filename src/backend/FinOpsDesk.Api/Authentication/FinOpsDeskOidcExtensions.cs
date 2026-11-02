@@ -211,12 +211,29 @@ internal static class FinOpsDeskOidcExtensions
                 return;
             }
 
+            CookieAuthenticationOptions cookieOptions = context.HttpContext.RequestServices
+                .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+                .Get(CookieAuthenticationDefaults.AuthenticationScheme);
+            DateTimeOffset createdAt = (cookieOptions.TimeProvider ?? TimeProvider.System).GetUtcNow();
+            DateTimeOffset expiresAt = createdAt.Add(cookieOptions.ExpireTimeSpan);
+            IBrowserSessionStore sessions = context.HttpContext.RequestServices
+                .GetRequiredService<IBrowserSessionStore>();
+            Guid sessionId = await sessions.CreateAsync(
+                provision.UserId,
+                createdAt,
+                expiresAt,
+                context.HttpContext.RequestAborted);
+
             context.Principal = CookieSessionPrincipal.Create(
                 issuer,
                 subject,
                 context.Principal?.FindFirst("name")?.Value,
                 provision.SessionStamp,
+                sessionId,
                 organizationId: null);
+            context.Properties ??= new AuthenticationProperties();
+            context.Properties.IssuedUtc = createdAt;
+            context.Properties.ExpiresUtc = expiresAt;
         }
         catch (OperationCanceledException)
         {

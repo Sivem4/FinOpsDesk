@@ -508,11 +508,13 @@ public sealed class ActiveOrganizationSessionTests : IDisposable
         using HttpClient client = _factory.CreateBrowserClient();
         await SignInAsync(client, _stub);
         ApplicationUser user = await RequireUserAsync(_stub.Authority, OidcProtocolStub.Subject);
+        Guid sessionId = await OpenSessionAsync(user.Id);
         string ticket = Protect(CookieSessionPrincipal.Create(
             _stub.Authority,
             OidcProtocolStub.Subject,
             null,
             user.SessionStamp,
+            sessionId,
             organizationId: null), extraOrganization: "not-a-guid");
         using HttpClient forged = ClientWithSession(ticket);
 
@@ -619,11 +621,13 @@ public sealed class ActiveOrganizationSessionTests : IDisposable
 
         try
         {
+            Guid sessionA = await OpenSessionAsync(first.Id);
+            Guid sessionBId = await OpenSessionAsync(second.Id);
             string sessionB = Protect(
-                CookieSessionPrincipal.Create(_stub.Authority, "subject-b", null, second.SessionStamp, null),
+                CookieSessionPrincipal.Create(_stub.Authority, "subject-b", null, second.SessionStamp, sessionBId, null),
                 extraOrganization: null);
             using HttpClient clientA = ClientWithSession(Protect(
-                CookieSessionPrincipal.Create(_stub.Authority, "subject-a", null, first.SessionStamp, null),
+                CookieSessionPrincipal.Create(_stub.Authority, "subject-a", null, first.SessionStamp, sessionA, null),
                 extraOrganization: null));
             using HttpClient clientB = ClientWithSession(sessionB);
             (string tokenA, string? csrfCookieA) = await ReadSessionCredentialsAsync(clientA);
@@ -776,6 +780,20 @@ public sealed class ActiveOrganizationSessionTests : IDisposable
             });
     }
 
+    private async Task<Guid> OpenSessionAsync(Guid userId)
+    {
+        DateTimeOffset createdAt = DateTimeOffset.UtcNow;
+        BrowserSession session = BrowserSession.Open(
+            BrowserSession.CreateId(),
+            userId,
+            createdAt,
+            createdAt.AddHours(8));
+        await using AccessDbContext context = _fixture.CreateAccessContext();
+        context.BrowserSessions.Add(session);
+        await context.SaveChangesAsync();
+        return session.Id;
+    }
+
     private async Task<Guid> GrantAsync(Guid userId, string name)
     {
         Guid organizationId = Guid.NewGuid();
@@ -828,6 +846,10 @@ public sealed class ActiveOrganizationSessionTests : IDisposable
             .Where(membership => membership.UserId == userId)
             .ToListAsync();
         context.OrganizationMemberships.RemoveRange(memberships);
+        List<BrowserSession> sessions = await context.BrowserSessions
+            .Where(session => session.UserId == userId)
+            .ToListAsync();
+        context.BrowserSessions.RemoveRange(sessions);
         ApplicationUser? user = await context.ApplicationUsers.SingleOrDefaultAsync(candidate => candidate.Id == userId);
         if (user is not null)
         {

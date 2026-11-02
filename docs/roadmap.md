@@ -316,12 +316,13 @@ Phase 7C.1 persists organization membership in the Access module. A completed OI
 
 Phase 7C.2 validates that membership on each cookie request. `finopsdesk_org` remembers an explicit `POST /api/session/organization` choice and is not itself authorization. A disabled or missing application user is signed out, and the old ticket does not survive a later restore. A SQL failure returns HTTP 503 and keeps the unexpired cookie. Switching organizations does not extend the eight-hour lifetime. CSRF additional data is bound to the exact issuer and subject. Financial routes stay fail-closed. See ADR 0015.
 
-Phase 7C.3 shows that choice in the cookie screen. The browser does not treat one membership, or HTTP 204, as the active organization. The following session read is authoritative. A verified organization change clears cached queries. Other tabs, focus, and visibility only trigger a new read. Cookie-mode recovery descriptors stay blocked. `DevelopmentJwt` is unchanged. A late organization `Set-Cookie` can still restore a cookie after another tab signs out; that server-side review is required before financial access.
+Phase 7C.3 shows that choice in the cookie screen. The browser does not treat one membership, or HTTP 204, as the active organization. The following session read is authoritative. A verified organization change clears cached queries. Other tabs, focus, and visibility only trigger a new read. Cookie-mode recovery descriptors stay blocked. `DevelopmentJwt` is unchanged.
+
+Phase 7D.1 persists one `BrowserSession` per completed OIDC login and copies its id to `finopsdesk_sid`. Ordinary logout revokes that row before HTTP 204 and does not rotate `SessionStamp` or sign out another browser. A cookie without that id is rejected. Organization selection keeps the same id and the original eight-hour deadline, so a late `Set-Cookie` cannot revive a revoked row. SQL unavailability stays HTTP 503 and does not clear an unexpired cookie. Financial routes stay fail-closed. See ADR 0016.
 
 Still in this phase:
 
 - financial authorization of the selected organization;
-- server rejection of a ticket resurrected by a concurrent organization response;
 - identity-bound financial recovery, or recovery remaining disabled;
 - roles;
 - policies;

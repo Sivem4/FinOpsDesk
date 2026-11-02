@@ -10,17 +10,25 @@ namespace FinOpsDesk.Api.Authentication;
 internal sealed class AccessSessionGate
 {
     private readonly IOrganizationMembershipReader _memberships;
+    private readonly IBrowserSessionStore _sessions;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<AccessSessionGate> _logger;
     private Task<AccessSessionSnapshot>? _pending;
 
     public AccessSessionGate(
         IOrganizationMembershipReader memberships,
+        IBrowserSessionStore sessions,
+        TimeProvider timeProvider,
         ILogger<AccessSessionGate> logger)
     {
         ArgumentNullException.ThrowIfNull(memberships);
+        ArgumentNullException.ThrowIfNull(sessions);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         _memberships = memberships;
+        _sessions = sessions;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -66,8 +74,17 @@ internal sealed class AccessSessionGate
             return AccessSessionSnapshot.InvalidIdentity();
         }
 
+        if (!TryReadSessionId(principal, out Guid sessionId))
+        {
+            _logger.LogWarning(
+                "Application cookie identity was rejected. Reason: {Reason}",
+                "invalid-session");
+            return AccessSessionSnapshot.InvalidIdentity();
+        }
+
         // A malformed or duplicated selection is not a trusted tenant and does not
-        // invalidate the login. Only issuer, subject, and the session stamp do.
+        // invalidate the login. Only issuer, subject, the session stamp, and the
+        // server session identifier do.
         if (!CookieClaimReader.TryGetOptionalGuid(
             principal,
             FinOpsDeskCookieClaims.Organization,
@@ -92,6 +109,7 @@ internal sealed class AccessSessionGate
                 subject,
                 displayName,
                 observedStamp,
+                sessionId,
                 selectedOrganization,
                 cancellationToken);
             if (snapshot.Kind is AccessSessionKind.Rejected or AccessSessionKind.Unavailable)
@@ -126,6 +144,7 @@ internal sealed class AccessSessionGate
         string subject,
         string? displayName,
         Guid observedStamp,
+        Guid sessionId,
         Guid? selectedOrganization,
         CancellationToken cancellationToken)
     {
@@ -151,6 +170,27 @@ internal sealed class AccessSessionGate
             return AccessSessionSnapshot.Rejected("stamp-mismatch");
         }
 
+        BrowserSessionState? browserSession = await _sessions.FindAsync(sessionId, cancellationToken);
+        if (browserSession is null)
+        {
+            return AccessSessionSnapshot.Rejected("unknown-session");
+        }
+
+        if (browserSession.UserId != activeUserId)
+        {
+            return AccessSessionSnapshot.Rejected("session-user-mismatch");
+        }
+
+        if (browserSession.RevokedAt is not null)
+        {
+            return AccessSessionSnapshot.Rejected("session-revoked");
+        }
+
+        if (browserSession.ExpiresAt <= _timeProvider.GetUtcNow())
+        {
+            return AccessSessionSnapshot.Rejected("session-expired");
+        }
+
         OrganizationChoice? active = null;
         if (selectedOrganization is Guid organizationId)
         {
@@ -170,7 +210,22 @@ internal sealed class AccessSessionGate
             displayName,
             activeUserId,
             currentStamp,
+            browserSession.Id,
             resolution.Organizations,
             active);
+    }
+
+    private static bool TryReadSessionId(ClaimsPrincipal principal, out Guid sessionId)
+    {
+        sessionId = Guid.Empty;
+        if (!CookieClaimReader.TryGetSingle(principal, FinOpsDeskCookieClaims.SessionId, out string text)
+            || !Guid.TryParse(text, out sessionId)
+            || sessionId == Guid.Empty)
+        {
+            sessionId = Guid.Empty;
+            return false;
+        }
+
+        return true;
     }
 }

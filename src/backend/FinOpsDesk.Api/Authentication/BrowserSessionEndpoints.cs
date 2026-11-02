@@ -141,11 +141,17 @@ internal static class BrowserSessionEndpoints
             throw new InvalidOperationException("The application cookie has no absolute expiry.");
         }
 
+        if (snapshot.BrowserSessionId is not Guid sessionId || sessionId == Guid.Empty)
+        {
+            return Results.Unauthorized();
+        }
+
         ClaimsPrincipal principal = CookieSessionPrincipal.Create(
             snapshot.Issuer,
             snapshot.Subject,
             snapshot.DisplayName,
             sessionStamp,
+            sessionId,
             organizationId);
         await httpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
@@ -351,13 +357,76 @@ internal static class BrowserSessionEndpoints
             [OpenIdConnectDefaults.AuthenticationScheme]);
     }
 
-    private static IResult LogoutAsync(HttpContext httpContext)
+    private static async Task<IResult> LogoutAsync(
+        HttpContext httpContext,
+        AccessSessionGate sessions,
+        IBrowserSessionStore browserSessions,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
+        ArgumentNullException.ThrowIfNull(sessions);
+        ArgumentNullException.ThrowIfNull(browserSessions);
+        ArgumentNullException.ThrowIfNull(timeProvider);
 
-        return Results.SignOut(
-            new AuthenticationProperties(),
-            [CookieAuthenticationDefaults.AuthenticationScheme]);
+        httpContext.Response.Headers.CacheControl = "no-store";
+        AuthenticateResult authentication = await httpContext.AuthenticateAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme);
+        if (!authentication.Succeeded
+            || authentication.Principal is null
+            || httpContext.User.Identity?.IsAuthenticated != true)
+        {
+            return Results.Unauthorized();
+        }
+
+        AccessSessionSnapshot snapshot;
+        try
+        {
+            snapshot = sessions.Current
+                ?? await sessions.ResolveAsync(authentication.Principal, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+
+        if (snapshot.Kind == AccessSessionKind.Unavailable)
+        {
+            return MembershipUnavailable();
+        }
+
+        if (snapshot.Kind != AccessSessionKind.Active
+            || snapshot.UserId is not Guid userId
+            || snapshot.BrowserSessionId is not Guid sessionId)
+        {
+            return Results.Unauthorized();
+        }
+
+        BrowserSessionRevocation revocation;
+        try
+        {
+            revocation = await browserSessions.RevokeAsync(
+                sessionId,
+                userId,
+                timeProvider.GetUtcNow(),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return MembershipUnavailable();
+        }
+
+        if (revocation is not (BrowserSessionRevocation.Revoked or BrowserSessionRevocation.AlreadyRevoked))
+        {
+            return Results.Unauthorized();
+        }
+
+        await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Results.NoContent();
     }
 
     private static bool StringValuesEmpty(StringValues value)
