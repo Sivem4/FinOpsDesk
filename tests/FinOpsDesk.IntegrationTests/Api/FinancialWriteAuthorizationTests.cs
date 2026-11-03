@@ -67,6 +67,45 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
     }
 
     [Fact]
+    public async Task Contract_v2_advertises_only_activated_write_capabilities()
+    {
+        await using Host readOnly = await Host.StartAsync(this, reads: true, writes: false);
+        ApplicationUser reader = await readOnly.RequireUserAsync();
+        Guid readMembership = await readOnly.MembershipIdAsync(reader.Id, await readOnly.SelectedOrganizationIdAsync());
+        await readOnly.GrantAsync(readMembership, OrganizationRole.Operator);
+        using JsonDocument withoutWrites = await ReadContractAsync(readOnly);
+        Assert.DoesNotContain("reconciliation.confirm", PermissionText(withoutWrites), StringComparison.Ordinal);
+        Assert.True(withoutWrites.RootElement.GetProperty("financialAccess").GetBoolean());
+
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Guid organizationId = await host.SelectedOrganizationIdAsync();
+        Guid membership = await host.MembershipIdAsync(user.Id, organizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        using JsonDocument versionOne = await ReadContractAsync(host, version: null);
+        Assert.False(versionOne.RootElement.TryGetProperty("permissions", out _));
+        Assert.False(versionOne.RootElement.GetProperty("financialAccess").GetBoolean());
+
+        using JsonDocument operatorSession = await ReadContractAsync(host);
+        string operatorPermissions = PermissionText(operatorSession);
+        Assert.Contains("reconciliation.confirm", operatorPermissions, StringComparison.Ordinal);
+        Assert.Contains("allocations.create", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("allocations.reverse", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("imports.create", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("review-cases.open", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("review-cases.resolve", operatorPermissions, StringComparison.Ordinal);
+        Assert.True(operatorSession.RootElement.GetProperty("financialAccess").GetBoolean());
+
+        await host.RevokeAsync(membership, OrganizationRole.Operator);
+        await host.GrantAsync(membership, OrganizationRole.ReversalApprover);
+        using JsonDocument approver = await ReadContractAsync(host);
+        string approverPermissions = PermissionText(approver);
+        Assert.Contains("allocations.reverse", approverPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("reconciliation.confirm", approverPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("allocations.create", approverPermissions, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Write_matrix_follows_the_role_and_stays_inside_the_organization()
     {
         await using Host host = await Host.StartAsync(this, reads: true, writes: true);
@@ -684,6 +723,24 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     }
 
+    private static async Task<JsonDocument> ReadContractAsync(Host host, string? version = "2")
+    {
+        using HttpRequestMessage request = new(HttpMethod.Get, "/api/session");
+        if (version is not null)
+        {
+            request.Headers.TryAddWithoutValidation("X-FinOpsDesk-Session-Contract", version);
+        }
+
+        HttpResponseMessage response = await host.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    private static string PermissionText(JsonDocument document)
+    {
+        return string.Join(',', document.RootElement.GetProperty("permissions").EnumerateArray().Select(item => item.GetString()));
+    }
+
     private static Pair EmptyPair()
     {
         return new Pair(Guid.Empty, Guid.Empty, Guid.Empty, Guid.Empty);
@@ -1030,6 +1087,15 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             }
 
             return host;
+        }
+
+        public async Task<Guid> SelectedOrganizationIdAsync()
+        {
+            using HttpRequestMessage request = new(HttpMethod.Get, "/api/session");
+            request.Headers.TryAddWithoutValidation("X-FinOpsDesk-Session-Contract", "2");
+            HttpResponseMessage response = await Client.SendAsync(request);
+            using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return document.RootElement.GetProperty("activeOrganization").GetProperty("organizationId").GetGuid();
         }
 
         public Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)

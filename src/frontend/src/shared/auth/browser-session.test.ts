@@ -62,6 +62,23 @@ describe('browser session', () => {
         capabilities: ['invoices.read', 'review-cases.read'],
       },
     });
+    expect(parseBrowserSession({
+      ...restrictedBody(),
+      financialAccess: true,
+      permissions: ['allocations.reverse', 'invoices.read', 'imports.create', 'reconciliation.confirm'],
+      organizations: [organization('North Ledger', northId)],
+      activeOrganization: organization('North Ledger', northId),
+    })).toMatchObject({
+      kind: 'workspace',
+      session: {
+        capabilities: ['invoices.read', 'reconciliation.confirm', 'allocations.reverse'],
+      },
+    });
+    expect(parseBrowserSession({
+      ...restrictedBody(),
+      financialAccess: true,
+      permissions: ['allocations.create'],
+    }).kind).toBe('restricted');
   });
 
   it('rotates the epoch when verified capabilities change', () => {

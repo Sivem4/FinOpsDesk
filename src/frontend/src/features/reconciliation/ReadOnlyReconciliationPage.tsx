@@ -21,6 +21,7 @@ import { useState, type ReactNode } from 'react';
 import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
 import { useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
+import { CookieConfirmationControls, CookieConfirmationDialog } from './CookieFinancialWrites';
 import {
   getExactMatches,
   getSmartMatches,
@@ -60,6 +61,7 @@ const signalLabels: Record<string, string> = {
 export function ReadOnlyReconciliationPage() {
   const session = useSession();
   const [view, setView] = useState<MatchingView>('exact');
+  const [confirmation, setConfirmation] = useState<ExactMatchItem | null>(null);
   const readable = session.authorization === 'verified'
     && session.capabilities.includes('reconciliation.read');
   const exact = useQuery({
@@ -107,16 +109,25 @@ export function ReadOnlyReconciliationPage() {
       {readable && active.isPending ? <Alert severity="info" role="status">Loading matches</Alert> : null}
       {readable && active.isError ? <ErrorState error={active.error} onRetry={() => void active.refetch()} retrying={active.isFetching} /> : null}
       {readable && view === 'exact' && exact.isSuccess ? (
-        <ExactResult result={exact.data} resetKey={session.epoch} />
+        <ExactResult result={exact.data} resetKey={session.epoch} onConfirm={setConfirmation} />
       ) : null}
       {readable && view === 'smart' && smart.isSuccess ? (
         <SmartResult result={smart.data} resetKey={session.epoch} />
       ) : null}
+      <CookieConfirmationDialog item={confirmation} onClose={() => setConfirmation(null)} />
     </Stack>
   );
 }
 
-function ExactResult({ result, resetKey }: { result: ExactMatchResponse; resetKey: number }) {
+function ExactResult({
+  result,
+  resetKey,
+  onConfirm,
+}: {
+  result: ExactMatchResponse;
+  resetKey: number;
+  onConfirm: (item: ExactMatchItem) => void;
+}) {
   const empty = result.exactMatches.length === 0
     && result.ambiguousGroups.length === 0
     && result.unmatched.length === 0
@@ -134,7 +145,7 @@ function ExactResult({ result, resetKey }: { result: ExactMatchResponse; resetKe
           items={result.exactMatches}
           resetKey={resetKey}
           label="exact matches"
-          renderPage={(items) => <ExactMatchTable items={items} />}
+          renderPage={(items) => <ExactMatchTable items={items} onConfirm={onConfirm} />}
         />
       </RecordSection>
       <RecordSection title="Ambiguous groups" count={result.ambiguousGroups.length}>
@@ -213,10 +224,16 @@ function RecordSection({ title, count, children }: { title: string; count: numbe
   );
 }
 
-function ExactMatchTable({ items }: { items: ExactMatchItem[] }) {
+function ExactMatchTable({
+  items,
+  onConfirm,
+}: {
+  items: ExactMatchItem[];
+  onConfirm: (item: ExactMatchItem) => void;
+}) {
   return (
     <MatchTable
-      headings={['Reference', 'Amount', 'Invoice', 'Bank transaction', 'Reason']}
+      headings={['Reference', 'Amount', 'Invoice', 'Bank transaction', 'Reason', 'Action']}
       rows={items.map((item) => (
         <TableRow key={`${item.invoiceId}-${item.bankTransactionId}`}>
           <TableCell>{item.normalizedReference}</TableCell>
@@ -224,6 +241,7 @@ function ExactMatchTable({ items }: { items: ExactMatchItem[] }) {
           <TableCell><Identifier id={item.invoiceId} kind="Invoice" /></TableCell>
           <TableCell><Identifier id={item.bankTransactionId} kind="Bank transaction" /></TableCell>
           <TableCell>{reasonLabels[item.reason] ?? item.reason}</TableCell>
+          <TableCell><CookieConfirmationControls item={item} onOpen={onConfirm} /></TableCell>
         </TableRow>
       ))}
     />

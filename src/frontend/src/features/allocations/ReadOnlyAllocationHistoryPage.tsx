@@ -20,6 +20,7 @@ import { useSearchParams } from 'react-router';
 import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
 import { useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
+import { CookieAllocationForm, CookieReversalControl, CookieReversalRecovery } from '../reconciliation/CookieFinancialWrites';
 import { listAllocationAudit, type AllocationAuditEntry } from './allocation-audit-api';
 import { listAllocationHistory, type AllocationHistoryItem } from './allocation-history-api';
 
@@ -107,9 +108,12 @@ export function ReadOnlyAllocationHistoryPage() {
         ) : null}
       </Stack>
       <Typography color="text.secondary">
-        These are persisted allocations. This browser can only read history
-        {canReadAudit ? ' and audit entries' : ''}. Reversal stays unavailable.
+        These are persisted allocations. This browser can read history
+        {canReadAudit ? ' and audit entries' : ''}.
+        A write control appears only for the current permission.
       </Typography>
+      <CookieAllocationForm />
+      <CookieReversalRecovery />
       {filtered && filtersValid ? (
         <Alert
           severity="info"
@@ -272,7 +276,18 @@ function HistoryRows({
             : `${item.reversedAt ?? ''}${item.reversalReason !== null ? ` · ${item.reversalReason}` : ''}`}
         </TableCell>
         <TableCell>
-          <RecordId id={item.allocationId} label="Allocation" />
+          <Stack spacing={1}>
+            <RecordId id={item.allocationId} label="Allocation" />
+            {item.status === 'confirmed' ? (
+              <CookieReversalControl
+                allocationId={item.allocationId}
+                invoiceId={item.invoiceId}
+                bankTransactionId={item.bankTransactionId}
+                amount={item.amount}
+                currency={item.currency}
+              />
+            ) : null}
+          </Stack>
         </TableCell>
         {canReadAudit ? (
           <TableCell>
