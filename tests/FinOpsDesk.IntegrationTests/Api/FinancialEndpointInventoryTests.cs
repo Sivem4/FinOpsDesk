@@ -39,15 +39,15 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["GET /api/allocations/{allocationId}/audit"] = AccessPermission.AuditRead.Value,
             ["GET /api/review-cases"] = AccessPermission.ReviewCasesRead.Value,
             ["GET /api/review-cases/{id}"] = AccessPermission.ReviewCasesRead.Value,
-            ["POST /api/imports/invoices"] = null,
-            ["POST /api/imports/bank-transactions"] = null,
-            ["POST /api/matches/confirm"] = null,
-            ["POST /api/matches/batch/execute"] = null,
-            ["POST /api/allocations"] = null,
-            ["POST /api/allocations/{allocationId}/reverse"] = null,
-            ["POST /api/review-cases"] = null,
-            ["POST /api/review-cases/{id}/resolve"] = null,
-            ["POST /api/review-cases/{id}/dismiss"] = null,
+            ["POST /api/imports/invoices"] = AccessPermission.ImportsCreate.Value,
+            ["POST /api/imports/bank-transactions"] = AccessPermission.ImportsCreate.Value,
+            ["POST /api/matches/confirm"] = AccessPermission.ReconciliationConfirm.Value,
+            ["POST /api/matches/batch/execute"] = AccessPermission.ReconciliationConfirm.Value,
+            ["POST /api/allocations"] = AccessPermission.AllocationsCreate.Value,
+            ["POST /api/allocations/{allocationId}/reverse"] = AccessPermission.AllocationsReverse.Value,
+            ["POST /api/review-cases"] = AccessPermission.ReviewCasesOpen.Value,
+            ["POST /api/review-cases/{id}/resolve"] = AccessPermission.ReviewCasesResolve.Value,
+            ["POST /api/review-cases/{id}/dismiss"] = AccessPermission.ReviewCasesResolve.Value,
         };
 
         EndpointDataSource dataSource = _factory.Services.GetRequiredService<EndpointDataSource>();
@@ -105,8 +105,8 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             {
                 Assert.Equal(FinancialEndpointClassification.OperationKind.Write, classification.Kind);
                 Assert.Equal("POST", httpMethod);
-                Assert.Null(classification.Permission);
-                Assert.Null(expected[key]);
+                Assert.Equal(expected[key], classification.Permission);
+                Assert.False(string.IsNullOrWhiteSpace(classification.Permission));
             }
         }
 

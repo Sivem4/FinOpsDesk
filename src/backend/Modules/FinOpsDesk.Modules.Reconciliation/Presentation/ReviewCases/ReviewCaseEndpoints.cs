@@ -68,7 +68,7 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .AddOpenApiOperationTransformer(DocumentOpenOperation)
-            .WithMetadata(FinancialEndpointClassification.Write());
+            .WithMetadata(FinancialEndpointClassification.Write("review-cases.open"));
 
         group.MapGet("/review-cases", ListAsync)
             .WithName("ListReviewCases")
@@ -118,7 +118,7 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .AddOpenApiOperationTransformer(DocumentResolveOperation)
-            .WithMetadata(FinancialEndpointClassification.Write());
+            .WithMetadata(FinancialEndpointClassification.Write("review-cases.resolve"));
 
         group.MapPost("/review-cases/{id}/dismiss", DismissAsync)
             .WithName("DismissReviewCase")
@@ -137,7 +137,7 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .AddOpenApiOperationTransformer(DocumentDismissOperation)
-            .WithMetadata(FinancialEndpointClassification.Write());
+            .WithMetadata(FinancialEndpointClassification.Write("review-cases.resolve"));
 
         return group;
     }

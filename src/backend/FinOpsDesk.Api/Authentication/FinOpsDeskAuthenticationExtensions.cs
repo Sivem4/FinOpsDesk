@@ -28,6 +28,7 @@ internal static class FinOpsDeskAuthenticationExtensions
             {
                 UsesProductionCookie = false,
                 ProductionFinancialAccessFailClosed = false,
+                ProductionFinancialWritesEnabled = false,
             });
             services.AddFinOpsDeskJwtBearerAuthentication(configuration);
             return services;
@@ -42,10 +43,13 @@ internal static class FinOpsDeskAuthenticationExtensions
             // This branch does not register the JWT bearer handler.
             services.AddOptions<JwtBearerAuthenticationSettings>()
                 .Bind(configuration.GetSection(JwtBearerAuthenticationSettings.SectionName));
+            bool readsEnabled = FinancialReadAuthorization.IsEnabled(configuration);
             services.AddSingleton(new AuthenticationCompositionState
             {
                 UsesProductionCookie = true,
-                ProductionFinancialAccessFailClosed = !FinancialReadAuthorization.IsEnabled(configuration),
+                ProductionFinancialAccessFailClosed = !readsEnabled,
+                ProductionFinancialWritesEnabled = readsEnabled
+                    && FinancialWriteAuthorization.IsEnabled(configuration),
             });
             services.AddFinOpsDeskCookieAuthentication();
             services.AddFinOpsDeskOpenIdConnect(configuration);

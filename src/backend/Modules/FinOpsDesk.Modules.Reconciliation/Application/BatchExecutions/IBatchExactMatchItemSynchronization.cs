@@ -5,6 +5,11 @@ namespace FinOpsDesk.Modules.Reconciliation.Application.BatchExecutions;
 internal interface IBatchExactMatchItemSynchronization
 {
     Task OnItemReadyToCommitAsync(Guid itemKey, CancellationToken cancellationToken);
+
+    Task BeforeItemAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class ImmediateBatchItemSynchronization : IBatchExactMatchItemSynchronization

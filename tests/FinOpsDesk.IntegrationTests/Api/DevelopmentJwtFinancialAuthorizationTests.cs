@@ -24,7 +24,8 @@ public sealed class DevelopmentJwtFinancialAuthorizationTests : IDisposable
         _fixture = fixture;
         _factory = new FinOpsDeskApiFactory(
             fixture.ConnectionString,
-            financialReadAuthorizationEnabled: true);
+            financialReadAuthorizationEnabled: true,
+            financialWriteAuthorizationEnabled: true);
     }
 
     [Fact]
@@ -33,6 +34,7 @@ public sealed class DevelopmentJwtFinancialAuthorizationTests : IDisposable
         AuthenticationCompositionState state = _factory.Services.GetRequiredService<AuthenticationCompositionState>();
         Assert.False(state.UsesProductionCookie);
         Assert.False(state.ProductionFinancialAccessFailClosed);
+        Assert.False(state.ProductionFinancialWritesEnabled);
 
         OrganizationId organizationId = OrganizationId.New();
         Invoice invoice = new(InvoiceId.New(), organizationId, "JWT-INV", new Money(12m, PersistenceTestData.Pln));

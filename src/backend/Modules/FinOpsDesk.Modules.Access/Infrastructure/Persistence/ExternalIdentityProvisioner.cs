@@ -1,8 +1,12 @@
+using System.Data;
+using System.Data.Common;
+
 using FinOpsDesk.Modules.Access.Application;
 using FinOpsDesk.Modules.Access.Domain;
 
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 
@@ -91,10 +95,33 @@ internal sealed class ExternalIdentityProvisioner : IExternalIdentityProvisioner
 
     private async Task<ApplicationUser> ReplaceEmptyStampAsync(Guid userId, CancellationToken cancellationToken)
     {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        DbConnection connection = _dbContext.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using DbCommand command = connection.CreateCommand();
+        command.Transaction = transaction.GetDbTransaction();
+        command.CommandText =
+            """
+            SELECT Id
+            FROM access.ApplicationUsers WITH (UPDLOCK, HOLDLOCK)
+            WHERE Id = @id
+            """;
+        command.Parameters.Add(new SqlParameter("@id", SqlDbType.UniqueIdentifier) { Value = userId });
+        if (await command.ExecuteScalarAsync(cancellationToken) is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new InvalidOperationException("Application user session stamp is missing.");
+        }
+
         ApplicationUser tracked = await _dbContext.ApplicationUsers
             .SingleAsync(user => user.Id == userId, cancellationToken);
         tracked.RotateSessionStamp();
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return tracked;
     }
 

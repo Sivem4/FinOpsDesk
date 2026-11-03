@@ -24,7 +24,9 @@ public static class AccessModule
                     "access")));
 
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<SqlApplicationLockPolicy>();
         services.TryAddSingleton<IOrganizationRoleMutationSync, NoOrganizationRoleMutationSync>();
+        services.AddScoped<IOrganizationFinancialAuthorization, OrganizationFinancialAuthorization>();
         services.AddScoped<IExternalIdentityProvisioner, ExternalIdentityProvisioner>();
         services.AddScoped<IOrganizationMembershipReader, OrganizationMembershipReader>();
         services.AddScoped<IBrowserSessionStore, BrowserSessionStore>();

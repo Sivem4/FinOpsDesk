@@ -1,6 +1,7 @@
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.BatchExecutions;
 using FinOpsDesk.Modules.Reconciliation.Domain.BatchExecutions;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -12,12 +13,15 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositor
 internal sealed class BatchExecutionStore : IBatchExecutionStore
 {
     private readonly ReconciliationDbContext _dbContext;
+    private readonly IFinancialCommitGuard _commitGuard;
 
-    public BatchExecutionStore(ReconciliationDbContext dbContext)
+    public BatchExecutionStore(ReconciliationDbContext dbContext, IFinancialCommitGuard commitGuard)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(commitGuard);
 
         _dbContext = dbContext;
+        _commitGuard = commitGuard;
     }
 
     public async Task<BatchExecutionSnapshot?> FindAsync(
@@ -34,14 +38,20 @@ internal sealed class BatchExecutionStore : IBatchExecutionStore
                 nameof(idempotencyKey));
         }
 
-        BatchExecution? execution = await _dbContext.BatchExecutions
-            .AsNoTracking()
-            .SingleOrDefaultAsync(
-                stored => stored.OrganizationId == organizationId
-                    && stored.IdempotencyKey == idempotencyKey,
-                cancellationToken);
-
-        return execution is null ? null : ToSnapshot(execution);
+        return await FinancialCommitRead.ExecuteAsync(
+            _dbContext,
+            _commitGuard,
+            async token =>
+            {
+                BatchExecution? execution = await _dbContext.BatchExecutions
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(
+                        stored => stored.OrganizationId == organizationId
+                            && stored.IdempotencyKey == idempotencyKey,
+                        token);
+                return execution is null ? null : ToSnapshot(execution);
+            },
+            cancellationToken);
     }
 
     public async Task AddRunningAsync(

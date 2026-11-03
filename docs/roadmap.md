@@ -326,6 +326,8 @@ Phase 7D.3a classifies every current Reconciliation route and evaluates that cla
 
 Phase 7D.3b publishes session contract v1/v2 negotiation, mounts the permission-aware read-only cookie UI, and documents operational activation of `Authentication:FinancialReadAuthorization`. Contract v1 stays compatible with older browser bundles. Contract v2 returns only enabled financial read capabilities. Cookie financial writes stay forbidden. Deployed configuration still leaves the activation key unset until operators enable it after the compatible release. See ADR 0018.
 
+Phase 7D.4a authorizes financial POSTs in the SQL transaction that commits them, including a new `review-cases.open` permission and a Shared/Exclusive SQL application lock. Both `Authentication:FinancialReadAuthorization` and `Authentication:FinancialWriteAuthorization` must be exactly `Enabled`. Deployed configuration sets neither write activation nor a cookie write UI. `DevelopmentJwt` is unchanged. Session contract v2 still lists read capabilities only. See ADR 0019.
+
 Still in this phase:
 
 - identity-bound financial recovery, or recovery remaining disabled;

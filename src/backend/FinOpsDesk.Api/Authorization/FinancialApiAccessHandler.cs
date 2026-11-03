@@ -7,9 +7,11 @@ using Microsoft.AspNetCore.Http;
 
 namespace FinOpsDesk.Api.Authorization;
 
-// ProductionCookie stays fail-closed until FinancialReadAuthorization is Enabled.
-// Enabled evaluates the endpoint classification. It does not allow every
-// authenticated caller, and it never allows a ProductionCookie write.
+// ProductionCookie reads stay fail-closed until FinancialReadAuthorization is
+// Enabled. Writes also require FinancialWriteAuthorization. Neither flag grants
+// access by itself. DevelopmentJwt accepts a consistent classification and does
+// not read Access roles. The commit guard repeats the write decision inside the
+// financial transaction.
 internal sealed class FinancialApiAccessHandler
     : AuthorizationHandler<FinancialApiAccessRequirement>
 {
@@ -47,22 +49,42 @@ internal sealed class FinancialApiAccessHandler
 
         if (_state.ProductionFinancialAccessFailClosed
             || !IsConsistentKnownClassification(httpContext, out FinancialEndpointClassification? classification)
-            || classification is null
-            || classification.Kind != FinancialEndpointClassification.OperationKind.Read)
+            || classification is null)
         {
             return;
         }
 
-        await AuthorizeCookieReadAsync(context, requirement, httpContext, classification);
+        if (classification.Kind == FinancialEndpointClassification.OperationKind.Read)
+        {
+            await AuthorizeCookiePermissionAsync(
+                context,
+                requirement,
+                httpContext,
+                classification,
+                FinancialReadPermissionCatalog.TryGet);
+            return;
+        }
+
+        if (classification.Kind == FinancialEndpointClassification.OperationKind.Write
+            && _state.ProductionFinancialWritesEnabled)
+        {
+            await AuthorizeCookiePermissionAsync(
+                context,
+                requirement,
+                httpContext,
+                classification,
+                FinancialWritePermissionCatalog.TryGet);
+        }
     }
 
-    private static async Task AuthorizeCookieReadAsync(
+    private static async Task AuthorizeCookiePermissionAsync(
         AuthorizationHandlerContext context,
         FinancialApiAccessRequirement requirement,
         HttpContext httpContext,
-        FinancialEndpointClassification classification)
+        FinancialEndpointClassification classification,
+        PermissionLookup tryGet)
     {
-        if (!FinancialReadPermissionCatalog.TryGet(classification.Permission, out AccessPermission required))
+        if (!tryGet(classification.Permission, out AccessPermission required))
         {
             return;
         }
@@ -93,6 +115,8 @@ internal sealed class FinancialApiAccessHandler
             context.Succeed(requirement);
         }
     }
+
+    private delegate bool PermissionLookup(string? permission, out AccessPermission resolved);
 
     private static bool IsConsistentKnownClassification(
         HttpContext httpContext,
@@ -125,7 +149,7 @@ internal sealed class FinancialApiAccessHandler
         }
 
         if (candidate.Kind == FinancialEndpointClassification.OperationKind.Write
-            && candidate.Permission is not null)
+            && !FinancialWritePermissionCatalog.TryGet(candidate.Permission, out _))
         {
             return false;
         }

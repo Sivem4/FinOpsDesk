@@ -35,6 +35,8 @@ public static class ReconciliationModule
                     "reconciliation")));
 
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<IFinancialCommitLockSync, NoFinancialCommitLockSync>();
+        services.TryAddScoped<IFinancialCommitGuard, NoFinancialCommitGuard>();
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
         services.AddScoped<IInvoiceQueries, InvoiceQueries>();
         services.AddScoped<ListInvoicesHandler>();

@@ -901,6 +901,7 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.DoesNotContain("reconciliation.confirm", actual);
         Assert.DoesNotContain("allocations.create", actual);
         Assert.DoesNotContain("allocations.reverse", actual);
+        Assert.DoesNotContain("review-cases.open", actual);
         Assert.DoesNotContain("review-cases.resolve", actual);
         Assert.DoesNotContain("membership.manage", actual);
         Assert.DoesNotContain("roles.manage", actual);

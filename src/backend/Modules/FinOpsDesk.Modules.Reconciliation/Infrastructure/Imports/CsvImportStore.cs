@@ -1,3 +1,4 @@
+using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Imports;
@@ -41,16 +42,20 @@ internal sealed class CsvImportStore : ICsvImportStore
 
         await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
         ReconciliationDbContext context = scope.ServiceProvider.GetRequiredService<ReconciliationDbContext>();
-
-        return await context.ImportBatches
-            .AsNoTracking()
-            .Include(batch => batch.RowErrors)
-            .SingleOrDefaultAsync(
-                batch => batch.OrganizationId == organizationId
-                    && batch.ImportType == importType
-                    && batch.SourceSystem == sourceSystem
-                    && batch.FileHash == fileHash,
-                cancellationToken);
+        IFinancialCommitGuard guard = scope.ServiceProvider.GetRequiredService<IFinancialCommitGuard>();
+        return await FinancialCommitRead.ExecuteAsync(
+            context,
+            guard,
+            token => context.ImportBatches
+                .AsNoTracking()
+                .Include(batch => batch.RowErrors)
+                .SingleOrDefaultAsync(
+                    batch => batch.OrganizationId == organizationId
+                        && batch.ImportType == importType
+                        && batch.SourceSystem == sourceSystem
+                        && batch.FileHash == fileHash,
+                    token),
+            cancellationToken);
     }
 
     public async Task<IReadOnlyDictionary<string, InvoiceImportFacts>> FindInvoicesByExternalIdsAsync(

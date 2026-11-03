@@ -14,13 +14,18 @@ internal sealed class OrganizationRoleStore : IOrganizationRoleStore, IOrganizat
 {
     private readonly AccessDbContext _dbContext;
     private readonly IOrganizationRoleMutationSync _sync;
+    private readonly IOrganizationFinancialAuthorization _authorization;
 
-    public OrganizationRoleStore(AccessDbContext dbContext, IOrganizationRoleMutationSync? sync = null)
+    public OrganizationRoleStore(
+        AccessDbContext dbContext,
+        IOrganizationRoleMutationSync? sync = null,
+        IOrganizationFinancialAuthorization? authorization = null)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
 
         _dbContext = dbContext;
         _sync = sync ?? NoOrganizationRoleMutationSync.Instance;
+        _authorization = authorization ?? new OrganizationFinancialAuthorization();
     }
 
     public async Task<IReadOnlyList<OrganizationRole>> ListActiveAsync(
@@ -53,6 +58,7 @@ internal sealed class OrganizationRoleStore : IOrganizationRoleStore, IOrganizat
 
         Guid? organizationId = await PeekOrganizationIdAsync(membershipId, cancellationToken);
         await using var transaction = await BeginAsync(cancellationToken);
+        await LockOrganizationAsync(transaction, organizationId, cancellationToken);
         if (role == OrganizationRole.OrganizationAdmin && organizationId is Guid organization)
         {
             await LockActiveAdministratorsAsync(organization, cancellationToken);
@@ -82,6 +88,8 @@ internal sealed class OrganizationRoleStore : IOrganizationRoleStore, IOrganizat
 
         Guid? organizationId = await PeekOrganizationIdAsync(membershipId, cancellationToken);
         await using var transaction = await BeginAsync(cancellationToken);
+        await LockOrganizationAsync(transaction, organizationId, cancellationToken);
+        await _sync.AfterAuthoritativeLockAsync(cancellationToken);
         IReadOnlyList<LockedAdministrator> administrators = [];
         if (role == OrganizationRole.OrganizationAdmin && organizationId is Guid organization)
         {
@@ -129,7 +137,8 @@ internal sealed class OrganizationRoleStore : IOrganizationRoleStore, IOrganizat
 
         await _sync.BeforeAuthoritativeLockAsync(cancellationToken);
         await using var transaction = await BeginAsync(cancellationToken);
-        // Administrator rows first, then membership rows. Revoking OrganizationAdmin uses the same order.
+        // Organization application lock, then administrator rows, then membership rows.
+        await LockOrganizationAsync(transaction, organizationId, cancellationToken);
         IReadOnlyList<LockedAdministrator> administrators = await LockActiveAdministratorsAsync(
             organizationId,
             cancellationToken);
@@ -181,6 +190,7 @@ internal sealed class OrganizationRoleStore : IOrganizationRoleStore, IOrganizat
 
         await _sync.BeforeAuthoritativeLockAsync(cancellationToken);
         await using var transaction = await BeginAsync(cancellationToken);
+        await LockOrganizationAsync(transaction, organizationId, cancellationToken);
         IReadOnlyList<LockedAdministrator> administrators = await LockActiveAdministratorsAsync(
             organizationId,
             cancellationToken);
@@ -347,6 +357,24 @@ internal sealed class OrganizationRoleStore : IOrganizationRoleStore, IOrganizat
     private Task<IDbContextTransaction> BeginAsync(CancellationToken cancellationToken)
     {
         return _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+    }
+
+    private async Task LockOrganizationAsync(
+        IDbContextTransaction transaction,
+        Guid? organizationId,
+        CancellationToken cancellationToken)
+    {
+        if (organizationId is not Guid organization)
+        {
+            return;
+        }
+
+        DbConnection connection = _dbContext.Database.GetDbConnection();
+        await _authorization.AcquireExclusiveAsync(
+            connection,
+            transaction.GetDbTransaction(),
+            organization,
+            cancellationToken);
     }
 
     private static async Task<OrganizationRoleMutationStatus> RefuseAsync(
