@@ -43,9 +43,34 @@ ProductionCookie write authorization requires both ordinal values:
 | off | off | denied | denied |
 | on | off | exact read permission | denied |
 | off | on | denied | denied |
-| on | on | exact read permission | exact write permission, rechecked in the committing transaction |
+| on | on | exact read permission | only an allowlisted operation, then its exact write permission, rechecked in the committing transaction |
 
-Any other string is off. The flags do not skip authentication, membership, CSRF, or the commit-time check. Deployed `appsettings` leave both keys unset. `DevelopmentJwt` ignores both flags.
+Any other string is off. The flags do not skip authentication, membership, CSRF, or the commit-time check. There is no third activation flag. Deployed `appsettings` leave both keys unset. Setting them does not by itself authorize production use: cookie write UI and identity-bound recovery are still required before an operator enables the write key. `DevelopmentJwt` ignores both flags and the cookie allowlist.
+
+### Cookie write allowlist
+
+Both flags open an activation boundary. They do not open every classified POST. The boundary reads `FinancialWriteOperation` from the endpoint metadata. It does not read a permission name, a client operation name, a header, a query string, or a path substring. `POST /api/matches/confirm` and `POST /api/matches/batch/execute` both require `reconciliation.confirm` and are different operations.
+
+When both flags are `Enabled`, ProductionCookie may pass the boundary only for:
+
+- `POST /api/matches/confirm` (`ConfirmExactMatch`, `reconciliation.confirm`)
+- `POST /api/allocations` (`CreateAllocation`, `allocations.create`)
+- `POST /api/allocations/{allocationId}/reverse` (`ReverseAllocation`, `allocations.reverse`)
+
+These three still require the current exact permission, a valid browser session, the trusted organization, CSRF, and the commit-time Shared lock. The allowlist does not grant that permission.
+
+The other six financial POSTs stay forbidden for ProductionCookie, including for a role that holds their permission:
+
+- `POST /api/imports/invoices`
+- `POST /api/imports/bank-transactions`
+- `POST /api/matches/batch/execute`
+- `POST /api/review-cases`
+- `POST /api/review-cases/{id}/resolve`
+- `POST /api/review-cases/{id}/dismiss`
+
+Their classifications and permission requirements stay. A future write endpoint is denied until its operation is added to this same set. Denial is the authorization requirement, before the endpoint handler. A denied cookie POST does not insert, update, or delete financial rows and does not write an idempotency record, import batch, batch receipt, review case, or audit row. Invalid CSRF remains HTTP 400 `auth.csrf.invalid`. An authenticated cookie request for an operation outside the set remains HTTP 403.
+
+`FinancialCommitGuard` uses the same operation set. A write that is outside it does not take the organization application lock and does not commit. The three allowed operations still revalidate the user, `BrowserSession`, membership, organization, and role inside the committing transaction. Removing `Authentication:FinancialWriteAuthorization` stops new cookie writes and does not invalidate `BrowserSession`.
 
 ### Application lock
 
@@ -98,7 +123,7 @@ Batch execution is not one atomic financial transaction. The batch-owner connect
 
 A later POST with the same organization-scoped batch key and the same pairs resumes a `Running` row while it is inside the existing 15-minute resume window. An item whose allocation idempotency key is already committed is recovered and is not inserted again. A pending item executes once. When the role is still absent, that retry is HTTP 403, the row stays `Running`, and no further item is written. When the write permission is restored before the retry, the remaining items run and a successful resume marks the row `Completed`. A third POST with the same key returns that stored receipt and does not allocate again. This increment adds no batch status and no migration.
 
-The receipt `UPDATE` runs as raw SQL on the owner transaction after the items. It does not pass through `SaveChangesAsync` and does not take a fresh organization application lock. Item allocations do. A revocation that lands after the last item commit and before that receipt update can still mark the batch completed. Together with the missing batch-header audit entry, that keeps production activation of cookie batch execution blocked until 7D.4b/c.
+The receipt `UPDATE` runs as raw SQL on the owner transaction after the items. It does not pass through `SaveChangesAsync` and does not take a fresh organization application lock. Item allocations do. A revocation that lands after the last item commit and before that receipt update can still mark the batch completed. Phase 7D.4b1 does not restructure that owner lease. Releasing the `UPDLOCK` before a later Shared lock would open an ownership race, so receipt finalization stays as it is. ProductionCookie cannot reach that path: batch execution is outside the cookie allowlist and is rejected before the handler. `DevelopmentJwt` keeps the current Running, Completed, 15-minute resume, item idempotency, and receipt behavior. A later batch increment has to design ownership transfer, stale-owner rejection, conditional receipt persistence, and commit-time authorization together before that route can be added to the allowlist. No new batch status and no migration are added now.
 
 ### Replay and idempotency
 
@@ -112,7 +137,7 @@ The existing keys stay as they are: import hash, confirmation and explicit-alloc
 
 Exact confirmation, explicit allocation, reversal, and each committed batch item still write `FinancialAuditEntry`. The cookie actor is `ApplicationUser.Id`. The JWT actor is the validated `sub`. `audit.read` is unchanged.
 
-CSV import, the batch execution header, and review open, resolve, and dismiss do not write that entry. `FinancialAuditEntry` requires an allocation, an invoice, and a bank transaction, so those operations cannot be attributed through it without a schema change. They are not ready for operational activation of cookie writes. That gap is a release blocker for the later cookie UI increment, not a reason to enable the flag.
+CSV import, the batch execution header, and review open, resolve, and dismiss do not write that entry. `FinancialAuditEntry` requires an allocation, an invoice, and a bank transaction, so those operations cannot be attributed through it without a schema change. This increment does not add a general operation-audit table. The later model, when one of those routes is considered for the allowlist, is a small reconciliation record written in the same transaction as the protected effect: organization, operation, subject, server-side actor, and time. It does not replace allocation audit rows. Until that record and a reviewed recovery path exist, those six routes stay outside the cookie allowlist. The cookie actor for an allocation audit remains `ApplicationUser.Id`. The JWT actor remains the validated `sub`.
 
 ### Browser contract
 
@@ -120,8 +145,8 @@ Session contract v1 and v2 are unchanged. Contract v2 still returns only enabled
 
 ## Consequences
 
-- Deployed ProductionCookie financial POSTs stay denied until a later reviewed increment enables the write flag together with cookie write UI and identity-bound recovery.
-- Enabling the read flag alone does not enable writes.
+- Deployed ProductionCookie financial POSTs stay denied until a later reviewed increment enables the write flag together with cookie write UI and identity-bound recovery. The allowlist does not authorize that operational step. Phase 7D.4b2/c still has to ship before the write key is enabled.
+- Enabling the read flag alone does not enable writes. Enabling both flags opens only confirm, explicit allocation, and reversal for ProductionCookie.
 - Two API instances coordinate only when they use the same database and the same principal. Out-of-band SQL does not.
 - Import and batch execution can leave a partial committed result. The HTTP error does not claim that the earlier item or a previous import was rolled back.
 - JWT financial behavior, including idempotency and recovery v1, stays on the existing path and does not take this lock.

@@ -66,7 +66,8 @@ internal sealed class FinancialApiAccessHandler
         }
 
         if (classification.Kind == FinancialEndpointClassification.OperationKind.Write
-            && _state.ProductionFinancialWritesEnabled)
+            && _state.ProductionFinancialWritesEnabled
+            && ProductionFinancialWriteActivation.IsActivated(classification))
         {
             await AuthorizeCookiePermissionAsync(
                 context,

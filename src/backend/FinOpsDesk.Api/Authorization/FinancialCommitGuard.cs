@@ -70,7 +70,7 @@ internal sealed class FinancialCommitGuard : IFinancialCommitGuard
             return;
         }
 
-        if (!_state.ProductionFinancialWritesEnabled)
+        if (!_state.ProductionFinancialWritesEnabled || !IsActivatedOperation())
         {
             throw FinancialCommitAuthorizationException.Forbidden();
         }
@@ -102,6 +102,15 @@ internal sealed class FinancialCommitGuard : IFinancialCommitGuard
         }
 
         await _sync.AfterSharedAuthorizationAsync(cancellationToken);
+    }
+
+    private bool IsActivatedOperation()
+    {
+        Endpoint? endpoint = _httpContextAccessor.HttpContext?.GetEndpoint();
+        FinancialEndpointClassification? classification = endpoint?.Metadata
+            .GetOrderedMetadata<FinancialEndpointClassification>()
+            .SingleOrDefault();
+        return classification is not null && ProductionFinancialWriteActivation.IsActivated(classification);
     }
 
     private bool TryReadIdentity(out FinancialCommitIdentity? identity, out AccessPermission permission)

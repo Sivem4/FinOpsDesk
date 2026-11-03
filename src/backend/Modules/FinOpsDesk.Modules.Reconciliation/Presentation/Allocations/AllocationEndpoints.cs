@@ -63,7 +63,9 @@ internal static class AllocationEndpoints
         group.MapPost("/allocations", AllocateAsync)
             .WithName("AllocateExplicitAmount")
             .AddOpenApiOperationTransformer(DocumentAllocationOperation)
-            .WithMetadata(FinancialEndpointClassification.Write("allocations.create"));
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "allocations.create",
+                FinancialWriteOperation.CreateAllocation));
 
         group.MapPost("/allocations/{allocationId}/reverse", ReverseAsync)
             .WithName("ReverseAllocation")
@@ -84,7 +86,9 @@ internal static class AllocationEndpoints
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .AddOpenApiOperationTransformer(DocumentReverseOperation)
-            .WithMetadata(FinancialEndpointClassification.Write("allocations.reverse"));
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "allocations.reverse",
+                FinancialWriteOperation.ReverseAllocation));
 
         group.MapGet("/allocations", GetHistoryAsync)
             .WithName("ListAllocationHistory")

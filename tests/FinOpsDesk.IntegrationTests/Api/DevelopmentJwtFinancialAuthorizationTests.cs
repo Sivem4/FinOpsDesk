@@ -67,6 +67,27 @@ public sealed class DevelopmentJwtFinancialAuthorizationTests : IDisposable
         HttpResponseMessage allocateResponse = await client.SendAsync(allocate);
         Assert.NotEqual(HttpStatusCode.Forbidden, allocateResponse.StatusCode);
         Assert.NotEqual(HttpStatusCode.Unauthorized, allocateResponse.StatusCode);
+
+        string[] stillOpenToJwt =
+        [
+            "/api/imports/invoices",
+            "/api/imports/bank-transactions",
+            "/api/matches/batch/execute",
+            "/api/review-cases",
+            "/api/review-cases/" + Guid.NewGuid().ToString("D") + "/resolve",
+            "/api/review-cases/" + Guid.NewGuid().ToString("D") + "/dismiss",
+        ];
+        foreach (string path in stillOpenToJwt)
+        {
+            using HttpRequestMessage request = new(HttpMethod.Post, path)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
+            HttpResponseMessage response = await client.SendAsync(request);
+            Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
     }
 
     public void Dispose()
