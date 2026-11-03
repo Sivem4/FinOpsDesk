@@ -4,7 +4,6 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  AllocationAuthenticationError,
   explicitAmountAttemptStorageKey,
   inspectAllocationAttempt,
   submitExplicitAmountAttempt,
@@ -374,7 +373,7 @@ describe('organization selection', () => {
 
     expect(await screen.findByText('Active organization: North Ledger')).toBeInTheDocument();
     expect(inspectAllocationAttempt(sessionStore.getSnapshot()).status).toBe('blocked-authentication');
-    await expect(submitExplicitAmountAttempt()).rejects.toBeInstanceOf(AllocationAuthenticationError);
+    await expect(submitExplicitAmountAttempt()).rejects.toMatchObject({ status: 403 });
     expect(financialPosts).toBe(0);
     expect(sessionStorage.getItem(explicitAmountAttemptStorageKey)).toBe(JSON.stringify(allocation));
 

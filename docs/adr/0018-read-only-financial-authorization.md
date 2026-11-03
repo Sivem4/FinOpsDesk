@@ -7,15 +7,15 @@
 
 ADR 0017 stores organization roles and a fixed permission map, but it does not authorize financial HTTP. `ProductionCookie` still fails closed. `DevelopmentJwt` still authorizes the whole Reconciliation group from a validated `org_id` claim and does not read Access.
 
-Opening those reads in the same change as the browser session contract would let `financialAccess: true` reach the current React parser, which rejects that value. The authorization mechanism and the production activation are therefore separate.
+Opening those reads in the same change as an incompatible browser session contract would break already-open tabs. The authorization mechanism and the production activation are therefore separate, and the session JSON shape is negotiated.
 
 ## Decision
 
 Phase 7D.3 is delivered in two increments.
 
-7D.3a adds endpoint classification and evaluates it on the existing `TenantMember` policy. Deployed `ProductionCookie` stays fail-closed. `GET /api/session` still returns `financialAccess: false` and does not grow a permissions field. Financial writes stay forbidden for the cookie.
+7D.3a adds endpoint classification and evaluates it on the existing `TenantMember` policy. Deployed `ProductionCookie` stays fail-closed. Financial writes stay forbidden for the cookie.
 
-7D.3b will publish the session capability contract, mount the read-only React experience, and only then turn the same policy on for deployed cookie hosts. It does not replace this authorization model. Writes remain forbidden there too.
+7D.3b publishes the session capability contract, mounts the read-only React experience, and documents the operational activation of `Authentication:FinancialReadAuthorization`. It does not replace this authorization model. Writes remain forbidden there too.
 
 ### Classification
 
@@ -46,7 +46,7 @@ The `/api` group keeps one policy, `TenantMember`: authenticated user, `Financia
 
 `ProductionCookie` with the configuration absent, empty, or any value other than the ordinal string `Enabled` keeps `ProductionFinancialAccessFailClosed` true. Every financial GET and POST is then forbidden. The handler does not read roles and does not run the financial delegate. This is the deployed default. `appsettings.json` does not set the key.
 
-`Enabled` is the test-host switch and the future 7D.3b switch. It does not grant blanket access. A cookie read succeeds only when all of the following hold:
+`Enabled` is the operational activation switch after compatible API and frontend code are deployed. It does not grant blanket access. A cookie read succeeds only when all of the following hold:
 
 - the application cookie authenticated;
 - `OnValidatePrincipal` accepted the server `BrowserSession` and the application user;
@@ -68,9 +68,36 @@ HTTP 403 is an authenticated refusal: no selected organization, no active member
 
 HTTP 404 stays the existing handler result when an authorized caller asks for an identifier outside the active organization. Lists stay empty. The handler filters on `ICurrentOrganizationContext` inside SQL.
 
-HTTP 503 `auth.authorization.unavailable` is only the explicit marker set when the snapshot or the role read is unavailable, including a role value outside 1–4. `FinOpsDeskAuthorizationResultHandler` converts that marker and delegates every other result to the framework handler, so a normal 401 or 403 is not turned into 503. The response does not include the provider exception. The cookie is not cleared. `GET /api/session` still uses the basic snapshot and does not read the role table, so it remains HTTP 200 while financial reads return 503. A successful read with zero roles is 403, not 503.
+HTTP 503 `auth.authorization.unavailable` is only the explicit marker set when the snapshot or the role read is unavailable, including a role value outside 1–4. `FinOpsDeskAuthorizationResultHandler` converts that marker and delegates every other result to the framework handler, so a normal 401 or 403 is not turned into 503. The response does not include the provider exception. The cookie is not cleared. A successful read with zero roles is 403, not 503.
 
 The financial delegate does not run for 401, 403, or 503.
+
+### Session contract negotiation
+
+`GET /api/session` keeps `Cache-Control: no-store` and sets `Vary: X-FinOpsDesk-Session-Contract`.
+
+Contract v1 is the default whenever the request header is missing, empty, or not exactly `2`. The JSON shape stays the pre-7D.3b body: `financialAccess` is always `false`, and there is no `permissions` field. Contract v1 does not read the role table for capability discovery. This remains true after financial reads are activated, so an old browser bundle never receives `financialAccess: true`.
+
+Contract v2 is selected only by the exact header value `X-FinOpsDesk-Session-Contract: 2`. Every successful v2 body includes `permissions: string[]`. The array contains only the currently enabled financial read capabilities, in catalog order, without duplicates or write permissions:
+
+- `invoices.read`
+- `bank-transactions.read`
+- `reconciliation.read`
+- `allocations.read`
+- `audit.read`
+- `review-cases.read`
+
+`financialAccess` is `true` only when that filtered list is nonempty for the trusted active organization. OrganizationAdmin alone, a roleless membership, and a missing active organization return `financialAccess: false` with `permissions: []`.
+
+When the activation key is unset, contract v2 still returns `financialAccess: false` and `permissions: []` without a role-table lookup, and financial routes stay fail-closed.
+
+When the activation key is `Enabled`, an active organization is present, and contract v2 is requested, a role-table failure or an inconsistent role returns HTTP 503 `auth.authorization.unavailable`. Contract v1 continues to return HTTP 200 with the basic snapshot in that same outage.
+
+The React client always requests contract v2. It accepts a v1 body as a legacy restricted session. Unknown permission strings never enable an action. Consistency between `financialAccess` and recognized capabilities is checked after unknown entries are filtered. Canonical capability comparison participates in the existing security epoch together with identity and active organization. Authorization readiness is separate from the epoch: an unavailable transition clears financial queries and blocks protected observers without inventing a second store.
+
+Cookie financial screens mount only the registers and read-only matching and allocation history for verified capabilities. Imports, confirmation, allocation, reversal, and recovery hooks are not mounted. The HTTP boundary rejects cookie financial mutations before `fetch`. Backend write denial remains authoritative.
+
+Deployed configuration still leaves `Authentication:FinancialReadAuthorization` unset. Activation is a later operational step after compatible API and frontend artifacts are live. Removing the key disables reads again without invalidating browser sessions.
 
 ### Known limits
 
@@ -78,11 +105,11 @@ Endpoint enumeration cannot name a future financial route that is mapped outside
 
 OpenAPI Bearer security metadata for the existing routes remains incomplete. Runtime authorization does not wait for that document.
 
-Batch preview remains a full-book read. It runs only after authorization. This increment does not cache it and does not add an index or a migration.
-
-`financialAccess` stays false while the test host exercises authorized GETs. That split is deliberate. 7D.3b must change the session contract and the React parser together before a deployed host sets `Authentication:FinancialReadAuthorization` to `Enabled`. Setting it earlier would open API reads while the public session contract and the current browser parser still say that finance is closed.
+Batch preview remains a full-book read. It runs only after authorization. This increment does not add a batch-preview UI, a review-case screen, an index, or a migration.
 
 `Authentication:FinancialClassificationProbes` is a test mapping switch. It is unset in deployed configuration. When its value is exactly `Enabled`, the host adds routes under `/api/test/financial-*` so integration tests can prove that missing, unknown, and inconsistent classifications are denied. Those routes are not a product feature and must not be enabled in deployment.
+
+After activation, an authorized direct financial GET can succeed for a caller who still runs an old JavaScript bundle. That is server-side authorization, not a client bypass. The old bundle continues to receive contract v1 and does not mount finance.
 
 ## Consequences
 

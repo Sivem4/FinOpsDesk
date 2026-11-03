@@ -38,13 +38,17 @@ internal static class BrowserSessionEndpoints
         HttpContext httpContext,
         IAntiforgery antiforgery,
         AccessSessionGate sessions,
+        IConfiguration configuration,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
         ArgumentNullException.ThrowIfNull(antiforgery);
         ArgumentNullException.ThrowIfNull(sessions);
+        ArgumentNullException.ThrowIfNull(configuration);
 
         httpContext.Response.Headers.CacheControl = "no-store";
+        httpContext.Response.Headers.Vary = SessionContract.HeaderName;
+        bool contractVersion2 = SessionContract.IsVersion2(httpContext.Request);
         AntiforgeryTokenSet tokens = antiforgery.GetAndStoreTokens(httpContext);
         string csrfToken = tokens.RequestToken
             ?? throw new InvalidOperationException("Antiforgery request token was not issued.");
@@ -53,7 +57,7 @@ internal static class BrowserSessionEndpoints
             CookieAuthenticationDefaults.AuthenticationScheme);
         if (!authentication.Succeeded || httpContext.User.Identity?.IsAuthenticated != true)
         {
-            return Results.Json(AnonymousSession(csrfToken));
+            return Results.Json(contractVersion2 ? AnonymousCapabilitySession(csrfToken) : AnonymousSession(csrfToken));
         }
 
         AccessSessionSnapshot snapshot = sessions.Current
@@ -67,13 +71,33 @@ internal static class BrowserSessionEndpoints
             || snapshot.Issuer is null
             || snapshot.Subject is null)
         {
-            return Results.Json(AnonymousSession(csrfToken));
+            return Results.Json(contractVersion2 ? AnonymousCapabilitySession(csrfToken) : AnonymousSession(csrfToken));
         }
 
-        return Results.Json(AuthenticatedSession(
+        DateTimeOffset? expiresAt = authentication.Properties?.ExpiresUtc;
+        if (!contractVersion2)
+        {
+            return Results.Json(AuthenticatedSession(csrfToken, snapshot, expiresAt));
+        }
+
+        if (!FinancialReadAuthorization.IsEnabled(configuration) || snapshot.ActiveOrganization is null)
+        {
+            return Results.Json(AuthenticatedCapabilitySession(csrfToken, snapshot, expiresAt, false, []));
+        }
+
+        AccessPermissionResolution resolution = await sessions.ResolvePermissionsAsync(cancellationToken);
+        if (resolution.Kind != AccessPermissionResolutionKind.Resolved)
+        {
+            return AuthorizationUnavailable();
+        }
+
+        string[] permissions = SessionContract.EnabledReads(resolution.Permissions);
+        return Results.Json(AuthenticatedCapabilitySession(
             csrfToken,
             snapshot,
-            authentication.Properties?.ExpiresUtc));
+            expiresAt,
+            permissions.Length > 0,
+            permissions));
     }
 
     private static async Task<IResult> SelectOrganizationAsync(
@@ -286,6 +310,51 @@ internal static class BrowserSessionEndpoints
             ActiveOrganization: active);
     }
 
+    private static SessionCapabilityResponse AnonymousCapabilitySession(string csrfToken)
+    {
+        return new SessionCapabilityResponse(
+            Authenticated: false,
+            FinancialAccess: false,
+            CsrfToken: csrfToken,
+            Issuer: null,
+            Subject: null,
+            DisplayName: null,
+            ExpiresAt: null,
+            Organizations: [],
+            ActiveOrganization: null,
+            Permissions: []);
+    }
+
+    private static SessionCapabilityResponse AuthenticatedCapabilitySession(
+        string csrfToken,
+        AccessSessionSnapshot snapshot,
+        DateTimeOffset? expiresAt,
+        bool financialAccess,
+        string[] permissions)
+    {
+        SessionOrganizationResponse[] choices = new SessionOrganizationResponse[snapshot.Organizations.Count];
+        for (int index = 0; index < snapshot.Organizations.Count; index++)
+        {
+            OrganizationChoice choice = snapshot.Organizations[index];
+            choices[index] = new SessionOrganizationResponse(choice.OrganizationId, choice.DisplayName);
+        }
+
+        SessionOrganizationResponse? active = snapshot.ActiveOrganization is OrganizationChoice selected
+            ? new SessionOrganizationResponse(selected.OrganizationId, selected.DisplayName)
+            : null;
+        return new SessionCapabilityResponse(
+            Authenticated: true,
+            FinancialAccess: financialAccess,
+            CsrfToken: csrfToken,
+            Issuer: snapshot.Issuer,
+            Subject: snapshot.Subject,
+            DisplayName: snapshot.DisplayName,
+            ExpiresAt: expiresAt,
+            Organizations: choices,
+            ActiveOrganization: active,
+            Permissions: permissions);
+    }
+
     private static IResult MembershipUnavailable()
     {
         return Results.Problem(
@@ -294,6 +363,17 @@ internal static class BrowserSessionEndpoints
             extensions: new Dictionary<string, object?>
             {
                 ["code"] = "auth.membership.unavailable",
+            });
+    }
+
+    private static IResult AuthorizationUnavailable()
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "Financial authorization could not be completed.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "auth.authorization.unavailable",
             });
     }
 
@@ -446,4 +526,16 @@ internal static class BrowserSessionEndpoints
         DateTimeOffset? ExpiresAt,
         IReadOnlyList<SessionOrganizationResponse> Organizations,
         SessionOrganizationResponse? ActiveOrganization);
+
+    private sealed record SessionCapabilityResponse(
+        bool Authenticated,
+        bool FinancialAccess,
+        string CsrfToken,
+        string? Issuer,
+        string? Subject,
+        string? DisplayName,
+        DateTimeOffset? ExpiresAt,
+        IReadOnlyList<SessionOrganizationResponse> Organizations,
+        SessionOrganizationResponse? ActiveOrganization,
+        IReadOnlyList<string> Permissions);
 }

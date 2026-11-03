@@ -9,6 +9,8 @@ export interface BrowserOrganization {
   displayName: string;
 }
 
+export type SessionAuthorization = 'anonymous' | 'restricted' | 'verified' | 'unavailable';
+
 export interface CookieSessionFields {
   authenticated: boolean;
   csrfToken: string | null;
@@ -18,10 +20,13 @@ export interface CookieSessionFields {
   expiresAt: number | null;
   organizations: BrowserOrganization[];
   activeOrganization: BrowserOrganization | null;
+  authorization: SessionAuthorization;
+  capabilities: readonly string[];
 }
 
 export interface SessionSnapshot extends CookieSessionFields {
   epoch: number;
+  readiness: number;
   token: string | null;
   reason: SessionReason;
   signal: AbortSignal;
@@ -38,7 +43,7 @@ export class SessionStore {
   private snapshot: SessionSnapshot;
 
   constructor(private readonly queries: QueryClient) {
-    this.snapshot = this.cleared(0, this.controller.signal);
+    this.snapshot = this.cleared(0, 0, this.controller.signal);
   }
 
   subscribe = (listener: Listener): (() => void) => {
@@ -54,7 +59,7 @@ export class SessionStore {
     const previous = this.controller;
     this.controller = new AbortController();
     this.snapshot = {
-      ...this.cleared(this.snapshot.epoch + 1, this.controller.signal),
+      ...this.cleared(this.snapshot.epoch + 1, this.snapshot.readiness + 1, this.controller.signal),
       token,
       expiresAt,
       reason,
@@ -66,13 +71,20 @@ export class SessionStore {
   }
 
   replaceCookieSession(next: CookieSessionFields, rotateEpoch: boolean): void {
-    if (!rotateEpoch) {
+    const leavingUnavailable = this.snapshot.authorization === 'unavailable';
+    const financialAccess = next.authorization === 'verified' && next.capabilities.length > 0;
+    const readiness = rotateEpoch || leavingUnavailable
+      ? this.snapshot.readiness + 1
+      : this.snapshot.readiness;
+
+    if (!rotateEpoch && !leavingUnavailable) {
       this.snapshot = {
         ...this.snapshot,
         ...next,
+        readiness,
         token: null,
         reason: null,
-        financialAccess: false,
+        financialAccess,
       };
       this.publish();
       return;
@@ -81,11 +93,15 @@ export class SessionStore {
     const previous = this.controller;
     this.controller = new AbortController();
     this.snapshot = {
-      ...this.cleared(this.snapshot.epoch + 1, this.controller.signal),
+      ...this.cleared(
+        rotateEpoch ? this.snapshot.epoch + 1 : this.snapshot.epoch,
+        readiness,
+        this.controller.signal,
+      ),
       ...next,
       token: null,
       reason: null,
-      financialAccess: false,
+      financialAccess,
     };
     previous.abort();
     this.publish();
@@ -93,18 +109,43 @@ export class SessionStore {
     this.queries.clear();
   }
 
+  markAuthorizationUnavailable(): void {
+    if (!this.snapshot.authenticated || this.snapshot.authorization === 'unavailable') {
+      return;
+    }
+
+    const previous = this.controller;
+    this.controller = new AbortController();
+    this.snapshot = {
+      ...this.snapshot,
+      authorization: 'unavailable',
+      financialAccess: false,
+      readiness: this.snapshot.readiness + 1,
+      signal: this.controller.signal,
+    };
+    previous.abort();
+    this.publish();
+    // Drop in-flight reads and the financial cache. The epoch stays put, and the
+    // authenticated cookie identity, including the last verified capabilities, stays
+    // on the snapshot so recovery can compare it. Readiness is what makes the next
+    // successful session start fresh query keys.
+    void this.queries.cancelQueries();
+    this.queries.clear();
+  }
+
   resetForTests(): void {
     const previous = this.controller;
     this.controller = new AbortController();
-    this.snapshot = this.cleared(0, this.controller.signal);
+    this.snapshot = this.cleared(0, 0, this.controller.signal);
     previous.abort();
     this.publish();
     this.queries.clear();
   }
 
-  private cleared(epoch: number, signal: AbortSignal): SessionSnapshot {
+  private cleared(epoch: number, readiness: number, signal: AbortSignal): SessionSnapshot {
     return {
       epoch,
+      readiness,
       token: null,
       expiresAt: null,
       reason: null,
@@ -112,6 +153,8 @@ export class SessionStore {
       csrfToken: null,
       authenticated: false,
       financialAccess: false,
+      authorization: 'anonymous',
+      capabilities: [],
       issuer: null,
       subject: null,
       displayName: null,

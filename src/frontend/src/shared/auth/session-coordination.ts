@@ -2,6 +2,21 @@ const channelName = 'finopsdesk.session';
 
 let channel: BroadcastChannel | null | undefined;
 
+let localRevalidation: (() => void) | null = null;
+
+export function registerLocalSessionRevalidation(handler: () => void): () => void {
+  localRevalidation = handler;
+  return () => {
+    if (localRevalidation === handler) {
+      localRevalidation = null;
+    }
+  };
+}
+
+export function requestLocalSessionRevalidation(): void {
+  localRevalidation?.();
+}
+
 export function publishSessionRevalidation(): void {
   const current = sharedChannel();
 

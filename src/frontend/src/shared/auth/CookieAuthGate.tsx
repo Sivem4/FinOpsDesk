@@ -1,8 +1,10 @@
 import { Alert, Button, Container, Stack, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 
+import { CookieFinancialRouter } from '../../app/CookieFinancialRouter';
 import { isAbortError } from '../api/errors';
 import { sessionStore } from '../api/session-store';
+import { AppShell } from '../ui/AppShell';
 import {
   beginSessionRead,
   commitBrowserSession,
@@ -11,12 +13,17 @@ import {
   readProblemCode,
   type BrowserSessionLoad,
 } from './browser-session';
+import { cookieNavLinks } from './cookie-navigation';
 import { enqueueCookieAction } from './cookie-actions';
 import { OrganizationSelector } from './OrganizationSelector';
-import { publishSessionRevalidation, subscribeSessionRevalidation } from './session-coordination';
+import {
+  publishSessionRevalidation,
+  registerLocalSessionRevalidation,
+  subscribeSessionRevalidation,
+} from './session-coordination';
 import { useSession } from './session';
 
-type Phase = 'initializing' | 'anonymous' | 'restricted' | 'reconciling' | 'error';
+type Phase = 'initializing' | 'anonymous' | 'restricted' | 'workspace' | 'unavailable' | 'reconciling' | 'error';
 
 type GateLife = {
   alive: boolean;
@@ -57,6 +64,11 @@ export function CookieAuthGate() {
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  const displayPhase =
+    session.authorization === 'unavailable' && (phase === 'workspace' || phase === 'restricted')
+      ? 'unavailable'
+      : phase;
 
   useEffect(() => {
     const current = life.current;
@@ -166,6 +178,12 @@ export function CookieAuthGate() {
     });
   }, []);
 
+  useEffect(() => {
+    return registerLocalSessionRevalidation(() => {
+      requestRevalidation(life.current, phaseRef, setPhase, setGeneration, setSelectionMessage);
+    });
+  }, []);
+
   if (phase === 'initializing') {
     return (
       <Container maxWidth="sm" sx={{ py: 8 }}>
@@ -239,6 +257,57 @@ export function CookieAuthGate() {
     );
   }
 
+  if (displayPhase === 'unavailable') {
+    return (
+      <Container maxWidth="sm" sx={{ py: 8 }}>
+        <Stack spacing={2}>
+          <Typography variant="h4" component="h1">
+            FinOpsDesk
+          </Typography>
+          <Alert severity="warning">
+            Authorization could not be verified. Financial records stay hidden. This is not a sign-out.
+          </Alert>
+          {session.displayName === null ? null : (
+            <Typography>Signed in as {session.displayName}</Typography>
+          )}
+          {session.activeOrganization === null ? null : (
+            <Typography>Active organization: {session.activeOrganization.displayName}</Typography>
+          )}
+          <Button
+            type="button"
+            variant="contained"
+            onClick={() => {
+              setLogoutError(null);
+              setSelectionMessage(null);
+              setPhase('initializing');
+              setGeneration((value) => value + 1);
+            }}
+          >
+            Try again
+          </Button>
+          <Button
+            type="button"
+            variant="outlined"
+            onClick={() => {
+              void enqueueCookieAction(() => signOut(
+                life.current,
+                setPending,
+                setLogoutError,
+                setLocalSignOut,
+                setPhase,
+                setGeneration,
+                setLogoutUncertain,
+                logoutCheckRef,
+              ));
+            }}
+          >
+            Sign out
+          </Button>
+        </Stack>
+      </Container>
+    );
+  }
+
   if (phase === 'anonymous') {
     if (session.csrfToken === null) {
       return (
@@ -275,6 +344,56 @@ export function CookieAuthGate() {
     );
   }
 
+  if (displayPhase === 'workspace') {
+    return (
+      <AppShell
+        links={cookieNavLinks(session.capabilities).map((link) => ({ to: link.to, label: link.label }))}
+        onLogout={() => {
+          void enqueueCookieAction(() => signOut(
+            life.current,
+            setPending,
+            setLogoutError,
+            setLocalSignOut,
+            setPhase,
+            setGeneration,
+            setLogoutUncertain,
+            logoutCheckRef,
+          ));
+        }}
+      >
+        <Stack spacing={2}>
+          {session.displayName === null ? null : (
+            <Typography>Signed in as {session.displayName}</Typography>
+          )}
+          <OrganizationSelector
+            organizations={session.organizations}
+            activeOrganization={session.activeOrganization}
+            disabled={pending}
+            onSelect={(organizationId) => {
+              setSelectionMessage(null);
+              void enqueueCookieAction(() => selectOrganization(
+                life.current,
+                organizationId,
+                setPending,
+                setSelectionMessage,
+                setPhase,
+                setGeneration,
+                phaseRef,
+                setLocalSignOut,
+                setLogoutUncertain,
+                setLogoutError,
+                logoutCheckRef,
+              ));
+            }}
+          />
+          {selectionMessage === null ? null : <Alert severity="warning">{selectionMessage}</Alert>}
+          {logoutError === null ? null : <Alert severity="warning">{logoutError}</Alert>}
+          <CookieFinancialRouter />
+        </Stack>
+      </AppShell>
+    );
+  }
+
   return (
     <Container maxWidth="sm" sx={{ py: 8 }}>
       <Stack spacing={2}>
@@ -282,7 +401,7 @@ export function CookieAuthGate() {
           Signed in
         </Typography>
         <Alert severity="info">
-          Authentication succeeded. Financial access is not available yet.
+          Authentication succeeded. Financial access is not available for this organization.
         </Alert>
         {session.displayName === null ? null : (
           <Typography>Signed in as {session.displayName}</Typography>
@@ -441,16 +560,35 @@ function applyLoadedSession(
   setLocalSignOut: (signedOut: boolean) => void,
   setPhase: (phase: Phase) => void,
 ): void {
-  if (result.kind === 'anonymous' || result.kind === 'restricted') {
+  if (result.kind === 'unavailable') {
+    if (!isCurrentSessionRead(readId) || sessionStore.getSnapshot().epoch !== observedEpoch) {
+      return;
+    }
+
+    if (sessionStore.getSnapshot().authenticated) {
+      sessionStore.markAuthorizationUnavailable();
+    }
+
+    finishUnconfirmedSignOut(logoutCheckRef, setLogoutUncertain, setLogoutError, true);
+    setPhase('unavailable');
+    return;
+  }
+
+  if (result.kind === 'anonymous' || result.kind === 'restricted' || result.kind === 'workspace') {
     if (commitBrowserSession(observedEpoch, readId, result.session) === 'stale') {
       return;
     }
 
-    if (result.kind === 'restricted') {
+    if (result.kind !== 'anonymous') {
       setLocalSignOut(false);
     }
 
-    finishUnconfirmedSignOut(logoutCheckRef, setLogoutUncertain, setLogoutError, result.kind === 'restricted');
+    finishUnconfirmedSignOut(
+      logoutCheckRef,
+      setLogoutUncertain,
+      setLogoutError,
+      result.kind !== 'anonymous',
+    );
     setPhase(result.kind);
     return;
   }

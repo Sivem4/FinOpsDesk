@@ -5,7 +5,6 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AllocationAuthenticationError,
   explicitAmountAttemptStorageKey,
   inspectAllocationAttempt,
   submitExplicitAmountAttempt,
@@ -76,7 +75,7 @@ describe('cookie session gate', () => {
     render(<CookieAuthGate />);
 
     expect(await screen.findByRole('heading', { name: 'Signed in' })).toBeInTheDocument();
-    expect(screen.getByText('Authentication succeeded. Financial access is not available yet.')).toBeInTheDocument();
+    expect(screen.getByText('Authentication succeeded. Financial access is not available for this organization.')).toBeInTheDocument();
     expect(screen.getByText('Signed in as Ada Operator')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Invoices' })).not.toBeInTheDocument();
@@ -332,6 +331,8 @@ describe('cookie session gate', () => {
         expiresAt: null,
         organizations: [],
         activeOrganization: null,
+        authorization: 'restricted',
+        capabilities: [],
       },
       true,
     );
@@ -367,7 +368,7 @@ describe('cookie session gate', () => {
     expect(inspectAllocationAttempt(sessionStore.getSnapshot()).status).toBe('blocked-authentication');
     expect(sessionStorage.getItem(explicitAmountAttemptStorageKey)).toBe(JSON.stringify(descriptor));
 
-    await expect(submitExplicitAmountAttempt()).rejects.toBeInstanceOf(AllocationAuthenticationError);
+    await expect(submitExplicitAmountAttempt()).rejects.toMatchObject({ status: 403 });
     expect(sessionStorage.getItem(explicitAmountAttemptStorageKey)).toBe(JSON.stringify(descriptor));
   });
 });
