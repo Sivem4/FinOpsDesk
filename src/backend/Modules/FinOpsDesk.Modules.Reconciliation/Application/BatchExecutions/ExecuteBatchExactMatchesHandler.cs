@@ -205,6 +205,10 @@ public sealed class ExecuteBatchExactMatchesHandler
             await lease.CommitAsync(cancellationToken);
             committed = true;
         }
+        catch (FinancialCommitAuthorizationException)
+        {
+            throw;
+        }
         catch (OperationCanceledException)
         {
             throw;
@@ -388,6 +392,10 @@ public sealed class ExecuteBatchExactMatchesHandler
                 pair,
                 confirmedAt,
                 cancellationToken);
+        }
+        catch (FinancialCommitAuthorizationException)
+        {
+            throw;
         }
         catch (OperationCanceledException)
         {

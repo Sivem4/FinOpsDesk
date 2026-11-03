@@ -126,7 +126,7 @@ A `BroadcastChannel` named `finopsdesk.session` may carry `{ "type": "revalidate
 
 Two tabs can still post overlapping cookie changes. A delayed `Set-Cookie` from organization selection can arrive after another tab has signed out, and the browser can store that cookie. Ignoring the late response in React does not stop that store. The late cookie repeats the original `finopsdesk_sid`. The server rejects it when that `BrowserSession` is revoked, clears the cookie, and the next session read is anonymous. Epoch tracking and `BroadcastChannel` are not that control. See ADR 0016.
 
-The Chromium checks are `CookieOidcBrowserTests` and `CookieOrganizationBrowserTests` in `tests/FinOpsDesk.E2ETests`. They start the existing protocol stub, the API in `ProductionCookie`, Vite in cookie mode, and headless Chromium against `http://localhost`. The organization tests seed Access memberships before sign-in. They are outside `FinOpsDesk.slnx`. The financial browser suite stays on `DevelopmentJwt`. See `docs/e2e-testing.md`.
+The Chromium checks are `CookieOidcBrowserTests` and `CookieOrganizationBrowserTests` in `tests/FinOpsDesk.E2ETests`. They start the existing protocol stub, the API in `ProductionCookie`, Vite in cookie mode, and headless Chromium against `http://localhost`. The organization tests seed Access memberships before sign-in. They are outside `FinOpsDesk.slnx`. The financial browser suite stays on `DevelopmentJwt`. Cookie mode still rejects financial POSTs in the client and does not advertise write permissions. Backend write authorization from ADR 0019 is not a cookie write screen. See `docs/e2e-testing.md`.
 
 ## CSV import
 

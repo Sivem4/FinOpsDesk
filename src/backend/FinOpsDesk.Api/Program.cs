@@ -10,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<FinOpsDesk.Api.Authorization.FinancialCommitAuthorizationExceptionHandler>();
 builder.Services.AddHealthChecks();
 builder.Services.AddFinOpsDeskAuthentication(builder.Configuration, builder.Environment);
 builder.Services.AddFinOpsDeskAuthorization();
@@ -26,6 +27,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 builder.Services.AddAccessModule(connectionString);
 builder.Services.AddReconciliationModule(connectionString);
+builder.Services.AddScoped<IFinancialCommitGuard, FinOpsDesk.Api.Authorization.FinancialCommitGuard>();
 
 var app = builder.Build();
 

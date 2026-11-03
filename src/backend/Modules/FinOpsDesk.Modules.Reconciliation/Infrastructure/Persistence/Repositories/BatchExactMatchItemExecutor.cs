@@ -16,6 +16,7 @@ using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Repositories;
 
@@ -31,6 +32,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
     private readonly IAllocationIdempotencyLookup _idempotencyLookup;
     private readonly IFinancialAuditWriter _financialAuditWriter;
     private readonly IBatchExactMatchItemSynchronization _synchronization;
+    private readonly IFinancialCommitGuard _commitGuard;
 
     public BatchExactMatchItemExecutor(
         ReconciliationDbContext dbContext,
@@ -42,7 +44,8 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         IOpenReviewBlockQueries openReviewBlockQueries,
         IAllocationIdempotencyLookup idempotencyLookup,
         IFinancialAuditWriter financialAuditWriter,
-        IBatchExactMatchItemSynchronization synchronization)
+        IBatchExactMatchItemSynchronization synchronization,
+        IFinancialCommitGuard commitGuard)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
         ArgumentNullException.ThrowIfNull(invoiceRepository);
@@ -54,6 +57,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         ArgumentNullException.ThrowIfNull(idempotencyLookup);
         ArgumentNullException.ThrowIfNull(financialAuditWriter);
         ArgumentNullException.ThrowIfNull(synchronization);
+        ArgumentNullException.ThrowIfNull(commitGuard);
 
         _dbContext = dbContext;
         _invoiceRepository = invoiceRepository;
@@ -65,6 +69,7 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
         _idempotencyLookup = idempotencyLookup;
         _financialAuditWriter = financialAuditWriter;
         _synchronization = synchronization;
+        _commitGuard = commitGuard;
     }
 
     public async Task<BatchItemAttempt> ExecuteAsync(
@@ -89,7 +94,9 @@ internal sealed class BatchExactMatchItemExecutor : IBatchExactMatchItemExecutor
             invoiceId,
             bankTransactionId);
 
+        await _synchronization.BeforeItemAsync(cancellationToken);
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await _commitGuard.ProtectAsync(transaction.GetDbTransaction(), cancellationToken);
 
         try
         {

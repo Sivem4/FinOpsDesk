@@ -92,7 +92,7 @@ internal static class BatchMatchEndpoints
             .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
             .AddOpenApiOperationTransformer(DocumentExecuteOperation)
-            .WithMetadata(FinancialEndpointClassification.Write());
+            .WithMetadata(FinancialEndpointClassification.Write("reconciliation.confirm"));
 
         return group;
     }

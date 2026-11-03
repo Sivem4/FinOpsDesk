@@ -24,8 +24,10 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
     private readonly string _authenticationComposition;
     private readonly IReadOnlyDictionary<string, string?>? _configurationOverrides;
     private readonly bool _financialReadAuthorizationEnabled;
+    private readonly bool _financialWriteAuthorizationEnabled;
     private readonly bool _financialClassificationProbesEnabled;
     private readonly string? _previousFinancialReadAuthorization;
+    private readonly string? _previousFinancialWriteAuthorization;
     private readonly string? _previousFinancialClassificationProbes;
 
     public FinOpsDeskApiFactory(
@@ -35,6 +37,7 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         string? authenticationComposition = null,
         IReadOnlyDictionary<string, string?>? configurationOverrides = null,
         bool financialReadAuthorizationEnabled = false,
+        bool financialWriteAuthorizationEnabled = false,
         bool financialClassificationProbesEnabled = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -49,6 +52,7 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
             : authenticationComposition;
         _configurationOverrides = configurationOverrides;
         _financialReadAuthorizationEnabled = financialReadAuthorizationEnabled;
+        _financialWriteAuthorizationEnabled = financialWriteAuthorizationEnabled;
         _financialClassificationProbesEnabled = financialClassificationProbesEnabled;
 
         // Program reads the connection string and authentication composition
@@ -61,6 +65,8 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         _previousComposition = Environment.GetEnvironmentVariable(CompositionVariable);
         _previousFinancialReadAuthorization = Environment.GetEnvironmentVariable(
             "Authentication__FinancialReadAuthorization");
+        _previousFinancialWriteAuthorization = Environment.GetEnvironmentVariable(
+            "Authentication__FinancialWriteAuthorization");
         _previousFinancialClassificationProbes = Environment.GetEnvironmentVariable(
             "Authentication__FinancialClassificationProbes");
         Environment.SetEnvironmentVariable(ConnectionStringVariable, connectionString);
@@ -68,6 +74,9 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable(
             "Authentication__FinancialReadAuthorization",
             _financialReadAuthorizationEnabled ? FinancialReadAuthorization.Enabled : string.Empty);
+        Environment.SetEnvironmentVariable(
+            "Authentication__FinancialWriteAuthorization",
+            _financialWriteAuthorizationEnabled ? FinancialWriteAuthorization.Enabled : string.Empty);
         Environment.SetEnvironmentVariable(
             "Authentication__FinancialClassificationProbes",
             _financialClassificationProbesEnabled
@@ -134,6 +143,9 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
             settings[FinancialReadAuthorization.ConfigurationKey] = _financialReadAuthorizationEnabled
                 ? FinancialReadAuthorization.Enabled
                 : string.Empty;
+            settings[FinancialWriteAuthorization.ConfigurationKey] = _financialWriteAuthorizationEnabled
+                ? FinancialWriteAuthorization.Enabled
+                : string.Empty;
             settings[FinancialClassificationProbeEndpoints.ConfigurationKey] = _financialClassificationProbesEnabled
                 ? FinancialClassificationProbeEndpoints.Enabled
                 : string.Empty;
@@ -163,6 +175,9 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable(
             "Authentication__FinancialReadAuthorization",
             _previousFinancialReadAuthorization);
+        Environment.SetEnvironmentVariable(
+            "Authentication__FinancialWriteAuthorization",
+            _previousFinancialWriteAuthorization);
         Environment.SetEnvironmentVariable(
             "Authentication__FinancialClassificationProbes",
             _previousFinancialClassificationProbes);

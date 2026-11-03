@@ -1,7 +1,10 @@
+using System.Data.Common;
+
 using FinOpsDesk.Modules.Access.Application;
 using FinOpsDesk.Modules.Access.Domain;
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 
@@ -51,7 +54,7 @@ internal sealed class DeploymentRoleBootstrap : IDeploymentRoleBootstrap
         }
 
         _dbContext.Organizations.Add(organization);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await CommitWithOrganizationLockAsync(organizationId, cancellationToken);
         return DeploymentCommandStatus.OrganizationCreated;
     }
 
@@ -103,7 +106,7 @@ internal sealed class DeploymentRoleBootstrap : IDeploymentRoleBootstrap
             _timeProvider.GetUtcNow()));
         try
         {
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await CommitWithOrganizationLockAsync(organizationId, cancellationToken);
             return DeploymentCommandStatus.MembershipGranted;
         }
         catch (DbUpdateException)
@@ -206,6 +209,19 @@ internal sealed class DeploymentRoleBootstrap : IDeploymentRoleBootstrap
             OrganizationRoleMutationStatus.ConcurrencyConflict => DeploymentCommandStatus.ConcurrencyConflict,
             _ => DeploymentCommandStatus.ConcurrencyConflict,
         };
+    }
+
+    private async Task CommitWithOrganizationLockAsync(Guid organizationId, CancellationToken cancellationToken)
+    {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        DbConnection connection = _dbContext.Database.GetDbConnection();
+        await new OrganizationFinancialAuthorization().AcquireExclusiveAsync(
+            connection,
+            transaction.GetDbTransaction(),
+            organizationId,
+            cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<ApplicationUser?> FindUserAsync(

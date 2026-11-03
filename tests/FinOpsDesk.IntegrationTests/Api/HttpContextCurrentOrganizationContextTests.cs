@@ -79,6 +79,7 @@ public sealed class HttpContextCurrentOrganizationContextTests
             {
                 UsesProductionCookie = false,
                 ProductionFinancialAccessFailClosed = false,
+                ProductionFinancialWritesEnabled = false,
             },
             new ServiceCollection().BuildServiceProvider());
     }

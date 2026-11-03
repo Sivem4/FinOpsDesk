@@ -21,6 +21,15 @@ public sealed class FinancialEndpointClassification
         return new FinancialEndpointClassification(OperationKind.Read, permission);
     }
 
+    public static FinancialEndpointClassification Write(string permission)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(permission);
+
+        return new FinancialEndpointClassification(OperationKind.Write, permission);
+    }
+
+    // A write without a known permission is intentionally inconsistent.
+    // Classification probes use it to prove that the host fails closed.
     public static FinancialEndpointClassification Write()
     {
         return new FinancialEndpointClassification(OperationKind.Write, null);

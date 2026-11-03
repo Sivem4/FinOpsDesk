@@ -1,6 +1,8 @@
+using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.EntityFrameworkCore;
@@ -36,24 +38,32 @@ internal sealed class AllocationIdempotencyLookup : IAllocationIdempotencyLookup
         await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
         ReconciliationDbContext context = scope.ServiceProvider
             .GetRequiredService<ReconciliationDbContext>();
+        IFinancialCommitGuard guard = scope.ServiceProvider.GetRequiredService<IFinancialCommitGuard>();
 
-        Allocation? allocation = await context.Allocations
-            .AsNoTracking()
-            .SingleOrDefaultAsync(
-                stored => stored.OrganizationId == organizationId
-                    && stored.IdempotencyKey == idempotencyKey,
-                cancellationToken);
+        return await FinancialCommitRead.ExecuteAsync(
+            context,
+            guard,
+            async token =>
+            {
+                Allocation? allocation = await context.Allocations
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(
+                        stored => stored.OrganizationId == organizationId
+                            && stored.IdempotencyKey == idempotencyKey,
+                        token);
 
-        if (allocation is null)
-        {
-            return null;
-        }
+                if (allocation is null)
+                {
+                    return null;
+                }
 
-        return new ConfirmedAllocationRecord(
-            allocation.Id,
-            allocation.InvoiceId,
-            allocation.BankTransactionId,
-            allocation.Amount,
-            allocation.IdempotencyOperation);
+                return new ConfirmedAllocationRecord(
+                    allocation.Id,
+                    allocation.InvoiceId,
+                    allocation.BankTransactionId,
+                    allocation.Amount,
+                    allocation.IdempotencyOperation);
+            },
+            cancellationToken);
     }
 }

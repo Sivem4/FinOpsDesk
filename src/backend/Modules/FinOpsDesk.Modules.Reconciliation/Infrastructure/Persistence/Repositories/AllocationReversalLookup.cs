@@ -1,7 +1,9 @@
+using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -38,52 +40,57 @@ internal sealed class AllocationReversalLookup : IAllocationReversalLookup
         await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
         ReconciliationDbContext context = scope.ServiceProvider
             .GetRequiredService<ReconciliationDbContext>();
+        IFinancialCommitGuard guard = scope.ServiceProvider.GetRequiredService<IFinancialCommitGuard>();
+        return await FinancialCommitRead.ExecuteAsync(context, guard, ReadAsync, cancellationToken);
 
-        Allocation? allocation = await context.Allocations
-            .AsNoTracking()
-            .SingleOrDefaultAsync(
-                stored => stored.OrganizationId == organizationId
-                    && EF.Property<Guid?>(
-                        stored,
-                        AllocationConfiguration.ReversalIdempotencyKeyPropertyName) == reversalIdempotencyKey,
-                cancellationToken);
-
-        if (allocation is null)
+        async Task<AllocationReversalKeyRecord?> ReadAsync(CancellationToken token)
         {
-            return null;
+            Allocation? allocation = await context.Allocations
+                .AsNoTracking()
+                .SingleOrDefaultAsync(
+                    stored => stored.OrganizationId == organizationId
+                        && EF.Property<Guid?>(
+                            stored,
+                            AllocationConfiguration.ReversalIdempotencyKeyPropertyName) == reversalIdempotencyKey,
+                    token);
+
+            if (allocation is null)
+            {
+                return null;
+            }
+
+            List<FinancialAuditEntry> audits = await context.FinancialAuditEntries
+                .AsNoTracking()
+                .Where(entry => entry.OrganizationId == organizationId
+                    && entry.AllocationId == allocation.Id
+                    && entry.Action == FinancialAuditAction.Reversal)
+                .ToListAsync(token);
+
+            AllocationReversalAuditRecord? audit = audits.Count == 1
+                ? new AllocationReversalAuditRecord(
+                    audits[0].AllocationId,
+                    audits[0].InvoiceId,
+                    audits[0].BankTransactionId,
+                    audits[0].Action,
+                    audits[0].IdempotencyOperation,
+                    audits[0].IdempotencyKey,
+                    audits[0].Amount,
+                    audits[0].RecordedAt,
+                    audits[0].Reason)
+                : null;
+
+            return new AllocationReversalKeyRecord(
+                allocation.Id,
+                allocation.InvoiceId,
+                allocation.BankTransactionId,
+                allocation.Status,
+                allocation.ReversalReason,
+                allocation.ReversedAt,
+                allocation.Amount,
+                reversalIdempotencyKey,
+                audits.Count,
+                audit);
         }
-
-        List<FinancialAuditEntry> audits = await context.FinancialAuditEntries
-            .AsNoTracking()
-            .Where(entry => entry.OrganizationId == organizationId
-                && entry.AllocationId == allocation.Id
-                && entry.Action == FinancialAuditAction.Reversal)
-            .ToListAsync(cancellationToken);
-
-        AllocationReversalAuditRecord? audit = audits.Count == 1
-            ? new AllocationReversalAuditRecord(
-                audits[0].AllocationId,
-                audits[0].InvoiceId,
-                audits[0].BankTransactionId,
-                audits[0].Action,
-                audits[0].IdempotencyOperation,
-                audits[0].IdempotencyKey,
-                audits[0].Amount,
-                audits[0].RecordedAt,
-                audits[0].Reason)
-            : null;
-
-        return new AllocationReversalKeyRecord(
-            allocation.Id,
-            allocation.InvoiceId,
-            allocation.BankTransactionId,
-            allocation.Status,
-            allocation.ReversalReason,
-            allocation.ReversedAt,
-            allocation.Amount,
-            reversalIdempotencyKey,
-            audits.Count,
-            audit);
     }
 
     public async Task<AllocationReversalState?> FindAllocationStateAsync(

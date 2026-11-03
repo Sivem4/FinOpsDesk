@@ -4,7 +4,6 @@ using FinOpsDesk.Modules.Access.Application;
 using FinOpsDesk.Modules.Access.Domain;
 using FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace FinOpsDesk.IntegrationTests.Api;
@@ -85,7 +84,10 @@ public sealed partial class OrganizationRoleAssignmentTests
         try
         {
             Exception? blocked = await RevokeWithLockTimeoutAsync(other.Id, organizationId, assignmentId, version);
-            Assert.Equal(1222, FindSqlException(blocked)?.Number);
+            OrganizationAuthorizationException? denied = FindAuthorizationException(blocked);
+            Assert.NotNull(denied);
+            Assert.Equal(OrganizationAuthorizationFailure.LockNotAcquired, denied.Failure);
+            Assert.True(denied.LockReturnCode < 0);
         }
         finally
         {
@@ -265,13 +267,13 @@ public sealed partial class OrganizationRoleAssignmentTests
             CancellationToken.None));
     }
 
-    private static SqlException? FindSqlException(Exception? exception)
+    private static OrganizationAuthorizationException? FindAuthorizationException(Exception? exception)
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
         {
-            if (current is SqlException sqlException)
+            if (current is OrganizationAuthorizationException authorization)
             {
-                return sqlException;
+                return authorization;
             }
         }
 

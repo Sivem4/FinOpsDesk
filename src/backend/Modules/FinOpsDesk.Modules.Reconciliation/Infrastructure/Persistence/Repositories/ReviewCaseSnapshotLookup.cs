@@ -1,5 +1,7 @@
+using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.EntityFrameworkCore;
@@ -55,19 +57,25 @@ internal sealed class ReviewCaseSnapshotLookup : IReviewCaseSnapshotLookup
         await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
         ReconciliationDbContext context = scope.ServiceProvider
             .GetRequiredService<ReconciliationDbContext>();
-        ReviewCase? reviewCase = await context.ReviewCases
-            .Where(reviewCase => reviewCase.OrganizationId == organizationId)
-            .SingleOrDefaultAsync(predicate, cancellationToken);
-        if (reviewCase is null)
-        {
-            return null;
-        }
+        IFinancialCommitGuard guard = scope.ServiceProvider.GetRequiredService<IFinancialCommitGuard>();
+        return await FinancialCommitRead.ExecuteAsync(
+            context,
+            guard,
+            async token =>
+            {
+                ReviewCase? reviewCase = await context.ReviewCases
+                    .Where(reviewCase => reviewCase.OrganizationId == organizationId)
+                    .SingleOrDefaultAsync(predicate, token);
+                if (reviewCase is null)
+                {
+                    return null;
+                }
 
-        byte[] rowVersion = context.Entry(reviewCase)
-            .Property<byte[]>("RowVersion")
-            .CurrentValue!
-            .ToArray();
-        return new ReviewCaseSnapshot(
+                byte[] rowVersion = context.Entry(reviewCase)
+                    .Property<byte[]>("RowVersion")
+                    .CurrentValue!
+                    .ToArray();
+                return new ReviewCaseSnapshot(
             reviewCase.Id,
             reviewCase.OrganizationId,
             reviewCase.Reason,
@@ -83,5 +91,7 @@ internal sealed class ReviewCaseSnapshotLookup : IReviewCaseSnapshotLookup
             reviewCase.OpenedAt,
             reviewCase.ClosedAt,
             rowVersion);
+            },
+            cancellationToken);
     }
 }

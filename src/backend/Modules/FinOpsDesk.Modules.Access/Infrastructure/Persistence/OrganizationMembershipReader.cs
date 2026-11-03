@@ -1,7 +1,12 @@
+using System.Data;
+using System.Data.Common;
+
 using FinOpsDesk.Modules.Access.Application;
 using FinOpsDesk.Modules.Access.Domain;
 
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 
@@ -92,14 +97,60 @@ internal sealed class OrganizationMembershipReader : IOrganizationMembershipRead
 
         // Disable already rotates the stamp. This update remains for a disabled
         // row that still carries the presented stamp, and it does not replace a newer one.
-        Guid replacement = Guid.NewGuid();
-        return _dbContext.ApplicationUsers
-            .Where(user => user.Id == userId
-                && user.Status == ApplicationUserStatus.Disabled
-                && user.SessionStamp == observedStamp)
-            .ExecuteUpdateAsync(
-                setters => setters.SetProperty(user => user.SessionStamp, replacement),
-                cancellationToken);
+        return RetireLockedAsync(userId, observedStamp, cancellationToken);
+    }
+
+    private async Task RetireLockedAsync(
+        Guid userId,
+        Guid observedStamp,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        DbConnection connection = _dbContext.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using DbCommand command = connection.CreateCommand();
+        command.Transaction = transaction.GetDbTransaction();
+        command.CommandText =
+            """
+            SELECT Status, SessionStamp
+            FROM access.ApplicationUsers WITH (UPDLOCK, HOLDLOCK)
+            WHERE Id = @id
+            """;
+        command.Parameters.Add(new SqlParameter("@id", SqlDbType.UniqueIdentifier) { Value = userId });
+        bool matches = false;
+        await using (DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                matches = reader.GetByte(0) == (byte)ApplicationUserStatus.Disabled
+                    && reader.GetGuid(1) == observedStamp;
+            }
+        }
+
+        if (!matches)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return;
+        }
+
+        await using DbCommand update = connection.CreateCommand();
+        update.Transaction = transaction.GetDbTransaction();
+        update.CommandText =
+            """
+            UPDATE access.ApplicationUsers
+            SET SessionStamp = @stamp
+            WHERE Id = @id AND Status = @status AND SessionStamp = @observed
+            """;
+        update.Parameters.Add(new SqlParameter("@stamp", SqlDbType.UniqueIdentifier) { Value = Guid.NewGuid() });
+        update.Parameters.Add(new SqlParameter("@id", SqlDbType.UniqueIdentifier) { Value = userId });
+        update.Parameters.Add(new SqlParameter("@status", SqlDbType.TinyInt) { Value = (byte)ApplicationUserStatus.Disabled });
+        update.Parameters.Add(new SqlParameter("@observed", SqlDbType.UniqueIdentifier) { Value = observedStamp });
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<IReadOnlyList<OrganizationChoice>> ListActiveChoicesAsync(
