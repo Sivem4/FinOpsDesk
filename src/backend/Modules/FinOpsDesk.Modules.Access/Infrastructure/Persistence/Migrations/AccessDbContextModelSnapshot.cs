@@ -113,6 +113,56 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.OperationalSecurityEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("DeclaredOperator")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte>("Operation")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("Outcome")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid?>("TargetMembershipId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("TargetOrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("TargetUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TargetMembershipId");
+
+                    b.HasIndex("TargetOrganizationId", "OccurredAt")
+                        .HasDatabaseName("IX_OperationalSecurityEvents_TargetOrganizationId_OccurredAt");
+
+                    b.HasIndex("TargetUserId", "OccurredAt")
+                        .HasDatabaseName("IX_OperationalSecurityEvents_TargetUserId_OccurredAt");
+
+                    b.ToTable("OperationalSecurityEvents", "access", t =>
+                        {
+                            t.HasCheckConstraint("CK_OperationalSecurityEvents_DeclaredOperator", "LEN(LTRIM(RTRIM([DeclaredOperator]))) > 0 AND LEN([DeclaredOperator]) <= 128");
+
+                            t.HasCheckConstraint("CK_OperationalSecurityEvents_Operation", "[Operation] IN (1, 2, 3)");
+
+                            t.HasCheckConstraint("CK_OperationalSecurityEvents_Outcome", "[Outcome] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_OperationalSecurityEvents_Targets", "([Operation] = 1 AND [TargetUserId] IS NOT NULL AND [TargetOrganizationId] IS NULL AND [TargetMembershipId] IS NULL)\r\nOR ([Operation] = 2 AND [TargetUserId] IS NOT NULL AND [TargetOrganizationId] IS NOT NULL AND [TargetMembershipId] IS NOT NULL)\r\nOR ([Operation] = 3 AND [TargetUserId] IS NULL AND [TargetOrganizationId] IS NOT NULL AND [TargetMembershipId] IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.Organization", b =>
                 {
                     b.Property<Guid>("Id")
@@ -262,6 +312,24 @@ namespace FinOpsDesk.Modules.Access.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_BrowserSessions_ApplicationUsers_UserId");
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.OperationalSecurityEvent", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.OrganizationMembership", null)
+                        .WithMany()
+                        .HasForeignKey("TargetMembershipId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("TargetOrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FinOpsDesk.Modules.Access.Domain.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("TargetUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Access.Domain.OrganizationMembership", b =>

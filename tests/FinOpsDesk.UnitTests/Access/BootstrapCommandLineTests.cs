@@ -111,6 +111,85 @@ public sealed class BootstrapCommandLineTests
         Assert.Equal(128, invocation.OperatorName.Length);
     }
 
+    [Theory]
+    [InlineData("disable-user")]
+    [InlineData("revoke-membership")]
+    [InlineData("disable-organization")]
+    public void Emergency_commands_reject_a_missing_operator(string command)
+    {
+        string[] arguments = command switch
+        {
+            "disable-user" => [command, "--issuer", "https://issuer.example", "--subject", "subject-1"],
+            "disable-organization" => [command, "--organization-id", OrganizationId.ToString("D")],
+            _ => [command, "--issuer", "https://issuer.example", "--subject", "subject-1", "--organization-id", OrganizationId.ToString("D")],
+        };
+
+        bool parsed = BootstrapCommandLine.TryParse(arguments, out BootstrapInvocation? invocation, out string? failure);
+
+        Assert.False(parsed);
+        Assert.Null(invocation);
+        Assert.Equal("invalid-argument", failure);
+    }
+
+    [Theory]
+    [InlineData("not-a-guid")]
+    [InlineData("aaaaaaaabbbbccccddddeeeeeeeeeeee")]
+    [InlineData("{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}")]
+    public void Emergency_organization_ids_must_use_the_hyphenated_guid_form(string organizationId)
+    {
+        bool parsed = BootstrapCommandLine.TryParse(
+            ["disable-organization", "--organization-id", organizationId, "--operator", "phase-7d5"],
+            out _,
+            out string? failure);
+
+        Assert.False(parsed);
+        Assert.Equal("invalid-argument", failure);
+    }
+
+    [Fact]
+    public void Disable_user_accepts_the_stable_identity_and_declared_operator()
+    {
+        bool parsed = BootstrapCommandLine.TryParse(
+            ["disable-user", "--issuer", "https://issuer.example", "--subject", "subject-1", "--operator", "phase-7d5"],
+            out BootstrapInvocation? invocation,
+            out string? failure);
+
+        Assert.True(parsed, failure);
+        Assert.NotNull(invocation);
+        Assert.Equal("disable-user", invocation.Command);
+        Assert.Equal("https://issuer.example", invocation.Issuer);
+        Assert.Equal("subject-1", invocation.Subject);
+        Assert.Equal("phase-7d5", invocation.OperatorName);
+    }
+
+    [Fact]
+    public void Revoke_membership_and_disable_organization_accept_their_targets()
+    {
+        bool membership = BootstrapCommandLine.TryParse(
+            [
+                "revoke-membership",
+                "--issuer",
+                "https://issuer.example",
+                "--subject",
+                "subject-1",
+                "--organization-id",
+                OrganizationId.ToString("D"),
+                "--operator",
+                "phase-7d5",
+            ],
+            out BootstrapInvocation? membershipInvocation,
+            out string? membershipFailure);
+        bool organization = BootstrapCommandLine.TryParse(
+            ["disable-organization", "--organization-id", OrganizationId.ToString("D"), "--operator", "phase-7d5"],
+            out BootstrapInvocation? organizationInvocation,
+            out string? organizationFailure);
+
+        Assert.True(membership, membershipFailure);
+        Assert.True(organization, organizationFailure);
+        Assert.Equal(OrganizationId, membershipInvocation!.OrganizationId);
+        Assert.Equal(OrganizationId, organizationInvocation!.OrganizationId);
+    }
+
     private static string[] RoleArguments(bool includeOperator, string command = "grant-role")
     {
         List<string> args =

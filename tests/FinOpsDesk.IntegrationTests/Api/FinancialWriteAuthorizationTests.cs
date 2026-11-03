@@ -6,6 +6,7 @@ using System.Text.Json;
 
 using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.IntegrationTests.Reconciliation.Persistence;
+using FinOpsDesk.Modules.Access;
 using FinOpsDesk.Modules.Access.Application;
 using FinOpsDesk.Modules.Access.Domain;
 using FinOpsDesk.Modules.Access.Infrastructure.Persistence;
@@ -997,6 +998,233 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         {
             _entered.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
+        }
+
+        public void Release()
+        {
+            _release.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task Membership_revocation_waits_behind_a_shared_financial_lock()
+    {
+        PausingCommitSync sync = new();
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true, sync: sync);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair pair = await host.SeedPairAsync("membership-behind-shared");
+        Guid membership = await host.MembershipIdAsync(user.Id, pair.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(pair.OrganizationId);
+        Task<HttpResponseMessage> write = host.Client.SendAsync(Confirm(pair, Guid.NewGuid(), host.Csrf));
+        try
+        {
+            await sync.Entered.WaitAsync(TimeSpan.FromSeconds(15));
+            Task<DeploymentCommandStatus> revoke = EmergencyAsync(
+                controls => controls.RevokeMembershipAsync(_stub.Authority, OidcProtocolStub.Subject, pair.OrganizationId, "phase-7d5-operator", CancellationToken.None));
+            await WaitForApplicationWaiterAsync(pair.OrganizationId);
+            Assert.False(revoke.IsCompleted);
+            sync.Release();
+            using HttpResponseMessage response = await write;
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal(DeploymentCommandStatus.MembershipRevoked, await revoke);
+            Assert.Equal(1, await host.CountAllocationsAsync(pair.OrganizationId));
+        }
+        finally
+        {
+            sync.Release();
+        }
+    }
+
+    [Fact]
+    public async Task Organization_disable_waits_behind_a_shared_financial_lock()
+    {
+        PausingCommitSync sync = new();
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true, sync: sync);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair pair = await host.SeedPairAsync("organization-behind-shared");
+        Guid membership = await host.MembershipIdAsync(user.Id, pair.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(pair.OrganizationId);
+        Task<HttpResponseMessage> write = host.Client.SendAsync(Confirm(pair, Guid.NewGuid(), host.Csrf));
+        try
+        {
+            await sync.Entered.WaitAsync(TimeSpan.FromSeconds(15));
+            Task<DeploymentCommandStatus> disable = EmergencyAsync(
+                controls => controls.DisableOrganizationAsync(pair.OrganizationId, "phase-7d5-operator", CancellationToken.None));
+            await WaitForApplicationWaiterAsync(pair.OrganizationId);
+            Assert.False(disable.IsCompleted);
+            sync.Release();
+            using HttpResponseMessage response = await write;
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal(DeploymentCommandStatus.OrganizationDisabled, await disable);
+            Assert.Equal(1, await host.CountAllocationsAsync(pair.OrganizationId));
+        }
+        finally
+        {
+            sync.Release();
+        }
+    }
+
+    [Fact]
+    public async Task Membership_revocation_that_wins_the_exclusive_lock_denies_the_financial_write()
+    {
+        PausingEmergencySync pause = new();
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair pair = await host.SeedPairAsync("membership-exclusive");
+        Guid membership = await host.MembershipIdAsync(user.Id, pair.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(pair.OrganizationId);
+        Task<DeploymentCommandStatus> revoke = EmergencyAsync(
+            controls => controls.RevokeMembershipAsync(_stub.Authority, OidcProtocolStub.Subject, pair.OrganizationId, "phase-7d5-operator", CancellationToken.None),
+            pause);
+        try
+        {
+            await pause.Entered.WaitAsync(TimeSpan.FromSeconds(15));
+            Task<HttpResponseMessage> write = host.Client.SendAsync(Confirm(pair, Guid.NewGuid(), host.Csrf));
+            await WaitForApplicationWaiterAsync(pair.OrganizationId);
+            Assert.False(write.IsCompleted);
+            pause.Release();
+            Assert.Equal(DeploymentCommandStatus.MembershipRevoked, await revoke);
+            using HttpResponseMessage response = await write;
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(0, await host.CountAllocationsAsync(pair.OrganizationId));
+        }
+        finally
+        {
+            pause.Release();
+        }
+    }
+
+    [Fact]
+    public async Task Organization_disable_that_wins_the_exclusive_lock_denies_the_financial_write()
+    {
+        PausingEmergencySync pause = new();
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair pair = await host.SeedPairAsync("organization-exclusive");
+        Guid membership = await host.MembershipIdAsync(user.Id, pair.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(pair.OrganizationId);
+        Task<DeploymentCommandStatus> disable = EmergencyAsync(
+            controls => controls.DisableOrganizationAsync(pair.OrganizationId, "phase-7d5-operator", CancellationToken.None),
+            pause);
+        try
+        {
+            await pause.Entered.WaitAsync(TimeSpan.FromSeconds(15));
+            Task<HttpResponseMessage> write = host.Client.SendAsync(Confirm(pair, Guid.NewGuid(), host.Csrf));
+            await WaitForApplicationWaiterAsync(pair.OrganizationId);
+            Assert.False(write.IsCompleted);
+            pause.Release();
+            Assert.Equal(DeploymentCommandStatus.OrganizationDisabled, await disable);
+            using HttpResponseMessage response = await write;
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(0, await host.CountAllocationsAsync(pair.OrganizationId));
+        }
+        finally
+        {
+            pause.Release();
+        }
+    }
+
+    [Fact]
+    public async Task User_disable_waits_behind_the_financial_user_row_lock()
+    {
+        PausingCommitSync sync = new();
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true, sync: sync);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair pair = await host.SeedPairAsync("user-row-lock");
+        Guid membership = await host.MembershipIdAsync(user.Id, pair.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(pair.OrganizationId);
+        Task<HttpResponseMessage> write = host.Client.SendAsync(Confirm(pair, Guid.NewGuid(), host.Csrf));
+        Task<DeploymentCommandStatus>? disable = null;
+        try
+        {
+            await sync.Entered.WaitAsync(TimeSpan.FromSeconds(15));
+            disable = EmergencyAsync(
+                controls => controls.DisableUserAsync(_stub.Authority, OidcProtocolStub.Subject, "phase-7d5-operator", CancellationToken.None));
+            await WaitForKeyWaiterAsync();
+            Assert.False(disable.IsCompleted);
+            sync.Release();
+            using HttpResponseMessage response = await write;
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal(DeploymentCommandStatus.UserDisabled, await disable);
+            Assert.Equal(1, await host.CountAllocationsAsync(pair.OrganizationId));
+        }
+        finally
+        {
+            sync.Release();
+            if (disable is not null)
+            {
+                try
+                {
+                    await disable.WaitAsync(TimeSpan.FromSeconds(20));
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            await RestoreStubUserAsync();
+        }
+    }
+
+    private async Task RestoreStubUserAsync()
+    {
+        byte[] identityKey = ExternalIdentityKey.Compute(_stub.Authority, OidcProtocolStub.Subject);
+        await using AccessDbContext context = _fixture.CreateAccessContext();
+        ApplicationUser? user = (await context.ApplicationUsers
+            .Where(candidate => candidate.IdentityKey == identityKey)
+            .ToListAsync())
+            .SingleOrDefault(candidate => ExternalIdentityKey.Same(
+                candidate.Issuer,
+                candidate.Subject,
+                _stub.Authority,
+                OidcProtocolStub.Subject));
+        if (user is null || user.Status == ApplicationUserStatus.Active)
+        {
+            return;
+        }
+
+        user.Restore();
+        await context.SaveChangesAsync();
+    }
+
+    private async Task<DeploymentCommandStatus> EmergencyAsync(
+        Func<IDeploymentEmergencyControls, Task<DeploymentCommandStatus>> command,
+        IDeploymentEmergencySync? sync = null)
+    {
+        ServiceCollection services = new();
+        services.AddAccessModule(_fixture.ConnectionString);
+        if (sync is not null)
+        {
+            services.AddSingleton(sync);
+        }
+
+        services.AddScoped<IDeploymentEmergencyControls, DeploymentEmergencyControls>();
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        await using AsyncServiceScope scope = provider.CreateAsyncScope();
+        return await command(scope.ServiceProvider.GetRequiredService<IDeploymentEmergencyControls>());
+    }
+
+    private sealed class PausingEmergencySync : IDeploymentEmergencySync
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+
+        public async Task AfterAuthoritativeLockAsync(CancellationToken cancellationToken)
+        {
+            _entered.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+        }
+
+        public Task BeforeCommitAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
         }
 
         public void Release()

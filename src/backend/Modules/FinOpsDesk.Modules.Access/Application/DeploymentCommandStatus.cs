@@ -21,4 +21,11 @@ public enum DeploymentCommandStatus
     InvalidOperator = 17,
     ConcurrencyConflict = 18,
     MembershipNotFound = 19,
+    UserDisabled = 20,
+    UserAlreadyDisabled = 21,
+    MembershipRevoked = 22,
+    MembershipAlreadyRevoked = 23,
+    OrganizationDisabled = 24,
+    OrganizationAlreadyDisabled = 25,
+    LockNotAcquired = 26,
 }

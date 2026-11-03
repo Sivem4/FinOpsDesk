@@ -40,10 +40,13 @@ Override the connection string with configuration or environment variables. Do n
 
 - `create-organization --organization-id <guid> --name <name>`
 - `grant-membership --issuer <issuer> --subject <subject> --organization-id <guid>`
-- `grant-role --issuer <issuer> --subject <subject> --organization-id <guid> --role <Viewer|Operator|ReversalApprover|OrganizationAdmin> --operator <deployment-operator-id>`
+- `grant-role --issuer <issuer> --subject <subject> --organization-id <guid> --role <Viewer|Operator|ReversalApprover|OrganizationAdmin> --operator <declared-operator>`
 - `revoke-role` takes the same arguments as `grant-role`
+- `disable-user --issuer <issuer> --subject <subject> --operator <declared-operator>`
+- `revoke-membership --issuer <issuer> --subject <subject> --organization-id <guid> --operator <declared-operator>`
+- `disable-organization --organization-id <guid> --operator <declared-operator>`
 
-`--operator` is required for `grant-role` and `revoke-role`. It is audit metadata, not a password, and the console does not read `Environment.UserName`. Running the console is authorized by the deployment environment and the SQL credential. See [docs/adr/0017-organization-roles.md](docs/adr/0017-organization-roles.md).
+`--operator` is required for the role commands and the three emergency commands. It is declared attribution, not a password and not an authenticated administrator. The console does not read `Environment.UserName` and does not verify the string with the identity provider. Running the console is authorized by the operating system, the deployment environment, and the SQL credential. Restrict who can execute the console and who can connect with its SQL credential. Emergency commands write `access.OperationalSecurityEvents` in the same transaction as the security change. A repeat is `AlreadyApplied` and does not change the security row again. There is no command to re-enable a user, restore a membership, or re-enable an organization. See [docs/adr/0017-organization-roles.md](docs/adr/0017-organization-roles.md) and [docs/adr/0021-operational-access-emergency-controls.md](docs/adr/0021-operational-access-emergency-controls.md).
 
 Browser session routes, registered only for `ProductionCookie`:
 
