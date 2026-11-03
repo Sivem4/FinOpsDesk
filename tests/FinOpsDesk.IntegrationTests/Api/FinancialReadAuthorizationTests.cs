@@ -377,6 +377,169 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.DoesNotContain("ran", await anonymous.Content.ReadAsStringAsync(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Session_contract_separates_legacy_shape_from_enabled_reads()
+    {
+        using HttpClient anonymous = _factory.CreateBrowserClient();
+        using (JsonDocument anonymousContract = await ReadContractSessionAsync(anonymous, "2"))
+        {
+            Assert.False(anonymousContract.RootElement.GetProperty("authenticated").GetBoolean());
+            Assert.False(anonymousContract.RootElement.GetProperty("financialAccess").GetBoolean());
+            Assert.Equal(0, anonymousContract.RootElement.GetProperty("permissions").GetArrayLength());
+        }
+
+        using (JsonDocument legacy = await ReadContractSessionAsync(anonymous, "future"))
+        {
+            Assert.False(legacy.RootElement.GetProperty("financialAccess").GetBoolean());
+            Assert.False(legacy.RootElement.TryGetProperty("permissions", out _));
+        }
+
+        using HttpClient client = _factory.CreateBrowserClient();
+        await SignInAsync(client);
+        ApplicationUser user = await RequireUserAsync();
+        Guid organizationId = await CreateOrganizationAsync();
+        await GrantMembershipAsync(user, organizationId);
+        Guid membershipId = await MembershipIdAsync(user.Id, organizationId);
+        string csrf = await ReadCsrfAsync(client);
+
+        using (JsonDocument unselected = await ReadContractSessionAsync(client, "2"))
+        {
+            Assert.True(unselected.RootElement.GetProperty("authenticated").GetBoolean());
+            Assert.False(unselected.RootElement.GetProperty("financialAccess").GetBoolean());
+            Assert.Equal(0, unselected.RootElement.GetProperty("permissions").GetArrayLength());
+        }
+
+        Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, organizationId)).StatusCode);
+        using (JsonDocument roleless = await ReadContractSessionAsync(client, "2"))
+        {
+            AssertPermissions(roleless.RootElement);
+        }
+
+        Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.OrganizationAdmin));
+        using (JsonDocument admin = await ReadContractSessionAsync(client, "2"))
+        {
+            AssertPermissions(admin.RootElement);
+        }
+
+        Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Viewer));
+        using (JsonDocument viewer = await ReadContractSessionAsync(client, "2"))
+        {
+            AssertPermissions(
+                viewer.RootElement,
+                "invoices.read",
+                "bank-transactions.read",
+                "reconciliation.read",
+                "allocations.read",
+                "review-cases.read");
+        }
+
+        using (JsonDocument versionOne = await ReadContractSessionAsync(client, null))
+        {
+            Assert.False(versionOne.RootElement.GetProperty("financialAccess").GetBoolean());
+            Assert.False(versionOne.RootElement.TryGetProperty("permissions", out _));
+        }
+
+        Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Operator));
+        using (JsonDocument combined = await ReadContractSessionAsync(client, "2"))
+        {
+            AssertPermissions(
+                combined.RootElement,
+                "invoices.read",
+                "bank-transactions.read",
+                "reconciliation.read",
+                "allocations.read",
+                "audit.read",
+                "review-cases.read");
+        }
+
+        Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(membershipId, OrganizationRole.Viewer));
+        Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(membershipId, OrganizationRole.Operator));
+        Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.ReversalApprover));
+        using (JsonDocument approver = await ReadContractSessionAsync(client, "2"))
+        {
+            AssertPermissions(
+                approver.RootElement,
+                "invoices.read",
+                "bank-transactions.read",
+                "reconciliation.read",
+                "allocations.read",
+                "audit.read",
+                "review-cases.read");
+        }
+    }
+
+    [Fact]
+    public async Task Session_contract_v2_fails_closed_when_role_storage_fails_and_v1_stays_available()
+    {
+        using HttpClient client = _factory.CreateBrowserClient();
+        await SignInAsync(client);
+        ApplicationUser user = await RequireUserAsync();
+        Guid organizationId = await CreateOrganizationAsync();
+        await GrantMembershipAsync(user, organizationId);
+        Guid membershipId = await MembershipIdAsync(user.Id, organizationId);
+        string csrf = await ReadCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, organizationId)).StatusCode);
+        Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Viewer));
+
+        await RenameAsync("OrganizationRoleAssignments", "OrganizationRoleAssignments_offline");
+        try
+        {
+            using HttpRequestMessage versionTwo = new(HttpMethod.Get, "/api/session");
+            versionTwo.Headers.TryAddWithoutValidation(SessionContract.HeaderName, "2");
+            HttpResponseMessage unavailable = await client.SendAsync(versionTwo);
+            await AssertProblemAsync(unavailable, HttpStatusCode.ServiceUnavailable, "auth.authorization.unavailable");
+            Assert.False(ClearsSessionCookie(unavailable));
+            AssertHeaderContains(unavailable, "Vary", SessionContract.HeaderName);
+            Assert.DoesNotContain("OrganizationRoleAssignments", await unavailable.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            using JsonDocument versionOne = await ReadContractSessionAsync(client, null);
+            Assert.True(versionOne.RootElement.GetProperty("authenticated").GetBoolean());
+            Assert.False(versionOne.RootElement.GetProperty("financialAccess").GetBoolean());
+            Assert.False(versionOne.RootElement.TryGetProperty("permissions", out _));
+        }
+        finally
+        {
+            await RenameAsync("OrganizationRoleAssignments_offline", "OrganizationRoleAssignments");
+        }
+
+        using JsonDocument restored = await ReadContractSessionAsync(client, "2");
+        AssertPermissions(
+            restored.RootElement,
+            "invoices.read",
+            "bank-transactions.read",
+            "reconciliation.read",
+            "allocations.read",
+            "review-cases.read");
+    }
+
+    [Fact]
+    public async Task Disabled_financial_reads_keep_contract_v2_empty_without_the_role_table()
+    {
+        using FinOpsDeskApiFactory closed = CreateFactory(financialReadAuthorizationEnabled: false);
+        using HttpClient warmup = closed.CreateClient();
+        using HttpClient client = closed.CreateBrowserClient();
+        await SignInAsync(client);
+        ApplicationUser user = await RequireUserAsync();
+        Guid organizationId = await CreateOrganizationAsync();
+        await GrantMembershipAsync(user, organizationId);
+        Guid membershipId = await MembershipIdAsync(user.Id, organizationId);
+        Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Viewer));
+        string csrf = await ReadCsrfAsync(client);
+        Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, organizationId)).StatusCode);
+
+        await RenameAsync("OrganizationRoleAssignments", "OrganizationRoleAssignments_offline");
+        try
+        {
+            using JsonDocument session = await ReadContractSessionAsync(client, "2");
+            AssertPermissions(session.RootElement);
+            await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            await RenameAsync("OrganizationRoleAssignments_offline", "OrganizationRoleAssignments");
+        }
+    }
+
     public void Dispose()
     {
         _factory.Dispose();
@@ -710,10 +873,37 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
     private static async Task<JsonDocument> ReadSessionAsync(HttpClient client)
     {
-        HttpResponseMessage response = await client.GetAsync("/api/session");
+        return await ReadContractSessionAsync(client, null);
+    }
+
+    private static async Task<JsonDocument> ReadContractSessionAsync(HttpClient client, string? contract)
+    {
+        using HttpRequestMessage request = new(HttpMethod.Get, "/api/session");
+        if (contract is not null)
+        {
+            request.Headers.TryAddWithoutValidation(SessionContract.HeaderName, contract);
+        }
+
+        HttpResponseMessage response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         AssertHeaderContains(response, "Cache-Control", "no-store");
+        AssertHeaderContains(response, "Vary", SessionContract.HeaderName);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    private static void AssertPermissions(JsonElement session, params string[] expected)
+    {
+        Assert.Equal(expected.Length > 0, session.GetProperty("financialAccess").GetBoolean());
+        JsonElement permissions = session.GetProperty("permissions");
+        string[] actual = permissions.EnumerateArray().Select(item => item.GetString() ?? string.Empty).ToArray();
+        Assert.Equal(expected, actual);
+        Assert.DoesNotContain("imports.create", actual);
+        Assert.DoesNotContain("reconciliation.confirm", actual);
+        Assert.DoesNotContain("allocations.create", actual);
+        Assert.DoesNotContain("allocations.reverse", actual);
+        Assert.DoesNotContain("review-cases.resolve", actual);
+        Assert.DoesNotContain("membership.manage", actual);
+        Assert.DoesNotContain("roles.manage", actual);
     }
 
     private static async Task<HttpResponseMessage> SelectAsync(HttpClient client, string csrf, Guid organizationId)

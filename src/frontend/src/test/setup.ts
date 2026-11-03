@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { resetReversalAttemptStateForTests } from '../features/allocations/reversal-attempt';
 import { resetAllocationAttemptStateForTests } from '../features/reconciliation/allocation-attempt';
+import { resetFinancialStatusForTests } from '../shared/api/financial-status';
 import { queryClient } from '../shared/api/query-client';
 import { sessionStore } from '../shared/api/session-store';
 import { resetSessionReadsForTests } from '../shared/auth/browser-session';
@@ -25,6 +26,7 @@ afterEach(() => {
   resetCookieActionsForTests();
   resetSessionCoordinationForTests();
   queryClient.clear();
+  resetFinancialStatusForTests();
   localStorage.clear();
   sessionStorage.clear();
   resetAllocationAttemptStateForTests();

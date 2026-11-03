@@ -18,6 +18,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 
 import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
+import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { endSession, useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
 import { listInvoices, type InvoiceListItem } from './invoice-api';
@@ -26,17 +27,23 @@ const defaultPage = 1;
 const defaultPageSize = 50;
 const pageSizeOptions = [25, 50, 100];
 
-export function InvoiceRegisterPage() {
+export function InvoiceRegisterPage({ showImportLink = true }: { showImportLink?: boolean }) {
   const session = useSession();
+  const cookie = browserAuthMode() === 'cookie';
   const [searchParams, setSearchParams] = useSearchParams();
   const page = readPage(searchParams.get('page'));
   const pageSize = readPageSize(searchParams.get('pageSize'));
   const paginationValid = page !== null && pageSize !== null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const readable = cookie
+    ? session.authorization === 'verified' && session.capabilities.includes('invoices.read')
+    : session.token !== null;
 
   const query = useQuery({
-    queryKey: ['invoices', session.epoch, page, pageSize],
-    enabled: session.token !== null && paginationValid,
+    queryKey: cookie
+      ? ['invoices', session.epoch, session.readiness, page, pageSize]
+      : ['invoices', session.epoch, page, pageSize],
+    enabled: readable && paginationValid,
     queryFn: ({ signal }) => listInvoices(page ?? defaultPage, pageSize ?? defaultPageSize, signal),
   });
 
@@ -54,7 +61,9 @@ export function InvoiceRegisterPage() {
           Invoices
         </Typography>
         <Stack direction="row" spacing={1}>
+          {showImportLink ? (
           <Button component={Link} to="/imports" variant="outlined">Import invoices</Button>
+        ) : null}
           {list !== null ? (
             <Button onClick={() => void query.refetch()} disabled={query.isFetching}>
               Refresh
@@ -245,6 +254,14 @@ function ErrorState({
   retrying: boolean;
 }) {
   if (error instanceof ApiError && error.status === 401) {
+    if (browserAuthMode() === 'cookie') {
+      return (
+        <Alert severity="warning">
+          The browser session needs to be checked again. Financial records stay hidden until that check succeeds.
+        </Alert>
+      );
+    }
+
     return (
       <Alert
         severity="warning"

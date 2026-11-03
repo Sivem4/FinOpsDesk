@@ -6,8 +6,27 @@ import {
   type SessionSnapshot,
 } from '../api/session-store';
 
+export const financialReadCapabilities = [
+  'invoices.read',
+  'bank-transactions.read',
+  'reconciliation.read',
+  'allocations.read',
+  'audit.read',
+  'review-cases.read',
+] as const;
+
+export const screenCapabilities = [
+  'invoices.read',
+  'bank-transactions.read',
+  'reconciliation.read',
+  'allocations.read',
+] as const;
+
+export const sessionContractHeader = 'X-FinOpsDesk-Session-Contract';
+
 export type BrowserSessionLoad =
-  | { kind: 'anonymous' | 'restricted'; session: CookieSessionFields }
+  | { kind: 'anonymous' | 'restricted' | 'workspace'; session: CookieSessionFields }
+  | { kind: 'unavailable' }
   | { kind: 'invalid' }
   | { kind: 'network' }
   | { kind: 'http'; status: number };
@@ -39,7 +58,10 @@ export async function loadBrowserSession(signal: AbortSignal): Promise<BrowserSe
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store',
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        [sessionContractHeader]: '2',
+      },
       signal,
     });
   } catch (error) {
@@ -48,6 +70,10 @@ export async function loadBrowserSession(signal: AbortSignal): Promise<BrowserSe
     }
 
     return { kind: 'network' };
+  }
+
+  if (response.status === 503) {
+    return { kind: 'unavailable' };
   }
 
   if (!response.ok) {
@@ -66,7 +92,13 @@ export async function loadBrowserSession(signal: AbortSignal): Promise<BrowserSe
 }
 
 export function parseBrowserSession(body: unknown): BrowserSessionLoad {
-  if (!isRecord(body) || typeof body.authenticated !== 'boolean' || body.financialAccess !== false) {
+  if (!isRecord(body) || typeof body.authenticated !== 'boolean' || typeof body.financialAccess !== 'boolean') {
+    return { kind: 'invalid' };
+  }
+
+  const capabilities = readCapabilities(body.permissions, body.financialAccess, body.authenticated);
+
+  if (capabilities === 'invalid') {
     return { kind: 'invalid' };
   }
 
@@ -107,7 +139,7 @@ export function parseBrowserSession(body: unknown): BrowserSessionLoad {
     }
 
     return {
-      kind: 'restricted',
+      kind: capabilities.mode === 'verified' ? 'workspace' : 'restricted',
       session: {
         authenticated: true,
         csrfToken: body.csrfToken,
@@ -117,6 +149,8 @@ export function parseBrowserSession(body: unknown): BrowserSessionLoad {
         expiresAt,
         organizations,
         activeOrganization,
+        authorization: capabilities.mode,
+        capabilities: capabilities.values,
       },
     };
   }
@@ -143,6 +177,8 @@ export function parseBrowserSession(body: unknown): BrowserSessionLoad {
       expiresAt: null,
       organizations: [],
       activeOrganization: null,
+      authorization: 'anonymous',
+      capabilities: [],
     },
   };
 }
@@ -180,7 +216,88 @@ export function sameBrowserIdentity(current: SessionSnapshot, next: CookieSessio
   return current.authenticated === next.authenticated
     && current.issuer === next.issuer
     && current.subject === next.subject
-    && activeOrganizationId(current) === activeOrganizationId(next);
+    && activeOrganizationId(current) === activeOrganizationId(next)
+    && sameCapabilities(current.capabilities, next.capabilities);
+}
+
+function sameCapabilities(current: readonly string[], next: readonly string[]): boolean {
+  if (current.length !== next.length) {
+    return false;
+  }
+
+  for (let index = 0; index < current.length; index += 1) {
+    if (current[index] !== next[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function readCapabilities(
+  permissions: unknown,
+  financialAccess: boolean,
+  authenticated: boolean,
+): { mode: 'anonymous' | 'restricted' | 'verified'; values: readonly string[] } | 'invalid' {
+  const recognized = recognizeCapabilities(permissions);
+
+  if (recognized === 'invalid') {
+    return 'invalid';
+  }
+
+  if (!authenticated) {
+    if (financialAccess || (recognized !== 'absent' && recognized.length > 0)) {
+      return 'invalid';
+    }
+
+    return { mode: 'anonymous', values: [] };
+  }
+
+  if (recognized === 'absent') {
+    if (financialAccess) {
+      return 'invalid';
+    }
+
+    return { mode: 'restricted', values: [] };
+  }
+
+  if (!financialAccess) {
+    if (recognized.length > 0) {
+      return 'invalid';
+    }
+
+    return { mode: 'restricted', values: [] };
+  }
+
+  if (recognized.length === 0) {
+    return { mode: 'restricted', values: [] };
+  }
+
+  return { mode: 'verified', values: recognized };
+}
+
+function recognizeCapabilities(permissions: unknown): readonly string[] | 'absent' | 'invalid' {
+  if (permissions === undefined) {
+    return 'absent';
+  }
+
+  if (!Array.isArray(permissions)) {
+    return 'invalid';
+  }
+
+  const accepted = new Set<string>();
+
+  for (const entry of permissions) {
+    if (typeof entry !== 'string') {
+      return 'invalid';
+    }
+
+    if ((financialReadCapabilities as readonly string[]).includes(entry)) {
+      accepted.add(entry);
+    }
+  }
+
+  return financialReadCapabilities.filter((capability) => accepted.has(capability));
 }
 
 function activeOrganizationId(session: { activeOrganization: BrowserOrganization | null }): string | null {

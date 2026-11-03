@@ -1,11 +1,10 @@
 import { useSyncExternalStore } from 'react';
 import { isLosslessNumber, parse } from 'lossless-json';
 
-import { authenticationHeaders } from '../../shared/api/authentication';
+import { authenticationHeaders, rejectCookieFinancialRequest } from '../../shared/api/authentication';
 import { isAbortError, StaleSessionError } from '../../shared/api/errors';
 import { toApiError } from '../../shared/api/problem';
 import { sessionStore, type SessionSnapshot } from '../../shared/api/session-store';
-import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { useSession } from '../../shared/auth/session';
 import {
   parseAllocationAmount,
@@ -252,9 +251,8 @@ export function beginExplicitAmountAttempt(input: BeginExplicitAmountInput): Exp
 }
 
 export async function submitExplicitAmountAttempt(signal?: AbortSignal): Promise<VerifiedExplicitAmount> {
-  if (browserAuthMode() === 'cookie') {
-    throw new AllocationAuthenticationError();
-  }
+  const session = sessionStore.getSnapshot();
+  rejectCookieFinancialRequest(session);
 
   if (submissionInFlight) {
     throw new AllocationSubmissionInProgressError();
@@ -267,7 +265,6 @@ export async function submitExplicitAmountAttempt(signal?: AbortSignal): Promise
   }
 
   const attempt = stored.attempt;
-  const session = sessionStore.getSnapshot();
   const organizationId = readOrganizationId(session.token);
 
   if (session.token === null || organizationId === null) {

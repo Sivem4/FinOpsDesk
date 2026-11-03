@@ -11,6 +11,16 @@ describe('browser session', () => {
     expect(parseBrowserSession({ ok: true }).kind).toBe('invalid');
     expect(parseBrowserSession({ ...anonymousBody(), issuer: 'https://issuer.example' }).kind).toBe('invalid');
     expect(parseBrowserSession({ ...restrictedBody(), financialAccess: true }).kind).toBe('invalid');
+    expect(parseBrowserSession({
+      ...restrictedBody(),
+      financialAccess: true,
+      permissions: ['future.permission'],
+    }).kind).toBe('restricted');
+    expect(parseBrowserSession({
+      ...restrictedBody(),
+      financialAccess: false,
+      permissions: ['invoices.read'],
+    }).kind).toBe('invalid');
     expect(parseBrowserSession({ ...restrictedBody(), subject: '' }).kind).toBe('invalid');
     expect(parseBrowserSession({ ...restrictedBody(), activeOrganization: organization('North Ledger', northId) }).kind).toBe('invalid');
     expect(parseBrowserSession({ ...anonymousBody(), organizations: [organization('North Ledger', northId)] }).kind).toBe('invalid');
@@ -39,6 +49,38 @@ describe('browser session', () => {
         displayName: 'Ada Operator',
       },
     });
+    expect(parseBrowserSession({
+      ...restrictedBody(),
+      financialAccess: true,
+      permissions: ['review-cases.read', 'invoices.read', 'invoices.read', 'future.permission'],
+      organizations: [organization('North Ledger', northId)],
+      activeOrganization: organization('North Ledger', northId),
+    })).toMatchObject({
+      kind: 'workspace',
+      session: {
+        authorization: 'verified',
+        capabilities: ['invoices.read', 'review-cases.read'],
+      },
+    });
+  });
+
+  it('rotates the epoch when verified capabilities change', () => {
+    const current = restrictedFields();
+    current.authorization = 'verified';
+    current.capabilities = ['invoices.read'];
+    current.organizations = [organization('North Ledger', northId)];
+    current.activeOrganization = organization('North Ledger', northId);
+    sessionStore.replaceCookieSession(current, true);
+    const epoch = sessionStore.getSnapshot().epoch;
+    const readId = beginSessionRead();
+    const next = restrictedFields();
+    next.authorization = 'verified';
+    next.capabilities = ['bank-transactions.read'];
+    next.organizations = [organization('North Ledger', northId)];
+    next.activeOrganization = organization('North Ledger', northId);
+
+    expect(commitBrowserSession(epoch, readId, next)).toBe('applied');
+    expect(sessionStore.getSnapshot().epoch).toBe(epoch + 1);
   });
 
   it('treats a network failure as a session check failure', async () => {
@@ -136,6 +178,33 @@ describe('browser session', () => {
     expect(commitBrowserSession(epoch, newer, restrictedFields('oidc-operator', 'csrf-newer'))).toBe('applied');
     expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-newer');
   });
+
+  it('does not rotate the epoch when the same permissions arrive in a different order', () => {
+    const current = restrictedFields();
+    current.authorization = 'verified';
+    current.capabilities = ['invoices.read', 'review-cases.read'];
+    current.organizations = [organization('North Ledger', northId)];
+    current.activeOrganization = organization('North Ledger', northId);
+    sessionStore.replaceCookieSession(current, true);
+    const epoch = sessionStore.getSnapshot().epoch;
+    const readId = beginSessionRead();
+    const parsed = parseBrowserSession({
+      ...restrictedBody(),
+      financialAccess: true,
+      permissions: ['review-cases.read', 'invoices.read'],
+      organizations: [organization('North Ledger', northId)],
+      activeOrganization: organization('North Ledger', northId),
+    });
+
+    expect(parsed.kind).toBe('workspace');
+    if (parsed.kind !== 'workspace') {
+      return;
+    }
+
+    expect(commitBrowserSession(epoch, readId, parsed.session)).toBe('applied');
+    expect(sessionStore.getSnapshot().epoch).toBe(epoch);
+    expect(sessionStore.getSnapshot().capabilities).toEqual(['invoices.read', 'review-cases.read']);
+  });
 });
 
 function anonymousBody() {
@@ -182,5 +251,7 @@ function restrictedFields(subject = 'oidc-operator', csrfToken = 'csrf-session')
     expiresAt: 4_000_000_000,
     organizations: [],
     activeOrganization: null,
+    authorization: 'restricted',
+    capabilities: [],
   };
 }

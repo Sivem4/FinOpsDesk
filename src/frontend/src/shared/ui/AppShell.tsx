@@ -6,11 +6,21 @@ export function AppShell({
   children,
   onLogout,
   onReplace,
+  links,
 }: {
   children: ReactNode;
   onLogout: () => void;
-  onReplace: () => void;
+  onReplace?: () => void;
+  links?: readonly { to: string; label: string }[];
 }) {
+  const navigation = links ?? [
+    { to: '/invoices', label: 'Invoices' },
+    { to: '/bank-transactions', label: 'Bank transactions' },
+    { to: '/imports', label: 'Imports' },
+    { to: '/reconciliation', label: 'Reconciliation' },
+    { to: '/allocations', label: 'Allocation history' },
+  ];
+
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <AppBar position="static" color="primary" elevation={0}>
@@ -18,24 +28,16 @@ export function AppShell({
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             FinOpsDesk
           </Typography>
-          <Button component={NavLink} to="/invoices" color="inherit">
-            Invoices
-          </Button>
-          <Button component={NavLink} to="/bank-transactions" color="inherit">
-            Bank transactions
-          </Button>
-          <Button component={NavLink} to="/imports" color="inherit">
-            Imports
-          </Button>
-          <Button component={NavLink} to="/reconciliation" color="inherit">
-            Reconciliation
-          </Button>
-          <Button component={NavLink} to="/allocations" color="inherit">
-            Allocation history
-          </Button>
-          <Button color="inherit" onClick={onReplace}>
-            Replace token
-          </Button>
+          {navigation.map((link) => (
+            <Button key={link.to} component={NavLink} to={link.to} color="inherit">
+              {link.label}
+            </Button>
+          ))}
+          {onReplace === undefined ? null : (
+            <Button color="inherit" onClick={onReplace}>
+              Replace token
+            </Button>
+          )}
           <Button color="inherit" onClick={onLogout}>
             Log out
           </Button>

@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 
 import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
+import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { endSession, useSession } from '../../shared/auth/session';
 import { compareDecimalAmounts, formatMoney, readMoneyAmount, type DecimalString } from '../../shared/money/money';
 import { listBankTransactions, type BankTransactionListItem } from './bank-transaction-api';
@@ -26,16 +27,22 @@ const defaultPageSize = 50;
 const pageSizeOptions = [25, 50, 100];
 const zero = readMoneyAmount('0');
 
-export function BankTransactionRegisterPage() {
+export function BankTransactionRegisterPage({ showImportLink = true }: { showImportLink?: boolean }) {
   const session = useSession();
+  const cookie = browserAuthMode() === 'cookie';
   const [searchParams, setSearchParams] = useSearchParams();
   const page = readPage(searchParams.get('page'));
   const pageSize = readPageSize(searchParams.get('pageSize'));
   const paginationValid = page !== null && pageSize !== null;
+  const readable = cookie
+    ? session.authorization === 'verified' && session.capabilities.includes('bank-transactions.read')
+    : session.token !== null;
 
   const query = useQuery({
-    queryKey: ['bank-transactions', session.epoch, page, pageSize],
-    enabled: session.token !== null && paginationValid,
+    queryKey: cookie
+      ? ['bank-transactions', session.epoch, session.readiness, page, pageSize]
+      : ['bank-transactions', session.epoch, page, pageSize],
+    enabled: readable && paginationValid,
     queryFn: ({ signal }) => listBankTransactions(page ?? defaultPage, pageSize ?? defaultPageSize, signal),
   });
 
@@ -51,7 +58,9 @@ export function BankTransactionRegisterPage() {
           Bank transactions
         </Typography>
         <Stack direction="row" spacing={1}>
-          <Button component={Link} to="/imports" variant="outlined">Import bank transactions</Button>
+          {showImportLink ? (
+            <Button component={Link} to="/imports" variant="outlined">Import bank transactions</Button>
+          ) : null}
           {list !== null ? (
             <Button onClick={() => void query.refetch()} disabled={query.isFetching}>
               Refresh

@@ -322,11 +322,12 @@ Phase 7D.1 persists one `BrowserSession` per completed OIDC login and copies its
 
 Phase 7D.2 stores organization-scoped role assignments and a fixed permission map. A membership may hold several roles. Their permissions are the union, and none means an empty set. `OrganizationAdmin` can manage membership and roles and does not receive financial permissions. Login does not grant a role. The first administrator is assigned by the `FinOpsDesk.AccessBootstrap` console, which requires an explicit `--operator` id and is not an HTTP endpoint. Cookie validation does not read the role table. Permission resolution is a separate request-scoped step. Financial routes stay fail-closed. See ADR 0017.
 
-Phase 7D.3a classifies every current Reconciliation route and evaluates that classification on `TenantMember`. An enabled test host can authorize a cookie GET only for the active organization's current read permission. Cookie POSTs stay forbidden, including for Operator and ReversalApprover. The deployed cookie host does not set `Authentication:FinancialReadAuthorization`, so production financial routes stay fail-closed. `GET /api/session` still returns `financialAccess: false` and no permissions field. `DevelopmentJwt` is unchanged. See ADR 0018.
+Phase 7D.3a classifies every current Reconciliation route and evaluates that classification on `TenantMember`. An enabled test host can authorize a cookie GET only for the active organization's current read permission. Cookie POSTs stay forbidden, including for Operator and ReversalApprover. The deployed cookie host does not set `Authentication:FinancialReadAuthorization`, so production financial routes stay fail-closed. `DevelopmentJwt` is unchanged. See ADR 0018.
+
+Phase 7D.3b publishes session contract v1/v2 negotiation, mounts the permission-aware read-only cookie UI, and documents operational activation of `Authentication:FinancialReadAuthorization`. Contract v1 stays compatible with older browser bundles. Contract v2 returns only enabled financial read capabilities. Cookie financial writes stay forbidden. Deployed configuration still leaves the activation key unset until operators enable it after the compatible release. See ADR 0018.
 
 Still in this phase:
 
-- activating ProductionCookie financial reads, the session capability contract, and the read-only React experience (Phase 7D.3b);
 - identity-bound financial recovery, or recovery remaining disabled;
 - policies;
 - resource-based authorization;

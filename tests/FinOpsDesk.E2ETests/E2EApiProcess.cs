@@ -125,12 +125,31 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         return api;
     }
 
+    public static Task<E2EApiProcess> StartCookieAsync(
+        string connectionString,
+        string authority,
+        string browserOrigin,
+        string clientId,
+        string clientSecret,
+        CancellationToken cancellationToken)
+    {
+        return StartCookieAsync(
+            connectionString,
+            authority,
+            browserOrigin,
+            clientId,
+            clientSecret,
+            financialReadAuthorizationEnabled: false,
+            cancellationToken);
+    }
+
     public static async Task<E2EApiProcess> StartCookieAsync(
         string connectionString,
         string authority,
         string browserOrigin,
         string clientId,
         string clientSecret,
+        bool financialReadAuthorizationEnabled,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -173,6 +192,9 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         start.Environment["Authentication__Oidc__ClientSecret"] = clientSecret;
         start.Environment["Authentication__Oidc__BrowserOrigin"] = browserOrigin;
         start.Environment["Authentication__Oidc__RequireHttpsMetadata"] = "false";
+        start.Environment["Authentication__FinancialReadAuthorization"] = financialReadAuthorizationEnabled
+            ? "Enabled"
+            : string.Empty;
 
         Process process = new() { StartInfo = start };
         if (!process.Start())
