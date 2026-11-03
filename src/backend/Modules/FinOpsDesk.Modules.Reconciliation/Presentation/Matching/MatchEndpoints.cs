@@ -44,7 +44,9 @@ internal static class MatchEndpoints
             .WithMetadata(FinancialEndpointClassification.Read("reconciliation.read"));
         group.MapPost("/matches/confirm", ConfirmMatchAsync)
             .Accepts<ConfirmMatchRequest>("application/json")
-            .WithMetadata(FinancialEndpointClassification.Write("reconciliation.confirm"));
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "reconciliation.confirm",
+                FinancialWriteOperation.ConfirmExactMatch));
 
         return group;
     }

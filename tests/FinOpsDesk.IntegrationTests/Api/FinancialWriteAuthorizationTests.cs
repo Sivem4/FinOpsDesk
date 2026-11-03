@@ -49,11 +49,13 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.True(closed.State.ProductionFinancialAccessFailClosed);
         Assert.False(closed.State.ProductionFinancialWritesEnabled);
         await AssertConfirmStatusAsync(closed, HttpStatusCode.Forbidden);
+        await AssertEveryWriteForbiddenAsync(closed, EmptyPair());
 
         await using Host writeOnly = await Host.StartAsync(this, reads: false, writes: true);
         Assert.True(writeOnly.State.ProductionFinancialAccessFailClosed);
         Assert.False(writeOnly.State.ProductionFinancialWritesEnabled);
         await AssertConfirmStatusAsync(writeOnly, HttpStatusCode.Forbidden);
+        await AssertEveryWriteForbiddenAsync(writeOnly, EmptyPair());
         Assert.Equal(HttpStatusCode.Forbidden, (await writeOnly.Client.GetAsync("/api/invoices")).StatusCode);
 
         await using Host readOnly = await Host.StartAsync(this, reads: true, writes: false);
@@ -61,6 +63,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.False(readOnly.State.ProductionFinancialWritesEnabled);
         Assert.Equal(HttpStatusCode.OK, (await readOnly.Client.GetAsync("/api/invoices")).StatusCode);
         await AssertConfirmStatusAsync(readOnly, HttpStatusCode.Forbidden);
+        await AssertEveryWriteForbiddenAsync(readOnly, EmptyPair());
     }
 
     [Fact]
@@ -96,7 +99,8 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         HttpResponseMessage reverseDenied = await host.SendAsync(Reverse(north.AllocationId));
         Assert.Equal(HttpStatusCode.Forbidden, reverseDenied.StatusCode);
         HttpResponseMessage opened = await host.SendAsync(OpenReview(north));
-        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, opened.StatusCode);
+        Assert.Equal(0, await host.CountReviewCasesAsync(north.OrganizationId, ReviewCaseStatus.Open));
 
         await host.SelectAsync(south.OrganizationId);
         HttpResponseMessage foreign = await host.SendAsync(Confirm(north));
@@ -122,7 +126,8 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
 
         await host.GrantAsync(southMembership, OrganizationRole.Operator);
         HttpResponseMessage imported = await host.Client.SendAsync(Import(host.Csrf));
-        Assert.Equal(HttpStatusCode.Created, imported.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, imported.StatusCode);
+        Assert.Equal(0, await host.CountImportBatchesAsync(south.OrganizationId));
     }
 
     [Fact]
@@ -328,40 +333,43 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
     }
 
     [Fact]
-    public async Task Import_revoked_before_commit_inserts_no_rows_and_batch_stops_truthfully()
+    public async Task Excluded_cookie_writes_stay_forbidden_before_the_handler()
     {
-        RevokeOnSecondItem sync = new();
-        await using Host host = await Host.StartAsync(this, reads: true, writes: true, itemSync: sync);
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
         ApplicationUser user = await host.RequireUserAsync();
-        Pair first = await host.SeedPairAsync("batch-a");
-        Pair second = await host.SeedPairAsync("batch-b", first.OrganizationId);
+        Pair first = await host.SeedPairAsync("closed-a");
+        Pair second = await host.SeedPairAsync("closed-b", first.OrganizationId);
         Guid membership = await host.MembershipIdAsync(user.Id, first.OrganizationId);
         await host.GrantAsync(membership, OrganizationRole.Operator);
         await host.SelectAsync(first.OrganizationId);
-        sync.Attach(host, membership);
+        int allocations = await host.CountAllocationsAsync(first.OrganizationId);
+        int invoices = await host.CountInvoicesAsync(first.OrganizationId);
+        int banks = await host.CountBankTransactionsAsync(first.OrganizationId);
+
         HttpResponseMessage batch = await host.Client.SendAsync(Batch(first, second, host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, batch.StatusCode);
-        Assert.Equal(1, await host.CountAllocationsAsync(first.OrganizationId));
-        Assert.Equal(0, await host.CountCompletedBatchesAsync(first.OrganizationId));
+        HttpResponseMessage imported = await host.Client.SendAsync(Import(host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, imported.StatusCode);
+        Assert.DoesNotContain("importBatchId", await imported.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        HttpResponseMessage bankImported = await host.Client.SendAsync(BankImport(host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, bankImported.StatusCode);
+        HttpResponseMessage opened = await host.SendAsync(OpenReview(first));
+        Assert.Equal(HttpStatusCode.Forbidden, opened.StatusCode);
+        Assert.DoesNotContain("reviewCaseId", await opened.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        HttpResponseMessage resolved = await host.SendAsync(ResolveReview(Guid.NewGuid(), "AAAA", host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, resolved.StatusCode);
+        HttpResponseMessage dismissed = await host.SendAsync(DismissReview(Guid.NewGuid(), "AAAA", host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, dismissed.StatusCode);
 
-        await host.GrantAsync(membership, OrganizationRole.Operator);
-        PausingRoleSync revokeSync = new();
-        Task<OrganizationRoleMutationStatus> revoke = host.RevokePausedAsync(membership, OrganizationRole.Operator, revokeSync);
-        try
-        {
-            await revokeSync.Entered.WaitAsync(TimeSpan.FromSeconds(15));
-            Task<HttpResponseMessage> import = host.Client.SendAsync(Import(host.Csrf));
-            await WaitForApplicationWaiterAsync(first.OrganizationId);
-            revokeSync.Release();
-            Assert.Equal(OrganizationRoleMutationStatus.Revoked, await revoke);
-            HttpResponseMessage imported = await import;
-            Assert.Equal(HttpStatusCode.Forbidden, imported.StatusCode);
-            Assert.Equal(0, await host.CountImportBatchesAsync(first.OrganizationId));
-        }
-        finally
-        {
-            revokeSync.Release();
-        }
+        Assert.Equal(allocations, await host.CountAllocationsAsync(first.OrganizationId));
+        Assert.Equal(invoices, await host.CountInvoicesAsync(first.OrganizationId));
+        Assert.Equal(banks, await host.CountBankTransactionsAsync(first.OrganizationId));
+        Assert.Equal(0, await host.CountImportBatchesAsync(first.OrganizationId));
+        Assert.Equal(0, await host.CountRunningBatchesAsync(first.OrganizationId));
+        Assert.Equal(0, await host.CountCompletedBatchesAsync(first.OrganizationId));
+        Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Open));
+        Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Resolved));
+        Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Dismissed));
     }
 
     [Fact]
@@ -438,41 +446,45 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
     }
 
     [Fact]
-    public async Task Running_batch_resumes_from_the_original_key_without_repeating_a_committed_item()
+    public async Task Batch_execution_stays_denied_for_an_operator_who_can_confirm()
     {
-        RevokeOnSecondItem sync = new();
-        await using Host host = await Host.StartAsync(this, reads: true, writes: true, itemSync: sync);
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
         ApplicationUser user = await host.RequireUserAsync();
-        Pair first = await host.SeedPairAsync("resume-a");
-        Pair second = await host.SeedPairAsync("resume-b", first.OrganizationId);
+        Pair first = await host.SeedPairAsync("batch-closed-a");
+        Pair second = await host.SeedPairAsync("batch-closed-b", first.OrganizationId);
         Guid membership = await host.MembershipIdAsync(user.Id, first.OrganizationId);
         await host.GrantAsync(membership, OrganizationRole.Operator);
         await host.SelectAsync(first.OrganizationId);
-        sync.Attach(host, membership);
         Guid key = Guid.NewGuid();
 
-        HttpResponseMessage interrupted = await host.Client.SendAsync(Batch(first, second, host.Csrf, key));
-        Assert.Equal(HttpStatusCode.Forbidden, interrupted.StatusCode);
-        Assert.Equal(1, await host.CountAllocationsAsync(first.OrganizationId));
-        Assert.Equal(1, await host.CountRunningBatchesAsync(first.OrganizationId));
-        Assert.Equal(0, await host.CountCompletedBatchesAsync(first.OrganizationId));
-
-        HttpResponseMessage stillDenied = await host.Client.SendAsync(Batch(first, second, host.Csrf, key));
-        Assert.Equal(HttpStatusCode.Forbidden, stillDenied.StatusCode);
-        Assert.Equal(1, await host.CountAllocationsAsync(first.OrganizationId));
-        Assert.Equal(1, await host.CountRunningBatchesAsync(first.OrganizationId));
-
-        await host.GrantAsync(membership, OrganizationRole.Operator);
-        HttpResponseMessage resumed = await host.Client.SendAsync(Batch(first, second, host.Csrf, key));
-        Assert.Equal(HttpStatusCode.OK, resumed.StatusCode);
-        Assert.Equal(2, await host.CountAllocationsAsync(first.OrganizationId));
+        HttpResponseMessage firstAttempt = await host.Client.SendAsync(Batch(first, second, host.Csrf, key));
+        Assert.Equal(HttpStatusCode.Forbidden, firstAttempt.StatusCode);
+        HttpResponseMessage secondAttempt = await host.Client.SendAsync(Batch(first, second, host.Csrf, key));
+        Assert.Equal(HttpStatusCode.Forbidden, secondAttempt.StatusCode);
+        Assert.Equal(0, await host.CountAllocationsAsync(first.OrganizationId));
         Assert.Equal(0, await host.CountRunningBatchesAsync(first.OrganizationId));
-        Assert.Equal(1, await host.CountCompletedBatchesAsync(first.OrganizationId));
+        Assert.Equal(0, await host.CountCompletedBatchesAsync(first.OrganizationId));
+    }
 
-        HttpResponseMessage replayed = await host.Client.SendAsync(Batch(first, second, host.Csrf, key));
-        Assert.Equal(HttpStatusCode.OK, replayed.StatusCode);
-        Assert.Equal(2, await host.CountAllocationsAsync(first.OrganizationId));
-        Assert.Equal(1, await host.CountCompletedBatchesAsync(first.OrganizationId));
+    [Fact]
+    public async Task Unlisted_write_probe_stays_denied_when_writes_are_enabled()
+    {
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true, probes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair pair = await host.SeedPairAsync("unlisted");
+        Guid membership = await host.MembershipIdAsync(user.Id, pair.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(pair.OrganizationId);
+        using HttpRequestMessage request = new(HttpMethod.Post, "/api/test/financial-write-unlisted")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, host.Csrf);
+        HttpResponseMessage response = await host.Client.SendAsync(request);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain("ran", body, StringComparison.Ordinal);
+        Assert.Equal(0, await host.CountAllocationsAsync(pair.OrganizationId));
     }
 
     [Fact]
@@ -507,37 +519,20 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
 
         int invoicesBefore = await host.CountInvoicesAsync(confirmPair.OrganizationId);
         int banksBefore = await host.CountBankTransactionsAsync(confirmPair.OrganizationId);
-        HttpResponseMessage imported = await host.Client.SendAsync(Import(host.Csrf));
-        Assert.Equal(HttpStatusCode.Created, imported.StatusCode);
-        HttpResponseMessage importedAgain = await host.Client.SendAsync(Import(host.Csrf));
-        Assert.Equal(HttpStatusCode.OK, importedAgain.StatusCode);
-        Assert.Equal(invoicesBefore + 1, await host.CountInvoicesAsync(confirmPair.OrganizationId));
-        HttpResponseMessage bankImported = await host.Client.SendAsync(BankImport(host.Csrf));
-        Assert.Equal(HttpStatusCode.Created, bankImported.StatusCode);
-        Assert.Equal(banksBefore + 1, await host.CountBankTransactionsAsync(confirmPair.OrganizationId));
-
-        HttpResponseMessage opened = await host.SendAsync(OpenReview(reviewPair));
-        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
-        using JsonDocument openedDocument = JsonDocument.Parse(await opened.Content.ReadAsStringAsync());
-        Guid reviewId = openedDocument.RootElement.GetProperty("reviewCaseId").GetGuid();
-        string reviewToken = openedDocument.RootElement.GetProperty("concurrencyToken").GetString()!;
-        HttpResponseMessage resolved = await host.SendAsync(ResolveReview(reviewId, reviewToken, host.Csrf));
-        Assert.Equal(HttpStatusCode.OK, resolved.StatusCode);
-        Assert.Equal(1, await host.CountReviewCasesAsync(confirmPair.OrganizationId, ReviewCaseStatus.Resolved));
-
-        HttpResponseMessage dismissOpened = await host.SendAsync(OpenReview(dismissPair));
-        Assert.Equal(HttpStatusCode.Created, dismissOpened.StatusCode);
-        using JsonDocument dismissDocument = JsonDocument.Parse(await dismissOpened.Content.ReadAsStringAsync());
-        Guid dismissId = dismissDocument.RootElement.GetProperty("reviewCaseId").GetGuid();
-        string dismissToken = dismissDocument.RootElement.GetProperty("concurrencyToken").GetString()!;
-        HttpResponseMessage dismissed = await host.SendAsync(DismissReview(dismissId, dismissToken, host.Csrf));
-        Assert.Equal(HttpStatusCode.OK, dismissed.StatusCode);
-        Assert.Equal(1, await host.CountReviewCasesAsync(confirmPair.OrganizationId, ReviewCaseStatus.Dismissed));
-
-        HttpResponseMessage batch = await host.Client.SendAsync(Batch(batchPair, batchOther, host.Csrf));
-        Assert.Equal(HttpStatusCode.OK, batch.StatusCode);
-        Assert.Equal(4, await host.CountAllocationsAsync(confirmPair.OrganizationId));
-        Assert.Equal(1, await host.CountCompletedBatchesAsync(confirmPair.OrganizationId));
+        Assert.Equal(HttpStatusCode.Forbidden, (await host.Client.SendAsync(Import(host.Csrf))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await host.Client.SendAsync(BankImport(host.Csrf))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await host.SendAsync(OpenReview(reviewPair))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await host.SendAsync(OpenReview(dismissPair))).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await host.Client.SendAsync(Batch(batchPair, batchOther, host.Csrf))).StatusCode);
+        Assert.Equal(invoicesBefore, await host.CountInvoicesAsync(confirmPair.OrganizationId));
+        Assert.Equal(banksBefore, await host.CountBankTransactionsAsync(confirmPair.OrganizationId));
+        Assert.Equal(2, await host.CountAllocationsAsync(confirmPair.OrganizationId));
+        Assert.Equal(0, await host.CountImportBatchesAsync(confirmPair.OrganizationId));
+        Assert.Equal(0, await host.CountRunningBatchesAsync(confirmPair.OrganizationId));
+        Assert.Equal(0, await host.CountCompletedBatchesAsync(confirmPair.OrganizationId));
+        Assert.Equal(0, await host.CountReviewCasesAsync(confirmPair.OrganizationId, ReviewCaseStatus.Open));
     }
 
     public void Dispose()
@@ -687,6 +682,11 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         command.Parameters.Add(new SqlParameter("@mode", SqlDbType.NVarChar, 32) { Value = mode });
         command.Parameters.Add(new SqlParameter("@timeout", SqlDbType.Int) { Value = timeout });
         return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+    }
+
+    private static Pair EmptyPair()
+    {
+        return new Pair(Guid.Empty, Guid.Empty, Guid.Empty, Guid.Empty);
     }
 
     private async Task AssertConfirmStatusAsync(Host host, HttpStatusCode status)
@@ -898,34 +898,6 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         return request;
     }
 
-    private sealed class RevokeOnSecondItem : IBatchExactMatchItemSynchronization
-    {
-        private Host? _host;
-        private Guid _membershipId;
-        private int _calls;
-
-        public void Attach(Host host, Guid membershipId)
-        {
-            _host = host;
-            _membershipId = membershipId;
-        }
-
-        public Task BeforeItemAsync(CancellationToken cancellationToken)
-        {
-            if (Interlocked.Increment(ref _calls) == 2)
-            {
-                return _host!.RevokeAsync(_membershipId, OrganizationRole.Operator);
-            }
-
-            return Task.CompletedTask;
-        }
-
-        public Task OnItemReadyToCommitAsync(Guid itemKey, CancellationToken cancellationToken)
-        {
-            return Task.CompletedTask;
-        }
-    }
-
     private sealed class PausingCommitSync : IFinancialCommitLockSync
     {
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1001,7 +973,8 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             IFinancialCommitLockSync? sync = null,
             IBatchExactMatchItemSynchronization? itemSync = null,
             int? lockTimeoutMilliseconds = null,
-            TimeProvider? clock = null)
+            TimeProvider? clock = null,
+            bool probes = false)
         {
             FinOpsDeskApiFactory factory = new(
                 test._fixture.ConnectionString,
@@ -1042,7 +1015,8 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
                     ["Authentication:Oidc:RequireHttpsMetadata"] = "false",
                 },
                 financialReadAuthorizationEnabled: reads,
-                financialWriteAuthorizationEnabled: writes);
+                financialWriteAuthorizationEnabled: writes,
+                financialClassificationProbesEnabled: probes);
             using HttpClient warmup = factory.CreateClient();
             Host host = new(test, factory, factory.CreateBrowserClient());
             await host.SignInAsync();

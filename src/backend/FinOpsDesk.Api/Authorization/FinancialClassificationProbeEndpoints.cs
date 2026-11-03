@@ -36,6 +36,10 @@ internal static class FinancialClassificationProbeEndpoints
             .WithMetadata(FinancialEndpointClassification.Read(AccessPermission.InvoicesRead.Value));
         group.MapGet("/test/financial-write-on-get", () => Results.Text("ran"))
             .WithMetadata(FinancialEndpointClassification.Write());
+        group.MapPost("/test/financial-write-unlisted", () => Results.Text("ran"))
+            .WithMetadata(FinancialEndpointClassification.Write(
+                AccessPermission.AllocationsCreate.Value,
+                FinancialWriteOperation.UnlistedProbe));
         group.MapGet("/test/financial-allow-anonymous", () => Results.Text("ran"))
             .AllowAnonymous()
             .WithMetadata(FinancialEndpointClassification.Read(AccessPermission.InvoicesRead.Value));

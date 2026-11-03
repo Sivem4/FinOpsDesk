@@ -328,6 +328,8 @@ Phase 7D.3b publishes session contract v1/v2 negotiation, mounts the permission-
 
 Phase 7D.4a authorizes financial POSTs in the SQL transaction that commits them, including a new `review-cases.open` permission and a Shared/Exclusive SQL application lock. Both `Authentication:FinancialReadAuthorization` and `Authentication:FinancialWriteAuthorization` must be exactly `Enabled`. Deployed configuration sets neither write activation nor a cookie write UI. `DevelopmentJwt` is unchanged. Session contract v2 still lists read capabilities only. See ADR 0019.
 
+Phase 7D.4b1 keeps that write flag closed in deployed configuration and adds a server-side ProductionCookie allowlist. With both flags `Enabled`, only exact confirmation, explicit allocation, and reversal may pass. Invoice import, bank import, batch execution, and the three review-case writes stay forbidden even for a role that holds their permission. Batch receipt finalization is unchanged and remains a blocker for any later cookie activation of batch execution. The allowlist does not authorize operators to enable the write key before the cookie write UI and identity-bound recovery ship. See ADR 0019.
+
 Still in this phase:
 
 - identity-bound financial recovery, or recovery remaining disabled;

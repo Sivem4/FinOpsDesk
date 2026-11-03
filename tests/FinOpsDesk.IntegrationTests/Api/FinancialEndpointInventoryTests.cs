@@ -16,6 +16,19 @@ namespace FinOpsDesk.IntegrationTests.Api;
 [Collection(SqlServerCollection.Name)]
 public sealed class FinancialEndpointInventoryTests : IDisposable
 {
+    private static readonly Dictionary<string, FinancialWriteOperation> ExpectedWriteOperations = new(StringComparer.Ordinal)
+    {
+        ["POST /api/imports/invoices"] = FinancialWriteOperation.ImportInvoices,
+        ["POST /api/imports/bank-transactions"] = FinancialWriteOperation.ImportBankTransactions,
+        ["POST /api/matches/confirm"] = FinancialWriteOperation.ConfirmExactMatch,
+        ["POST /api/matches/batch/execute"] = FinancialWriteOperation.ExecuteBatchExactMatches,
+        ["POST /api/allocations"] = FinancialWriteOperation.CreateAllocation,
+        ["POST /api/allocations/{allocationId}/reverse"] = FinancialWriteOperation.ReverseAllocation,
+        ["POST /api/review-cases"] = FinancialWriteOperation.OpenReviewCase,
+        ["POST /api/review-cases/{id}/resolve"] = FinancialWriteOperation.ResolveReviewCase,
+        ["POST /api/review-cases/{id}/dismiss"] = FinancialWriteOperation.DismissReviewCase,
+    };
+
     private readonly FinOpsDeskApiFactory _factory;
 
     public FinancialEndpointInventoryTests(SqlServerFixture fixture)
@@ -49,6 +62,16 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["POST /api/review-cases/{id}/resolve"] = AccessPermission.ReviewCasesResolve.Value,
             ["POST /api/review-cases/{id}/dismiss"] = AccessPermission.ReviewCasesResolve.Value,
         };
+
+        Assert.Equal(
+            AccessPermission.ReconciliationConfirm.Value,
+            expected["POST /api/matches/confirm"]);
+        Assert.Equal(
+            AccessPermission.ReconciliationConfirm.Value,
+            expected["POST /api/matches/batch/execute"]);
+        Assert.NotEqual(
+            ExpectedWriteOperations["POST /api/matches/confirm"],
+            ExpectedWriteOperations["POST /api/matches/batch/execute"]);
 
         EndpointDataSource dataSource = _factory.Services.GetRequiredService<EndpointDataSource>();
         List<RouteEndpoint> reconciliation = [];
@@ -100,6 +123,8 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             {
                 Assert.Equal("GET", httpMethod);
                 Assert.Equal(expected[key], classification.Permission);
+                Assert.Null(classification.Operation);
+                Assert.False(ProductionFinancialWriteActivation.IsActivated(classification));
             }
             else
             {
@@ -107,6 +132,11 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
                 Assert.Equal("POST", httpMethod);
                 Assert.Equal(expected[key], classification.Permission);
                 Assert.False(string.IsNullOrWhiteSpace(classification.Permission));
+                Assert.Equal(ExpectedWriteOperations[key], classification.Operation);
+                bool activated = classification.Operation is FinancialWriteOperation.ConfirmExactMatch
+                    or FinancialWriteOperation.CreateAllocation
+                    or FinancialWriteOperation.ReverseAllocation;
+                Assert.Equal(activated, ProductionFinancialWriteActivation.IsActivated(classification));
             }
         }
 
