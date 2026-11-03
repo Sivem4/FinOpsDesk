@@ -15,6 +15,17 @@ export const financialReadCapabilities = [
   'review-cases.read',
 ] as const;
 
+export const financialWriteCapabilities = [
+  'reconciliation.confirm',
+  'allocations.create',
+  'allocations.reverse',
+] as const;
+
+const recognizedCapabilities = [
+  ...financialReadCapabilities,
+  ...financialWriteCapabilities,
+] as const;
+
 export const screenCapabilities = [
   'invoices.read',
   'bank-transactions.read',
@@ -246,7 +257,7 @@ function readCapabilities(
   }
 
   if (!authenticated) {
-    if (financialAccess || (recognized !== 'absent' && recognized.length > 0)) {
+    if (financialAccess || (recognized !== 'absent' && recognized.values.length > 0)) {
       return 'invalid';
     }
 
@@ -261,22 +272,24 @@ function readCapabilities(
     return { mode: 'restricted', values: [] };
   }
 
+  const reads = recognized.reads;
+
   if (!financialAccess) {
-    if (recognized.length > 0) {
+    if (reads.length > 0) {
       return 'invalid';
     }
 
     return { mode: 'restricted', values: [] };
   }
 
-  if (recognized.length === 0) {
+  if (reads.length === 0) {
     return { mode: 'restricted', values: [] };
   }
 
-  return { mode: 'verified', values: recognized };
+  return { mode: 'verified', values: recognized.values };
 }
 
-function recognizeCapabilities(permissions: unknown): readonly string[] | 'absent' | 'invalid' {
+function recognizeCapabilities(permissions: unknown): { reads: readonly string[]; values: readonly string[] } | 'absent' | 'invalid' {
   if (permissions === undefined) {
     return 'absent';
   }
@@ -292,12 +305,16 @@ function recognizeCapabilities(permissions: unknown): readonly string[] | 'absen
       return 'invalid';
     }
 
-    if ((financialReadCapabilities as readonly string[]).includes(entry)) {
+    if ((recognizedCapabilities as readonly string[]).includes(entry)) {
       accepted.add(entry);
     }
   }
 
-  return financialReadCapabilities.filter((capability) => accepted.has(capability));
+  const values = recognizedCapabilities.filter((capability) => accepted.has(capability));
+  return {
+    reads: values.filter((capability) => (financialReadCapabilities as readonly string[]).includes(capability)),
+    values,
+  };
 }
 
 function activeOrganizationId(session: { activeOrganization: BrowserOrganization | null }): string | null {

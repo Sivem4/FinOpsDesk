@@ -150,7 +150,8 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         string clientId,
         string clientSecret,
         bool financialReadAuthorizationEnabled,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool financialWriteAuthorizationEnabled = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentException.ThrowIfNullOrWhiteSpace(authority);
@@ -193,6 +194,9 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         start.Environment["Authentication__Oidc__BrowserOrigin"] = browserOrigin;
         start.Environment["Authentication__Oidc__RequireHttpsMetadata"] = "false";
         start.Environment["Authentication__FinancialReadAuthorization"] = financialReadAuthorizationEnabled
+            ? "Enabled"
+            : string.Empty;
+        start.Environment["Authentication__FinancialWriteAuthorization"] = financialWriteAuthorizationEnabled
             ? "Enabled"
             : string.Empty;
 

@@ -1,3 +1,4 @@
+using FinOpsDesk.Api.Authorization;
 using FinOpsDesk.Modules.Access.Domain;
 
 using Microsoft.AspNetCore.Http;
@@ -45,6 +46,21 @@ internal static class SessionContract
             {
                 enabled.Add(candidate.Value);
             }
+        }
+
+        return enabled.ToArray();
+    }
+
+    public static string[] EnabledCapabilities(
+        IReadOnlySet<AccessPermission> permissions,
+        bool advertiseActivatedWrites)
+    {
+        ArgumentNullException.ThrowIfNull(permissions);
+
+        List<string> enabled = [.. EnabledReads(permissions)];
+        if (advertiseActivatedWrites)
+        {
+            ProductionFinancialWriteActivation.AppendAdvertised(permissions, enabled);
         }
 
         return enabled.ToArray();

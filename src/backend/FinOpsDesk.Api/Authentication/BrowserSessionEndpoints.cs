@@ -39,12 +39,14 @@ internal static class BrowserSessionEndpoints
         IAntiforgery antiforgery,
         AccessSessionGate sessions,
         IConfiguration configuration,
+        AuthenticationCompositionState composition,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
         ArgumentNullException.ThrowIfNull(antiforgery);
         ArgumentNullException.ThrowIfNull(sessions);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(composition);
 
         httpContext.Response.Headers.CacheControl = "no-store";
         httpContext.Response.Headers.Vary = SessionContract.HeaderName;
@@ -91,12 +93,15 @@ internal static class BrowserSessionEndpoints
             return AuthorizationUnavailable();
         }
 
-        string[] permissions = SessionContract.EnabledReads(resolution.Permissions);
+        string[] reads = SessionContract.EnabledReads(resolution.Permissions);
+        string[] permissions = SessionContract.EnabledCapabilities(
+            resolution.Permissions,
+            composition.ProductionFinancialWritesEnabled);
         return Results.Json(AuthenticatedCapabilitySession(
             csrfToken,
             snapshot,
             expiresAt,
-            permissions.Length > 0,
+            reads.Length > 0,
             permissions));
     }
 
