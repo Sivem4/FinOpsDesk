@@ -185,6 +185,16 @@ Use the public certificate trust from `dev-frontend.ps1` for `curl.exe` as well,
 
 Open `http://localhost:5173/invoices`. Amounts are read from the JSON number tokens, including a zero allocated amount.
 
+## Cookie read refresh after a confirmed write
+
+A verified cookie POST and the later read-query refresh are different operations. HTTP 201 with `replayed: false`, or HTTP 200 with `replayed: true`, confirms the financial write. The screen keeps that confirmation even when `invalidateQueries` cannot refetch the active lists. The confirmation stays a success. A separate warning says: "The financial operation was confirmed, but the displayed data could not be refreshed. The lists may be outdated." That warning is not an uncertain mutation and does not mean the server rolled the write back.
+
+**Refresh displayed data** runs only while that warning is visible. It refetches the original session's active financial read queries with `throwOnError: true`. It does not call a financial POST, generate an idempotency key, or rewrite a recovery descriptor. Repeated clicks do not start a second manual refresh. Success removes the warning. Another failed read keeps it. There is no automatic retry loop. If local removal of a completed recovery descriptor failed, that cleanup warning stays beside the refresh warning.
+
+A reversal confirmation stays on the allocation history screen after the recovery descriptor is removed and after that row is shown as reversed. The notice is not tied to the individual row control.
+
+Each refresh belongs to one financial result. A newer confirmed, rejected, uncertain, or blocked result in the same session replaces the visible outcome, and the older refresh cannot put its own success or warning back. A second confirmed write still invalidates its read queries while an earlier refresh is in flight. The refresh result is published only when that result is still the latest one and the originating issuer, subject, organization, epoch, readiness, and write capability are still current. An organization switch, logout, or readiness change does not show the old warning and does not fill the new session's query cache from that callback. No active matching query is not a failed refresh. `DevelopmentJwt` recovery v1 is unchanged.
+
 ## Browser end-to-end
 
 `npm run dev` still proxies `/api` and `/health` to `https://localhost:7257`. A local end-to-end run can set `FINOPSDESK_E2E_API_ORIGIN` for that one Vite process. The variable is not a `VITE_` variable, so it is not compiled into the browser bundle. Leave it unset for ordinary development. The journey, the disposable database, and the run commands are documented in `docs/e2e-testing.md`. Ordinary `npm test` stays on Vitest and jsdom.
@@ -201,4 +211,4 @@ npm test
 npm run build
 ```
 
-The production build must not contain the development token screen. Frontend CI is `.github/workflows/frontend-ci.yml`.
+The production build must not contain the development token screen. Frontend CI is `.github/workflows/frontend-ci.yml`. `npm test` runs Vitest with `maxWorkers: 2` from `vite.config.ts`. Local runs and frontend CI use that same limit. The timeout is unchanged. Phase 7D.6b Chromium CI is not part of this check.

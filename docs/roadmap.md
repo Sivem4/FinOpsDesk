@@ -334,6 +334,8 @@ Phase 7D.4b2/c adds those three cookie actions and identity-bound recovery v2. C
 
 Phase 7D.5 adds console commands `disable-user`, `revoke-membership`, and `disable-organization`. Each one writes `access.OperationalSecurityEvents` in the same transaction as the security change. A repeat is `AlreadyApplied`. Disable-user serializes on the application-user row lock and rotates `SessionStamp` only on the first transition. The organization commands take the existing Exclusive application lock. `--operator` is declared attribution, not an authenticated administrator. Reactivation, membership restoration, and an HTTP administration API are not in this increment. Both financial activation flags stay unset. See ADR 0021.
 
+Phase 7D.6a keeps a confirmed cookie financial write confirmed when the following read-query refresh fails. The screen keeps the financial success and adds a separate warning that the lists may be outdated. A reversal confirmation stays visible on allocation history after the descriptor is removed and after the row is reversed. An older refresh cannot replace a newer financial result, and each new confirmation still refreshes its own read queries. **Refresh displayed data** repeats only that session's active read queries. It does not send another financial POST, replace the idempotency key, or recreate a recovery descriptor. A refresh that settles after an organization switch, logout, or readiness change is not shown in the new session. Ordinary `npm test` uses `maxWorkers: 2` from `src/frontend/vite.config.ts`, locally and in frontend CI. Phase 7D.6b, the Chromium end-to-end CI job, remains planned and is not part of this increment. Both financial activation flags stay unset.
+
 Still in this phase:
 
 - policies;

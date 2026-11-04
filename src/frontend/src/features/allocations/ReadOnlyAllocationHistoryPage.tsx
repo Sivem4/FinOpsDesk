@@ -20,7 +20,7 @@ import { useSearchParams } from 'react-router';
 import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
 import { useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
-import { CookieAllocationForm, CookieReversalControl, CookieReversalRecovery } from '../reconciliation/CookieFinancialWrites';
+import { CookieAllocationForm, CookieReversalControl, CookieReversalOutcome, CookieReversalRecovery } from '../reconciliation/CookieFinancialWrites';
 import { listAllocationAudit, type AllocationAuditEntry } from './allocation-audit-api';
 import { listAllocationHistory, type AllocationHistoryItem } from './allocation-history-api';
 
@@ -96,6 +96,7 @@ export function ReadOnlyAllocationHistoryPage() {
   }
 
   return (
+    <CookieReversalOutcome>
     <Stack spacing={2}>
       <Stack direction="row" spacing={2} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
         <Typography variant="h4" component="h1">
@@ -166,6 +167,7 @@ export function ReadOnlyAllocationHistoryPage() {
         />
       ) : null}
     </Stack>
+    </CookieReversalOutcome>
   );
 }
 
