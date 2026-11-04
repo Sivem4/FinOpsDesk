@@ -335,8 +335,9 @@ public sealed partial class CookieFinancialReadBrowserTests
                 });
                 return new FinanceJourney(database, certificatePath, stub, api, vite, playwright, browser, browserOrigin);
             }
-            catch
+            catch (Exception exception)
             {
+                api ??= exception is E2EApiStartupException startup ? startup.Api : null;
                 if (browser is not null)
                 {
                     await browser.CloseAsync();
@@ -348,9 +349,19 @@ public sealed partial class CookieFinancialReadBrowserTests
                     await vite.DisposeAsync();
                 }
 
+                bool apiStopped = api is null;
                 if (api is not null)
                 {
-                    await api.DisposeAsync();
+                    try
+                    {
+                        await api.DisposeAsync();
+                    }
+                    catch (Exception disposeFailure)
+                    {
+                        exception = new AggregateException(exception, disposeFailure);
+                    }
+
+                    apiStopped = api.TerminationEstablished;
                 }
 
                 if (stub is not null)
@@ -358,7 +369,7 @@ public sealed partial class CookieFinancialReadBrowserTests
                     await stub.DisposeAsync();
                 }
 
-                if (database is not null)
+                if (database is not null && apiStopped)
                 {
                     await database.DisposeAsync();
                 }
@@ -366,6 +377,11 @@ public sealed partial class CookieFinancialReadBrowserTests
                 if (File.Exists(certificatePath))
                 {
                     File.Delete(certificatePath);
+                }
+
+                if (exception is AggregateException)
+                {
+                    throw exception;
                 }
 
                 throw;

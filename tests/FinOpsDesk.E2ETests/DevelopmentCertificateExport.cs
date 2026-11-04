@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Formats.Asn1;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -123,6 +124,41 @@ internal static partial class DevelopmentCertificateExport
         }
 
         return false;
+    }
+
+    internal static X509Certificate2 CopyServerCertificate()
+    {
+        DevelopmentCertificateMaterial material = LoadMaterial();
+        using X509Store store = new(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadOnly);
+        foreach (X509Certificate2 candidate in store.Certificates)
+        {
+            if (!string.Equals(candidate.Thumbprint, material.Thumbprint, StringComparison.OrdinalIgnoreCase) || !candidate.HasPrivateKey)
+            {
+                continue;
+            }
+
+            string password = Guid.NewGuid().ToString("N");
+            byte[] pfx = candidate.Export(X509ContentType.Pfx, password);
+            try
+            {
+                // Schannel cannot use an ephemeral key for a server certificate.
+                // UserKeySet without PersistKeySet keeps the key in the user
+                // container only until this certificate is disposed. The PFX bytes
+                // are cleared and are not written to a file.
+                return X509CertificateLoader.LoadPkcs12(
+                    pfx,
+                    password,
+                    X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(pfx);
+            }
+        }
+
+        throw new InvalidOperationException(
+            "The ASP.NET Core HTTPS development certificate could not be copied for the health probe. Cookie E2E was not skipped.");
     }
 
     private static string RunDevCerts(params string[] arguments)

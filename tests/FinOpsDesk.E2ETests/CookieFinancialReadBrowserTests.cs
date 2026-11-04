@@ -145,6 +145,7 @@ public sealed partial class CookieFinancialReadBrowserTests
         }
         catch (Exception exception)
         {
+            api ??= exception is E2EApiStartupException startup ? startup.Api : null;
             testFailure = exception;
         }
         finally
@@ -160,9 +161,21 @@ public sealed partial class CookieFinancialReadBrowserTests
                 await vite.DisposeAsync();
             }
 
+            bool apiStopped = api is null;
             if (api is not null)
             {
-                await api.DisposeAsync();
+                try
+                {
+                    await api.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    testFailure = testFailure is null
+                        ? exception
+                        : new AggregateException(testFailure, exception);
+                }
+
+                apiStopped = api.TerminationEstablished;
             }
 
             if (stub is not null)
@@ -170,7 +183,7 @@ public sealed partial class CookieFinancialReadBrowserTests
                 await stub.DisposeAsync();
             }
 
-            if (database is not null)
+            if (database is not null && apiStopped)
             {
                 await database.DisposeAsync();
             }

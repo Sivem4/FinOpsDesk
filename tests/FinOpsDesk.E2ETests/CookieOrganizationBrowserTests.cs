@@ -388,6 +388,8 @@ public sealed class CookieOrganizationBrowserTests
             }
             catch (Exception exception)
             {
+                Exception reported = exception;
+                api ??= exception is E2EApiStartupException startup ? startup.Api : null;
                 if (browser is not null)
                 {
                     await browser.CloseAsync();
@@ -401,7 +403,15 @@ public sealed class CookieOrganizationBrowserTests
 
                 if (api is not null)
                 {
-                    await api.DisposeAsync();
+                    try
+                    {
+                        await api.DisposeAsync();
+                    }
+                    catch (Exception disposeFailure)
+                    {
+                        reported = new AggregateException(exception, disposeFailure);
+                    }
+
                     if (api.TerminationEstablished && database is not null)
                     {
                         await database.DisposeAsync();
@@ -422,9 +432,14 @@ public sealed class CookieOrganizationBrowserTests
                     File.Delete(certificatePath);
                 }
 
-                if (exception is PlaywrightException)
+                if (reported is PlaywrightException)
                 {
-                    throw E2EChromium.Unavailable(exception);
+                    throw E2EChromium.Unavailable(reported);
+                }
+
+                if (!ReferenceEquals(reported, exception))
+                {
+                    throw reported;
                 }
 
                 throw;

@@ -192,6 +192,7 @@ public sealed class CookieOidcBrowserTests
         }
         catch (Exception exception)
         {
+            api ??= exception is E2EApiStartupException startup ? startup.Api : null;
             testFailure = exception;
         }
         finally
@@ -210,7 +211,17 @@ public sealed class CookieOidcBrowserTests
 
             if (api is not null)
             {
-                await api.DisposeAsync();
+                try
+                {
+                    await api.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    testFailure = testFailure is null
+                        ? exception
+                        : new AggregateException(testFailure, exception);
+                }
+
                 apiStopped = api.TerminationEstablished;
             }
 

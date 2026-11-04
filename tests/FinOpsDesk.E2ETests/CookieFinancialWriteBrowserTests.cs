@@ -143,6 +143,7 @@ public sealed class CookieFinancialWriteBrowserTests
         }
         catch (Exception exception)
         {
+            api ??= exception is E2EApiStartupException startup ? startup.Api : null;
             testFailure = exception;
         }
         finally
@@ -158,9 +159,21 @@ public sealed class CookieFinancialWriteBrowserTests
                 await vite.DisposeAsync();
             }
 
+            bool apiStopped = api is null;
             if (api is not null)
             {
-                await api.DisposeAsync();
+                try
+                {
+                    await api.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    testFailure = testFailure is null
+                        ? exception
+                        : new AggregateException(testFailure, exception);
+                }
+
+                apiStopped = api.TerminationEstablished;
             }
 
             if (stub is not null)
@@ -168,7 +181,7 @@ public sealed class CookieFinancialWriteBrowserTests
                 await stub.DisposeAsync();
             }
 
-            if (database is not null)
+            if (database is not null && apiStopped)
             {
                 await database.DisposeAsync();
             }
@@ -599,31 +612,91 @@ public sealed class CookieFinancialWriteBrowserTests
         public static async Task<BrowserRun> StartAsync(BrowserSeed seed)
         {
             string certificatePath = Path.Combine(Path.GetTempPath(), "finopsdesk-cookie-write-" + Guid.NewGuid().ToString("N") + ".crt");
-            DevelopmentCertificateExport.WritePublicPem(certificatePath);
-            E2EDatabase database = await E2EDatabase.CreateAsync(CancellationToken.None);
-            int browserPort = LoopbackPort.Reserve();
-            string browserOrigin = "http://localhost:" + browserPort;
-            OidcProtocolStub stub = await OidcProtocolStub.StartAsync(browserOrigin + "/signin-oidc");
-            E2EApiProcess api = await E2EApiProcess.StartCookieAsync(
-                database.ConnectionString,
-                stub.Authority,
-                browserOrigin,
-                OidcProtocolStub.ClientId,
-                OidcProtocolStub.ClientSecret,
-                financialReadAuthorizationEnabled: true,
-                CancellationToken.None,
-                financialWriteAuthorizationEnabled: true);
-            SeededPair pair = await SeedPairAsync(database.ConnectionString, stub.Authority, seed);
-            E2EViteProcess vite = await E2EViteProcess.StartAsync(
-                api.Origin,
-                new E2EViteLaunch { Host = "localhost", Port = browserPort, CookieMode = true, NodeExtraCaCerts = certificatePath },
-                CancellationToken.None);
-            IPlaywright playwright = await Playwright.CreateAsync();
-            IBrowser browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true, Timeout = 30_000 });
-            IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions { IgnoreHTTPSErrors = false, BaseURL = browserOrigin });
-            IPage page = await context.NewPageAsync();
-            page.SetDefaultTimeout(60_000);
-            return new BrowserRun(certificatePath, database, stub, api, vite, playwright, browser, page, pair, browserOrigin);
+            E2EDatabase? database = null;
+            OidcProtocolStub? stub = null;
+            E2EApiProcess? api = null;
+            E2EViteProcess? vite = null;
+            IPlaywright? playwright = null;
+            IBrowser? browser = null;
+            try
+            {
+                DevelopmentCertificateExport.WritePublicPem(certificatePath);
+                database = await E2EDatabase.CreateAsync(CancellationToken.None);
+                int browserPort = LoopbackPort.Reserve();
+                string browserOrigin = "http://localhost:" + browserPort;
+                stub = await OidcProtocolStub.StartAsync(browserOrigin + "/signin-oidc");
+                api = await E2EApiProcess.StartCookieAsync(
+                    database.ConnectionString,
+                    stub.Authority,
+                    browserOrigin,
+                    OidcProtocolStub.ClientId,
+                    OidcProtocolStub.ClientSecret,
+                    financialReadAuthorizationEnabled: true,
+                    CancellationToken.None,
+                    financialWriteAuthorizationEnabled: true);
+                SeededPair pair = await SeedPairAsync(database.ConnectionString, stub.Authority, seed);
+                vite = await E2EViteProcess.StartAsync(
+                    api.Origin,
+                    new E2EViteLaunch { Host = "localhost", Port = browserPort, CookieMode = true, NodeExtraCaCerts = certificatePath },
+                    CancellationToken.None);
+                playwright = await Playwright.CreateAsync();
+                browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true, Timeout = 30_000 });
+                IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions { IgnoreHTTPSErrors = false, BaseURL = browserOrigin });
+                IPage page = await context.NewPageAsync();
+                page.SetDefaultTimeout(60_000);
+                return new BrowserRun(certificatePath, database, stub, api, vite, playwright, browser, page, pair, browserOrigin);
+            }
+            catch (Exception exception)
+            {
+                api ??= exception is E2EApiStartupException startup ? startup.Api : null;
+                if (browser is not null)
+                {
+                    await browser.CloseAsync();
+                }
+
+                playwright?.Dispose();
+                if (vite is not null)
+                {
+                    await vite.DisposeAsync();
+                }
+
+                bool apiStopped = api is null;
+                if (api is not null)
+                {
+                    try
+                    {
+                        await api.DisposeAsync();
+                    }
+                    catch (Exception disposeFailure)
+                    {
+                        exception = new AggregateException(exception, disposeFailure);
+                    }
+
+                    apiStopped = api.TerminationEstablished;
+                }
+
+                if (stub is not null)
+                {
+                    await stub.DisposeAsync();
+                }
+
+                if (database is not null && apiStopped)
+                {
+                    await database.DisposeAsync();
+                }
+
+                if (File.Exists(certificatePath))
+                {
+                    File.Delete(certificatePath);
+                }
+
+                if (exception is AggregateException)
+                {
+                    throw exception;
+                }
+
+                throw;
+            }
         }
 
         public async ValueTask DisposeAsync()
