@@ -662,10 +662,12 @@ describe('organization selection', () => {
     expect(await screen.findByText('Active organization: North Ledger')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Switch to South Ledger' }));
     expect(await screen.findByText('Checking the organization.')).toBeInTheDocument();
-    publishFromAnotherTab();
+    await deliverRevalidation();
     post.resolve();
 
-    expect(await screen.findByText('Active organization: South Ledger')).toBeInTheDocument();
+    await vi.waitFor(() => {
+      expect(screen.getByText('Active organization: South Ledger')).toBeInTheDocument();
+    });
     expect(posts).toBe(1);
     expect(screen.queryByText(/definitely failed/)).not.toBeInTheDocument();
   });
