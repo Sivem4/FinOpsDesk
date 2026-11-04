@@ -340,10 +340,10 @@ Phase 7D.6b runs the complete `tests/FinOpsDesk.E2ETests` project as the GitHub 
 
 Phase 7E records the resource-ownership model that the audit found already implemented. The effective organization comes from `AccessSessionGate` for `ProductionCookie` and from the validated organization claim for `DevelopmentJwt`. Repositories and read queries constrain rows by that `OrganizationId`. There is no EF Core global query filter. Composite foreign keys and organization-scoped unique indexes reject a cross-tenant relationship the application should already have rejected. `FinancialCommitGuard` rechecks a ProductionCookie financial write inside the committing transaction. `DevelopmentJwt` does not enter that guard. No new resource-authorization handler was added. Both financial activation flags stay unset. See ADR 0023.
 
+Phase 7F adds a regression for the cross-tenant gaps left by that audit. It covers both mixed exact-confirmation directions, reuse of one confirmation idempotency key by two organizations, reuse of one reversal idempotency key by two organizations, and ProductionCookie ownership denials for explicit allocation and reversal. The cookie cases run on the existing ProductionCookie test host with both financial flags enabled only there. A denied request must return the existing not-found contract and leave balances, audit rows, and the rejected idempotency key unwritten. A reflection test requires `OrganizationId` on public `GetByIdAsync` and `ListAsync` signatures in the Reconciliation application namespace. That signature check does not prove a SQL predicate. This regression covers those operations. It is not a formal proof that every IDOR is absent. Deployed configuration still leaves both financial activation flags unset, and the three-operation cookie allowlist is unchanged.
+
 Still in this phase:
 
-- systematic cross-organization tests;
-- a BOLA/IDOR regression matrix;
 - an authorization-policy correction only where a later review shows that the current capability check is wrong;
 - OpenAPI authentication and authorization metadata for existing `TenantMember` routes, including `GET /api/matches`, `GET /api/matches/smart`, and the Phase 4F review-case routes. Those routes already enforce `TenantMember` at runtime. The generated document does not yet describe that requirement;
 - the Phase 7 closure review.
