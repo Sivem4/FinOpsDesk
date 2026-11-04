@@ -338,13 +338,15 @@ Phase 7D.6a keeps a confirmed cookie financial write confirmed when the followin
 
 Phase 7D.6b runs the complete `tests/FinOpsDesk.E2ETests` project as the GitHub Actions job `Chromium browser security` in `.github/workflows/e2e-ci.yml`. The runner is Ubuntu 24.04 with SQL Server 2022. Cookie HTTPS uses the ASP.NET Core development certificate. Vite receives only the public certificate, and Windows and Ubuntu both start Vite through Node. The suite is not filtered and is not retried. The workflow does not enable `Authentication:FinancialReadAuthorization` or `Authentication:FinancialWriteAuthorization` in deployed configuration. The job is not a required merge check until the main branch ruleset requires it. See ADR 0022. Phase 7 is not complete.
 
+Phase 7E records the resource-ownership model that the audit found already implemented. The effective organization comes from `AccessSessionGate` for `ProductionCookie` and from the validated organization claim for `DevelopmentJwt`. Repositories and read queries constrain rows by that `OrganizationId`. There is no EF Core global query filter. Composite foreign keys and organization-scoped unique indexes reject a cross-tenant relationship the application should already have rejected. `FinancialCommitGuard` rechecks a ProductionCookie financial write inside the committing transaction. `DevelopmentJwt` does not enter that guard. No new resource-authorization handler was added. Both financial activation flags stay unset. See ADR 0023.
+
 Still in this phase:
 
-- policies;
-- resource-based authorization;
-- cross-organization integration tests;
-- BOLA/IDOR tests;
-- OpenAPI Bearer security metadata for existing `TenantMember` routes, including `GET /api/matches`, `GET /api/matches/smart`, and the Phase 4F review-case routes. Those routes already enforce `TenantMember` at runtime. The generated document does not yet describe that requirement.
+- systematic cross-organization tests;
+- a BOLA/IDOR regression matrix;
+- an authorization-policy correction only where a later review shows that the current capability check is wrong;
+- OpenAPI authentication and authorization metadata for existing `TenantMember` routes, including `GET /api/matches`, `GET /api/matches/smart`, and the Phase 4F review-case routes. Those routes already enforce `TenantMember` at runtime. The generated document does not yet describe that requirement;
+- the Phase 7 closure review.
 
 ## Phase 8: Disputes and dashboards
 
