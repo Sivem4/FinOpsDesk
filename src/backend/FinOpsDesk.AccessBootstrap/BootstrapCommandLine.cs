@@ -23,7 +23,14 @@ internal static class BootstrapCommandLine
         }
 
         string command = args[0];
-        if (command is not ("create-organization" or "grant-membership" or "grant-role" or "revoke-role"))
+        if (command is not (
+            "create-organization"
+            or "grant-membership"
+            or "grant-role"
+            or "revoke-role"
+            or "disable-user"
+            or "revoke-membership"
+            or "disable-organization"))
         {
             return false;
         }
@@ -54,6 +61,86 @@ internal static class BootstrapCommandLine
             }
 
             invocation = new BootstrapInvocation(command, organizationId, options["--name"], null, null, default, string.Empty);
+            failure = null;
+            return true;
+        }
+
+        if (command == "disable-user")
+        {
+            if (!HasOnly(options, "--issuer", "--subject", "--operator"))
+            {
+                failure = "invalid-argument";
+                return false;
+            }
+
+            if (!TryReadOperator(options["--operator"], out string disableOperator))
+            {
+                failure = "invalid-operator";
+                return false;
+            }
+
+            invocation = new BootstrapInvocation(
+                command,
+                Guid.Empty,
+                null,
+                options["--issuer"],
+                options["--subject"],
+                default,
+                disableOperator);
+            failure = null;
+            return true;
+        }
+
+        if (command == "disable-organization")
+        {
+            if (!HasOnly(options, "--organization-id", "--operator")
+                || !Guid.TryParseExact(options["--organization-id"], "D", out Guid disabledOrganizationId))
+            {
+                failure = "invalid-argument";
+                return false;
+            }
+
+            if (!TryReadOperator(options["--operator"], out string organizationOperator))
+            {
+                failure = "invalid-operator";
+                return false;
+            }
+
+            invocation = new BootstrapInvocation(
+                command,
+                disabledOrganizationId,
+                null,
+                null,
+                null,
+                default,
+                organizationOperator);
+            failure = null;
+            return true;
+        }
+
+        if (command == "revoke-membership")
+        {
+            if (!HasOnly(options, "--issuer", "--subject", "--organization-id", "--operator")
+                || !Guid.TryParseExact(options["--organization-id"], "D", out Guid revokedOrganizationId))
+            {
+                failure = "invalid-argument";
+                return false;
+            }
+
+            if (!TryReadOperator(options["--operator"], out string membershipOperator))
+            {
+                failure = "invalid-operator";
+                return false;
+            }
+
+            invocation = new BootstrapInvocation(
+                command,
+                revokedOrganizationId,
+                null,
+                options["--issuer"],
+                options["--subject"],
+                default,
+                membershipOperator);
             failure = null;
             return true;
         }

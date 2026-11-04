@@ -332,9 +332,10 @@ Phase 7D.4b1 keeps that write flag closed in deployed configuration and adds a s
 
 Phase 7D.4b2/c adds those three cookie actions and identity-bound recovery v2. Contract v2 advertises `reconciliation.confirm`, `allocations.create`, and `allocations.reverse` only when both activation flags are `Enabled` and the active organization grants them. The descriptor is stored before the first POST. DevelopmentJwt keeps recovery v1. Deployed configuration still leaves the write flag unset. See ADR 0020.
 
+Phase 7D.5 adds console commands `disable-user`, `revoke-membership`, and `disable-organization`. Each one writes `access.OperationalSecurityEvents` in the same transaction as the security change. A repeat is `AlreadyApplied`. Disable-user serializes on the application-user row lock and rotates `SessionStamp` only on the first transition. The organization commands take the existing Exclusive application lock. `--operator` is declared attribution, not an authenticated administrator. Reactivation, membership restoration, and an HTTP administration API are not in this increment. Both financial activation flags stay unset. See ADR 0021.
+
 Still in this phase:
 
-- identity-bound financial recovery, or recovery remaining disabled;
 - policies;
 - resource-based authorization;
 - cross-organization integration tests;

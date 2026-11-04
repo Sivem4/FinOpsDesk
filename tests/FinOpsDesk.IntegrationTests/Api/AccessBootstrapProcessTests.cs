@@ -30,6 +30,12 @@ public sealed class AccessBootstrapProcessTests
             await AssertProcessAsync(UnknownOption(), "invalid-argument");
             await AssertProcessAsync(Valid("grant-role", "Operator"), "unavailable");
             await AssertProcessAsync(Valid("revoke-role", "OrganizationAdmin"), "unavailable");
+            await AssertProcessAsync(["disable-user", "--issuer", "https://issuer.example", "--subject", "subject-1"], "invalid-argument");
+            await AssertProcessAsync(["disable-user", "--issuer", "not a uri", "--subject", "subject-1", "--operator", "phase-7d5-operator"], "unavailable");
+            await AssertProcessAsync(Emergency("disable-user"), "unavailable");
+            await AssertProcessAsync(Emergency("revoke-membership"), "unavailable");
+            await AssertProcessAsync(Emergency("disable-organization"), "unavailable");
+            await AssertProcessAsync(["disable-organization", "--organization-id", "not-a-guid", "--operator", "phase-7d5-operator"], "invalid-argument");
             await AssertNoGuardDatabaseAsync();
         }
         finally
@@ -168,6 +174,16 @@ public sealed class AccessBootstrapProcessTests
     private static string[] UnknownOption()
     {
         return [.. InvalidArgument("grant-role"), "--operator", "phase-7d2-operator", "--source", "environment"];
+    }
+
+    private static string[] Emergency(string command)
+    {
+        return command switch
+        {
+            "disable-user" => [command, "--issuer", "https://issuer.example", "--subject", "subject-1", "--operator", "phase-7d5-operator"],
+            "disable-organization" => [command, "--organization-id", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--operator", "phase-7d5-operator"],
+            _ => [command, "--issuer", "https://issuer.example", "--subject", "subject-1", "--organization-id", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--operator", "phase-7d5-operator"],
+        };
     }
 
     private static string[] Valid(string command, string role)

@@ -23,12 +23,19 @@ try
     ServiceCollection services = new();
     services.AddAccessModule(connectionString);
     services.AddScoped<IDeploymentRoleBootstrap, DeploymentRoleBootstrap>();
+    services.AddScoped<IDeploymentEmergencyControls, DeploymentEmergencyControls>();
     await using ServiceProvider provider = services.BuildServiceProvider();
     await using AsyncServiceScope scope = provider.CreateAsyncScope();
     IDeploymentRoleBootstrap bootstrap = scope.ServiceProvider.GetRequiredService<IDeploymentRoleBootstrap>();
-    DeploymentCommandStatus status = await DispatchAsync(bootstrap, invocation!);
+    IDeploymentEmergencyControls emergency = scope.ServiceProvider.GetRequiredService<IDeploymentEmergencyControls>();
+    DeploymentCommandStatus status = await DispatchAsync(bootstrap, emergency, invocation!);
     Console.WriteLine("result=" + Token(status));
     return Succeeded(status) ? 0 : 1;
+}
+catch (OrganizationAuthorizationException exception) when (exception.Failure == OrganizationAuthorizationFailure.LockNotAcquired)
+{
+    Console.WriteLine("result=lock-not-acquired");
+    return 1;
 }
 catch (OperationCanceledException)
 {
@@ -42,10 +49,26 @@ catch (Exception)
 
 static async Task<DeploymentCommandStatus> DispatchAsync(
     IDeploymentRoleBootstrap bootstrap,
+    IDeploymentEmergencyControls emergency,
     BootstrapInvocation invocation)
 {
     return invocation.Command switch
     {
+        "disable-user" => await emergency.DisableUserAsync(
+            invocation.Issuer ?? string.Empty,
+            invocation.Subject ?? string.Empty,
+            invocation.OperatorName,
+            CancellationToken.None),
+        "revoke-membership" => await emergency.RevokeMembershipAsync(
+            invocation.Issuer ?? string.Empty,
+            invocation.Subject ?? string.Empty,
+            invocation.OrganizationId,
+            invocation.OperatorName,
+            CancellationToken.None),
+        "disable-organization" => await emergency.DisableOrganizationAsync(
+            invocation.OrganizationId,
+            invocation.OperatorName,
+            CancellationToken.None),
         "create-organization" => await bootstrap.CreateOrganizationAsync(
             invocation.OrganizationId,
             invocation.Name ?? string.Empty,
@@ -96,6 +119,13 @@ static string Token(DeploymentCommandStatus status)
         DeploymentCommandStatus.InvalidRole => "invalid-role",
         DeploymentCommandStatus.InvalidOperator => "invalid-operator",
         DeploymentCommandStatus.ConcurrencyConflict => "concurrency-conflict",
+        DeploymentCommandStatus.UserDisabled => "user-disabled",
+        DeploymentCommandStatus.UserAlreadyDisabled => "user-already-disabled",
+        DeploymentCommandStatus.MembershipRevoked => "membership-revoked",
+        DeploymentCommandStatus.MembershipAlreadyRevoked => "membership-already-revoked",
+        DeploymentCommandStatus.OrganizationDisabled => "organization-disabled",
+        DeploymentCommandStatus.OrganizationAlreadyDisabled => "organization-already-disabled",
+        DeploymentCommandStatus.LockNotAcquired => "lock-not-acquired",
         _ => "unavailable",
     };
 }
@@ -109,5 +139,11 @@ static bool Succeeded(DeploymentCommandStatus status)
         or DeploymentCommandStatus.RoleGranted
         or DeploymentCommandStatus.RoleAlreadyActive
         or DeploymentCommandStatus.RoleRevoked
-        or DeploymentCommandStatus.RoleNotActive;
+        or DeploymentCommandStatus.RoleNotActive
+        or DeploymentCommandStatus.UserDisabled
+        or DeploymentCommandStatus.UserAlreadyDisabled
+        or DeploymentCommandStatus.MembershipRevoked
+        or DeploymentCommandStatus.MembershipAlreadyRevoked
+        or DeploymentCommandStatus.OrganizationDisabled
+        or DeploymentCommandStatus.OrganizationAlreadyDisabled;
 }

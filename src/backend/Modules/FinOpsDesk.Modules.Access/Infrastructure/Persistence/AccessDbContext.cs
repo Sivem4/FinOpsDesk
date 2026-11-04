@@ -22,6 +22,8 @@ public sealed class AccessDbContext : DbContext
 
     public DbSet<OrganizationRoleAssignment> OrganizationRoleAssignments => Set<OrganizationRoleAssignment>();
 
+    public DbSet<OperationalSecurityEvent> OperationalSecurityEvents => Set<OperationalSecurityEvent>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("access");
@@ -30,5 +32,6 @@ public sealed class AccessDbContext : DbContext
         modelBuilder.ApplyConfiguration(new OrganizationMembershipConfiguration());
         modelBuilder.ApplyConfiguration(new BrowserSessionConfiguration());
         modelBuilder.ApplyConfiguration(new OrganizationRoleAssignmentConfiguration());
+        modelBuilder.ApplyConfiguration(new OperationalSecurityEventConfiguration());
     }
 }

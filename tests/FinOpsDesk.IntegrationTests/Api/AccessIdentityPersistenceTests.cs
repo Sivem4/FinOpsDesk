@@ -124,9 +124,25 @@ public sealed class AccessIdentityPersistenceTests
             Assert.InRange(await ScalarAsync(
                 database.ConnectionString,
                 "SELECT COUNT(*) FROM reconciliation.__EFMigrationsHistory"), 1, int.MaxValue);
-            Assert.Equal(4, await ScalarAsync(
+            Assert.Equal(5, await ScalarAsync(
                 database.ConnectionString,
                 "SELECT COUNT(*) FROM access.__EFMigrationsHistory"));
+            Assert.Equal(1, await ScalarAsync(
+                database.ConnectionString,
+                """
+                SELECT COUNT(*)
+                FROM access.__EFMigrationsHistory
+                WHERE MigrationId LIKE N'%_AddOperationalSecurityEvent'
+                """));
+            Assert.Equal(1, await ScalarAsync(
+                database.ConnectionString,
+                """
+                SELECT COUNT(*)
+                FROM sys.tables AS tableDefinition
+                INNER JOIN sys.schemas AS schemaDefinition ON tableDefinition.schema_id = schemaDefinition.schema_id
+                WHERE schemaDefinition.name = N'access'
+                  AND tableDefinition.name = N'OperationalSecurityEvents'
+                """));
             Assert.Equal(1, await ScalarAsync(
                 database.ConnectionString,
                 """
