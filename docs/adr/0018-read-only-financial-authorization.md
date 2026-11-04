@@ -103,7 +103,7 @@ Deployed configuration still leaves `Authentication:FinancialReadAuthorization` 
 
 Endpoint enumeration cannot name a future financial route that is mapped outside the Reconciliation assembly and carries neither the boundary nor a classification. The architecture test locks the module reference direction. A review of a new module mapping is still required.
 
-OpenAPI Bearer security metadata for the existing routes remains incomplete. Runtime authorization does not wait for that document.
+OpenAPI Bearer security metadata for the existing routes remains incomplete. Runtime authorization does not wait for that document. ADR 0024 records the later description of the active host composition.
 
 Batch preview remains a full-book read. It runs only after authorization. This increment does not add a batch-preview UI, a review-case screen, an index, or a migration.
 

@@ -31,7 +31,7 @@ internal static class ReviewCaseEndpoints
         + "Submit the token read with the case. Do not replace it with a newer token after a conflict.";
 
     private const string TenantDescription =
-        "Requires the TenantMember policy. OrganizationId is taken from the authenticated access token. "
+        "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. "
         + "A client organization id in the body, query, or header is not accepted as the tenant.";
 
     private static readonly string[] OpenPropertyNames =
@@ -61,8 +61,6 @@ internal static class ReviewCaseEndpoints
             .Produces<ReviewCaseResponse>(StatusCodes.Status201Created, "application/json")
             .Produces<ReviewCaseResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
@@ -81,8 +79,6 @@ internal static class ReviewCaseEndpoints
                 + "The list does not run exact-1 or smart-1 and does not load the open reconciliation book.")
             .Produces<ReviewCaseListResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .AddOpenApiOperationTransformer(DocumentListOperation)
             .WithMetadata(FinancialEndpointClassification.Read("review-cases.read"));
 
@@ -95,8 +91,6 @@ internal static class ReviewCaseEndpoints
                 + "Inconsistent stored money returns 500 and does not include the corrupted amounts.")
             .Produces<ReviewCaseDetailResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
             .AddOpenApiOperationTransformer(DocumentGetOperation)
@@ -113,8 +107,6 @@ internal static class ReviewCaseEndpoints
                 + "This operation does not confirm an allocation.")
             .Produces<ReviewCaseResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
@@ -134,8 +126,6 @@ internal static class ReviewCaseEndpoints
                 + "Dismissal does not change invoice, bank transaction, or allocation rows.")
             .Produces<ReviewCaseResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)

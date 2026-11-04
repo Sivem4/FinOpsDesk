@@ -1,5 +1,6 @@
 using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.Api.Authorization;
+using FinOpsDesk.Api.OpenApi;
 using FinOpsDesk.Api.Security;
 using FinOpsDesk.Modules.Access;
 using FinOpsDesk.Modules.Reconciliation;
@@ -8,7 +9,7 @@ using FinOpsDesk.Modules.Reconciliation.Presentation;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(OpenApiAuthenticationTransformer.Configure);
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<FinOpsDesk.Api.Authorization.FinancialCommitAuthorizationExceptionHandler>();
 builder.Services.AddHealthChecks();

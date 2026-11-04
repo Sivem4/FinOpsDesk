@@ -37,13 +37,12 @@ internal static class MatchEndpoints
                 + "Suggestions can be stale before confirmation. Query parameters are not accepted.")
             .Produces<SmartMatchResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
             .WithMetadata(FinancialEndpointClassification.Read("reconciliation.read"));
         group.MapPost("/matches/confirm", ConfirmMatchAsync)
             .Accepts<ConfirmMatchRequest>("application/json")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .WithMetadata(FinancialEndpointClassification.Write(
                 "reconciliation.confirm",
                 FinancialWriteOperation.ConfirmExactMatch));
