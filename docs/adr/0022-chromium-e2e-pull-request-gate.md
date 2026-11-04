@@ -39,13 +39,13 @@ Windows and Ubuntu both start `node` with `src/frontend/node_modules/vite/bin/vi
 
 ### Branch protection is separate
 
-A workflow file does not make a check required. After this job has gone green on GitHub-hosted Ubuntu, the main branch ruleset can require these check names:
+A workflow run and ruleset enforcement are separate. The workflow can execute `Chromium browser security` without making that check block a merge.
 
-- `Build, test and verify formatting`
-- `Typecheck, lint, test, and build`
-- `Chromium browser security`
+GitHub reports: "Your rulesets won't be enforced on this private repository until you move to GitHub Team organization account." Under the current GitHub plan, rulesets are not enforced on this private repository. `Chromium browser security` is not an enforced required check. The same limit applies to `Build, test and verify formatting` and `Typecheck, lint, test, and build`.
 
-This repository change does not modify GitHub settings.
+Before merging, the owner manually verifies that the backend, frontend, and Chromium checks succeeded. This is an acknowledged repository-governance limitation. It is not a runtime authentication defect.
+
+This decision does not change the GitHub plan, repository visibility, rulesets, workflows, or application configuration.
 
 ### Out of scope
 
@@ -55,6 +55,6 @@ No change to financial refresh, Vitest worker limits, `FinancialCommitGuard`, op
 
 - A pull request runs the same 37 Chromium tests that developers run locally, on real SQL Server and through the real cookie and JWT browser flows.
 - The job is slower and larger than the backend and frontend jobs. That cost is accepted instead of a reduced security subset or a green retry.
-- Ubuntu 24.04 is the verified Playwright host platform for package 1.64.1. A green GitHub-hosted run is still required before the check is made mandatory. This ADR does not record that run as already green.
+- Ubuntu 24.04 is the verified Playwright host platform for package 1.64.1. This ADR does not record a GitHub-hosted run as already green. A green run would still not make `Chromium browser security` an enforced required check while rulesets are unenforced on this private repository.
 - Local Windows execution no longer depends on the CurrentUser\Root trust copy. Ordinary `scripts/dev-frontend.ps1` still exports the trusted public certificate for the launch-profile API.
 - The private key remains in the .NET development-certificate store. It is not a source file, a workflow artifact, or a Vite environment value.
