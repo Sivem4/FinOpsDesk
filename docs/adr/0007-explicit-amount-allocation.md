@@ -34,7 +34,7 @@ The same recovery runs when a balance check fails after the first lookup missed.
 
 The route uses the existing `TenantMember` policy. Any member of the organization can call it. A foreign invoice or bank transaction is not found, and the response does not include the other tenant's amounts, references, or organization id. A client-supplied organization id is not accepted. The endpoint does not record the acting user.
 
-This decision does not add `POST /api/allocations/batch`, automatic batch reconciliation, persisted reversal, or an immutable audit record. Those later arrived in ADR 0010, ADR 0011, and ADR 0012. Finer authorization remains Phase 7. `ConfirmAllocationHandler` stays unregistered for HTTP. `POST /api/matches/confirm` is unchanged.
+This decision does not add `POST /api/allocations/batch`, automatic batch reconciliation, persisted reversal, or an immutable audit record. Those later arrived in ADR 0010, ADR 0011, and ADR 0012. Finer authorization remained Phase 7 at this decision and followed there. See ADR 0019. Deployed financial flags stay unset. `ConfirmAllocationHandler` stays unregistered for HTTP. `POST /api/matches/confirm` is unchanged.
 
 ## Alternatives considered
 

@@ -95,15 +95,15 @@ When the activation key is `Enabled`, an active organization is present, and con
 
 The React client always requests contract v2. It accepts a v1 body as a legacy restricted session. Unknown permission strings never enable an action. Consistency between `financialAccess` and recognized capabilities is checked after unknown entries are filtered. Canonical capability comparison participates in the existing security epoch together with identity and active organization. Authorization readiness is separate from the epoch: an unavailable transition clears financial queries and blocks protected observers without inventing a second store.
 
-Cookie financial screens mount only the registers and read-only matching and allocation history for verified capabilities. Imports, confirmation, allocation, reversal, and recovery hooks are not mounted. The HTTP boundary rejects cookie financial mutations before `fetch`. Backend write denial remains authoritative.
+Cookie financial screens mount only the registers and read-only matching and allocation history for verified capabilities. Imports, confirmation, allocation, reversal, and recovery hooks are not mounted. The HTTP boundary rejects cookie financial mutations before `fetch`. Backend write denial remains authoritative. Phase 7D.4b2/c later mounted the three allowlisted writes and identity-bound recovery. See ADR 0020. That delivery does not set the deployed flags.
 
-Deployed configuration still leaves `Authentication:FinancialReadAuthorization` unset. Activation is a later operational step after compatible API and frontend artifacts are live. Removing the key disables reads again without invalidating browser sessions.
+Deployed configuration still leaves `Authentication:FinancialReadAuthorization` unset. The compatible read artifacts have since shipped. Activation remains an operational step because the deployed key is unset. Removing the key disables reads again without invalidating browser sessions.
 
 ### Known limits
 
 Endpoint enumeration cannot name a future financial route that is mapped outside the Reconciliation assembly and carries neither the boundary nor a classification. The architecture test locks the module reference direction. A review of a new module mapping is still required.
 
-OpenAPI Bearer security metadata for the existing routes remains incomplete. Runtime authorization does not wait for that document. ADR 0024 records the later description of the active host composition.
+OpenAPI Bearer security metadata for the existing routes remains incomplete. Runtime authorization does not wait for that document. That was the state of this decision. Phase 7G later described the active host composition. See ADR 0024. The deployed read flag remains unset.
 
 Batch preview remains a full-book read. It runs only after authorization. This increment does not add a batch-preview UI, a review-case screen, an index, or a migration.
 

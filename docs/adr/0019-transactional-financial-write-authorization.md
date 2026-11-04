@@ -7,7 +7,7 @@
 
 ADR 0018 authorizes ProductionCookie financial reads when `Authentication:FinancialReadAuthorization` is exactly `Enabled`. Every financial POST stayed forbidden. A request-scoped role snapshot is not a commit-time decision: a role or session can change after the handler starts and before `SaveChanges`.
 
-Phase 7D.4a adds the backend write check only. It does not mount cookie write UI, does not publish write capabilities on the session contract, and does not enable the write flag in deployed configuration. Identity-bound recovery remains later work.
+Phase 7D.4a adds the backend write check only. It does not mount cookie write UI, does not publish write capabilities on the session contract, and does not enable the write flag in deployed configuration. Identity-bound recovery remains later work. Phase 7D.4b2/c later shipped that UI and recovery. See ADR 0020. Shipping them does not set the deployed flags.
 
 ## Decision
 
@@ -45,7 +45,7 @@ ProductionCookie write authorization requires both ordinal values:
 | off | on | denied | denied |
 | on | on | exact read permission | only an allowlisted operation, then its exact write permission, rechecked in the committing transaction |
 
-Any other string is off. The flags do not skip authentication, membership, CSRF, or the commit-time check. There is no third activation flag. Deployed `appsettings` leave both keys unset. Setting them does not by itself authorize production use: cookie write UI and identity-bound recovery are still required before an operator enables the write key. `DevelopmentJwt` ignores both flags and the cookie allowlist.
+Any other string is off. The flags do not skip authentication, membership, CSRF, or the commit-time check. There is no third activation flag. Deployed `appsettings` leave both keys unset. Setting them does not by itself authorize production use. The cookie write UI and identity-bound recovery later shipped in Phase 7D.4b2/c. See ADR 0020. Their presence does not set either deployed flag, and it is not permission to enable the write key. `DevelopmentJwt` ignores both flags and the cookie allowlist.
 
 ### Cookie write allowlist
 
@@ -141,11 +141,11 @@ CSV import, the batch execution header, and review open, resolve, and dismiss do
 
 ### Browser contract
 
-Session contract v1 and v2 are unchanged. Contract v2 still returns only enabled read capabilities. The React client still rejects cookie financial mutations. Recovery v1 is unchanged. Recovery v2 is not part of this increment.
+Session contract v1 and v2 are unchanged. Contract v2 still returns only enabled read capabilities. The React client still rejects cookie financial mutations. Recovery v1 is unchanged. Recovery v2 is not part of this increment. It followed in ADR 0020 and does not set the deployed flags.
 
 ## Consequences
 
-- Deployed ProductionCookie financial POSTs stay denied until a later reviewed increment enables the write flag together with cookie write UI and identity-bound recovery. The allowlist does not authorize that operational step. Phase 7D.4b2/c still has to ship before the write key is enabled.
+- Deployed ProductionCookie financial POSTs stay denied while both activation keys are unset. Phase 7D.4b2/c later shipped the cookie write UI and identity-bound recovery. See ADR 0020. That delivery does not enable the write key. The allowlist does not authorize that operational step.
 - Enabling the read flag alone does not enable writes. Enabling both flags opens only confirm, explicit allocation, and reversal for ProductionCookie.
 - Two API instances coordinate only when they use the same database and the same principal. Out-of-band SQL does not.
 - Import and batch execution can leave a partial committed result. The HTTP error does not claim that the earlier item or a previous import was rolled back.

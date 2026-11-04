@@ -21,7 +21,7 @@ This record is not a general ledger and it is not event sourcing.
 
 `POST /api/allocations/{allocationId}/reverse` reverses one allocation for its full original `Amount`. Partial reversal is not supported. The route requires `TenantMember`.
 
-Organization id comes only from the authenticated organization claim. Actor id comes only from the JWT `sub` claim. A missing, blank, whitespace-only, or overlong `sub` returns HTTP 403 `reconciliation.actor.required` before an idempotency lookup and before any financial write.
+Organization id comes only from the authenticated organization claim. Actor id comes only from the JWT `sub` claim. A missing, blank, whitespace-only, or overlong `sub` returns HTTP 403 `reconciliation.actor.required` before an idempotency lookup and before any financial write. That was the `DevelopmentJwt` source for this decision. `ProductionCookie` later uses `AccessSessionGate` and `ApplicationUser.Id`. See ADR 0019.
 
 The JSON body accepts only `reason`. The server trims it. An empty reason returns HTTP 400 `reconciliation.allocation.reversal_invalid_request`. A reason longer than 500 UTF-16 code units returns HTTP 400 `reconciliation.allocation.reversal_reason_too_long` and is not truncated. `ReversedAt` is the server clock. The client does not send an amount, a timestamp, an actor, or an organization.
 
@@ -101,6 +101,6 @@ Rejected. ADR 0003 leaves retry to the caller. A deadlock is not classified as a
 
 ## Consequences
 
-Full reversal is available to any tenant member. Finer authorization remains Phase 7. Partial reversal, multi-allocation reversal, and `MatchSuggestion` lifecycle changes are not part of this decision.
+Full reversal is available to any tenant member. Finer authorization remained Phase 7 at this decision and followed there. See ADR 0019. Deployed financial flags stay unset. Partial reversal, multi-allocation reversal, and `MatchSuggestion` lifecycle changes are not part of this decision.
 
 Expected failures use the stable codes above and do not return SQL text. The append-only trigger still stops ordinary updates and deletes. It is not a tamper-proof control.

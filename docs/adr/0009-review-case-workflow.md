@@ -81,9 +81,9 @@ A new case returns 201 and `Location: /api/review-cases/{id}`. An existing open 
 
 ### Known limits
 
-The workflow is actorless. It does not record which user opened, resolved, or dismissed a case. It does not write an immutable audit record. It does not assign, comment, or reopen. Those gaps are accepted for this phase. Phase 5 owns financial audit. Phase 6 can present this API in the React operations workspace. Phase 7 owns finer roles and OpenAPI Bearer security metadata.
+The workflow is actorless. It does not record which user opened, resolved, or dismissed a case. It does not write an immutable audit record. It does not assign, comment, or reopen. Those gaps are accepted for this phase. Phase 5 owns financial audit. Phase 6 can present this API in the React operations workspace. Phase 7 owns finer roles and OpenAPI Bearer security metadata. Those roles and the later OpenAPI description were delivered after this decision. See ADR 0017 and ADR 0024.
 
-The generated OpenAPI document describes the five operations, their schemas, and the response codes. It does not yet include Bearer security metadata for these routes, which is the same gap already recorded for `GET /api/matches` and `GET /api/matches/smart`. Runtime authorization still requires `TenantMember`. ADR 0024 records that later description for the active host composition.
+The generated OpenAPI document describes the five operations, their schemas, and the response codes. It does not yet include Bearer security metadata for these routes, which is the same gap already recorded for `GET /api/matches` and `GET /api/matches/smart`. Runtime authorization still requires `TenantMember`. That was the state of this decision. Phase 7G later described the active host composition. See ADR 0024.
 
 ## Alternatives considered
 

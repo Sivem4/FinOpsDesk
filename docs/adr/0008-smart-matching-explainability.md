@@ -68,4 +68,4 @@ Rejected. The score is a heuristic over incomplete reference data. A suggestion 
 - `coverageLimited` and `truncated` must be shown with the score;
 - `exact-1` confirmation and explicit-amount allocation are unchanged;
 - a future scoring change requires `smart-2`;
-- the generated OpenAPI document does not yet include Bearer security metadata for `GET /api/matches/smart` or the existing `GET /api/matches`. Runtime authorization still uses `TenantMember`. Describing that requirement in OpenAPI is a later authentication and API documentation change. This decision does not change the global OpenAPI setup. ADR 0024 records that later description for the active host composition.
+- the generated OpenAPI document does not yet include Bearer security metadata for `GET /api/matches/smart` or the existing `GET /api/matches`. Runtime authorization still uses `TenantMember`. Describing that requirement in OpenAPI is a later authentication and API documentation change. This decision does not change the global OpenAPI setup. That was the state of this decision. Phase 7G later described the active host composition. See ADR 0024.
