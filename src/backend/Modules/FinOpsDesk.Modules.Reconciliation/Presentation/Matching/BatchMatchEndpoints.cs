@@ -26,10 +26,8 @@ internal static class BatchMatchEndpoints
     public const int MaxJsonBodyBytes = 8192;
 
     private const string TenantDescription =
-        "Requires the TenantMember policy at runtime. OrganizationId comes from the authenticated access token. "
-        + "A client organization id in the body, query, or header is not the tenant. "
-        + "Generated OpenAPI Bearer security metadata is incomplete and remains a Phase 7 follow-up. "
-        + "TenantMember may start this financial batch. Finer financial authorization is also Phase 7.";
+        "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. "
+        + "A client organization id in the body, query, or header is not the tenant.";
 
     private static readonly string[] RootPropertyNames = ["pairs"];
 
@@ -65,8 +63,6 @@ internal static class BatchMatchEndpoints
                 + "An incomplete book is not reported as a complete classification.")
             .Produces<PreviewBatchExactMatchesResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
             .AddOpenApiOperationTransformer(DocumentPreviewOperation)
@@ -85,7 +81,6 @@ internal static class BatchMatchEndpoints
                 + "allConfirmed is false unless every item is confirmed. Replay returns the stored result and does not allocate again.")
             .Produces<ExecuteBatchExactMatchesResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)

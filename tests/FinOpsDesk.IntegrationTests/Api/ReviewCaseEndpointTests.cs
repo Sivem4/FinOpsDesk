@@ -1113,6 +1113,7 @@ public sealed class ReviewCaseEndpointTests : IDisposable
             StringComparison.Ordinal);
 
         bool invoiceHasSecurity = paths.GetProperty("/api/invoices").GetProperty("get").TryGetProperty("security", out _);
+        Assert.True(invoiceHasSecurity);
         Assert.Equal(invoiceHasSecurity, open.TryGetProperty("security", out _));
         Assert.Equal(invoiceHasSecurity, list.TryGetProperty("security", out _));
         Assert.Equal(invoiceHasSecurity, get.TryGetProperty("security", out _));

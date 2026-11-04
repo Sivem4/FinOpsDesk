@@ -465,8 +465,10 @@ public sealed class SmartMatchEndpointTests : IDisposable
         JsonElement root = document.RootElement;
         JsonElement operation = root.GetProperty("paths").GetProperty("/api/matches/smart").GetProperty("get");
         JsonElement exactOperation = root.GetProperty("paths").GetProperty("/api/matches").GetProperty("get");
-        Assert.False(operation.TryGetProperty("security", out _));
-        Assert.False(exactOperation.TryGetProperty("security", out _));
+        Assert.True(operation.GetProperty("security")[0].TryGetProperty("DevelopmentJwt", out _));
+        Assert.True(exactOperation.GetProperty("security")[0].TryGetProperty("DevelopmentJwt", out _));
+        Assert.False(HasHeader(operation, "X-CSRF-Token"));
+        Assert.False(HasHeader(exactOperation, "X-CSRF-Token"));
         Assert.False(operation.TryGetProperty("parameters", out JsonElement parameters) && parameters.GetArrayLength() > 0);
         Assert.False(exactOperation.TryGetProperty("responses", out JsonElement exactResponses)
             && exactResponses.TryGetProperty("400", out _));
@@ -615,6 +617,14 @@ public sealed class SmartMatchEndpointTests : IDisposable
 
             Assert.DoesNotContain(value, property.Value.GetRawText(), StringComparison.Ordinal);
         }
+    }
+
+    private static bool HasHeader(JsonElement operation, string name)
+    {
+        return operation.TryGetProperty("parameters", out JsonElement parameters)
+            && parameters.EnumerateArray().Any(parameter =>
+                parameter.GetProperty("in").GetString() == "header"
+                && parameter.GetProperty("name").GetString() == name);
     }
 
     private static void AssertMoney(JsonElement money, decimal amount, string currency)

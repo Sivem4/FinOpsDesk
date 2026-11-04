@@ -427,9 +427,8 @@ public sealed class AllocationReversalEndpointTests : IDisposable
         JsonElement paths = document.RootElement.GetProperty("paths");
         JsonElement operation = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         JsonElement allocationPost = paths.GetProperty("/api/allocations").GetProperty("post");
-        Assert.Equal(
-            allocationPost.TryGetProperty("security", out _),
-            operation.TryGetProperty("security", out _));
+        Assert.True(allocationPost.GetProperty("security")[0].TryGetProperty("DevelopmentJwt", out _));
+        Assert.True(operation.GetProperty("security")[0].TryGetProperty("DevelopmentJwt", out _));
         JsonElement schema = operation.GetProperty("requestBody")
             .GetProperty("content")
             .GetProperty("application/json")

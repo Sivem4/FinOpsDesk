@@ -48,7 +48,7 @@ Competitor probes read at most 101 other open rows. One hundred rows can still s
 
 Both routes use the existing `TenantMember` policy. `OrganizationId` comes only from `ICurrentOrganizationContext`. A query value, a JSON field, or `X-Organization-Id` does not select the tenant. An idempotency key is unique per organization. Organization A's receipt and allocations are not returned to Organization B.
 
-`TenantMember` is enough to start a financial batch today. The application does not have a separate approval role. Finer financial authorization is Phase 7. The generated OpenAPI document still has incomplete Bearer security metadata for these routes, as it does for the other reconciliation routes. That metadata gap is also a Phase 7 follow-up. The runtime policy is present.
+`TenantMember` is enough to start a financial batch today. The application does not have a separate approval role. Finer financial authorization is Phase 7. The generated OpenAPI document still has incomplete Bearer security metadata for these routes, as it does for the other reconciliation routes. That metadata gap is also a Phase 7 follow-up. The runtime policy is present. ADR 0024 records the later OpenAPI description.
 
 ### Failures that remain accepted
 
@@ -74,4 +74,4 @@ Rejected. The command is one idempotent attempt with a mixed result document. Ca
 
 ## Consequences
 
-`GET /api/matches`, `GET /api/matches/smart`, `POST /api/matches/confirm`, `POST /api/allocations`, and the review-case routes keep their contracts. Batch confirmation does not change `exact-1` or `smart-1`. Persisted reversal, reversal audit, and the historical meaning of a batch receipt after a later reversal are recorded in ADR 0012. Phase 7 owns resource-based financial authorization and the missing OpenAPI Bearer metadata.
+`GET /api/matches`, `GET /api/matches/smart`, `POST /api/matches/confirm`, `POST /api/allocations`, and the review-case routes keep their contracts. Batch confirmation does not change `exact-1` or `smart-1`. Persisted reversal, reversal audit, and the historical meaning of a batch receipt after a later reversal are recorded in ADR 0012. Phase 7 owns resource-based financial authorization and the missing OpenAPI Bearer metadata. ADR 0024 records the later OpenAPI description.

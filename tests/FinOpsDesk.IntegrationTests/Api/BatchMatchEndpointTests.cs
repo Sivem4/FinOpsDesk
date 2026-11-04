@@ -789,7 +789,8 @@ public sealed class BatchMatchEndpointTests : IDisposable
         Assert.Equal("ExecuteBatchExactMatches", execute.GetProperty("operationId").GetString());
         Assert.Contains("TenantMember", preview.GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Contains("TenantMember", execute.GetProperty("description").GetString(), StringComparison.Ordinal);
-        Assert.Contains("Phase 7", execute.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("host organization context", execute.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Phase 7", execute.GetProperty("description").GetString(), StringComparison.Ordinal);
         AssertNotAnonymous(preview);
         AssertNotAnonymous(execute);
 

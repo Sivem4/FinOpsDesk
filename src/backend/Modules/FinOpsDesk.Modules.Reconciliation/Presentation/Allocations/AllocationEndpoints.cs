@@ -45,16 +45,14 @@ internal static class AllocationEndpoints
             .WithName("GetAllocationContext")
             .WithSummary("Read the current business context of one invoice and one bank transaction.")
             .WithDescription(
-                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
-                + "A missing JWT sub is allowed. The query requires exactly one invoiceId and one bankTransactionId. "
+                "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. A client-supplied organization id is not the tenant. "
+                + "A missing actor id is allowed on this read. The query requires exactly one invoiceId and one bankTransactionId. "
                 + "Both reads are organization-scoped point lookups. They are not one atomic snapshot and they do not lock or reserve either record. "
                 + "Outstanding and unapplied amounts are calculated from the stored principal and allocated amounts. "
                 + "Different currencies are returned as stored. POST /api/allocations remains responsible for rejecting a cross-currency allocation "
                 + "and for checking the balances at commit time.")
             .Produces<AllocationContextResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
             .AddOpenApiOperationTransformer(DocumentContextOperation)
@@ -62,6 +60,7 @@ internal static class AllocationEndpoints
 
         group.MapPost("/allocations", AllocateAsync)
             .WithName("AllocateExplicitAmount")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .AddOpenApiOperationTransformer(DocumentAllocationOperation)
             .WithMetadata(FinancialEndpointClassification.Write(
                 "allocations.create",
@@ -71,15 +70,15 @@ internal static class AllocationEndpoints
             .WithName("ReverseAllocation")
             .WithSummary("Reverse one confirmed allocation for its full original amount.")
             .WithDescription(
-                "Requires a bearer token and the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
-                + "ActorId comes only from the JWT sub claim. A missing, blank, or overlong sub is rejected before replay or financial work. "
+                "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. "
+                + "A client-supplied organization id is not the tenant. "
+                + "ActorId comes from the authenticated caller, not from the request. A missing or blank actor is rejected before replay or financial work. "
                 + "The body accepts only reason. Amount, reversedAt, actorId, and organizationId are not accepted from the client. "
                 + "Idempotency-Key is a UUID in D format and is scoped to reversal, separate from confirmation. "
                 + "A fresh reversal and a matching replay both return HTTP 200 with the persisted reversal values. "
                 + "replayed is false for the first commit and true for a matching replay.")
             .Produces<ReverseAllocationResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
@@ -94,8 +93,8 @@ internal static class AllocationEndpoints
             .WithName("ListAllocationHistory")
             .WithSummary("List persisted allocations for the authenticated organization.")
             .WithDescription(
-                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
-                + "A missing JWT sub is allowed. Optional invoiceId and bankTransactionId filters are exact and combined with AND. "
+                "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. A client-supplied organization id is not the tenant. "
+                + "A missing actor id is allowed on this read. Optional invoiceId and bankTransactionId filters are exact and combined with AND. "
                 + "A missing filter is unfiltered. An empty or malformed filter is rejected. "
                 + "An id from another organization returns an empty page, not that organization's rows. "
                 + "Results are ordered by ConfirmedAt descending, then allocation id descending. "
@@ -108,8 +107,6 @@ internal static class AllocationEndpoints
                 + "This read does not confirm, reverse, or recover an idempotent POST.")
             .Produces<AllocationHistoryListResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .AddOpenApiOperationTransformer(DocumentHistoryOperation)
             .WithMetadata(FinancialEndpointClassification.Read("allocations.read"));
 
@@ -117,18 +114,16 @@ internal static class AllocationEndpoints
             .WithName("GetAllocationAudit")
             .WithSummary("List financial audit entries for one allocation.")
             .WithDescription(
-                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
+                "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. A client-supplied organization id is not the tenant. "
                 + "DevelopmentJwt allows any TenantMember to read ActorId. "
                 + "ProductionCookie read authorization, when enabled, requires audit.read. "
-                + "A missing JWT sub is allowed on this read. "
+                + "A missing actor id is allowed on this read. "
                 + "Results are ordered by RecordedAt ascending, then audit entry id ascending. "
                 + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. "
                 + "An allocation with no audit rows returns an empty page. "
                 + "The response does not include the idempotency key and does not reconstruct a historical actor.")
             .Produces<FinancialAuditListResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .AddOpenApiOperationTransformer(DocumentAuditOperation)
             .WithMetadata(FinancialEndpointClassification.Read("audit.read"));
@@ -137,15 +132,13 @@ internal static class AllocationEndpoints
             .WithName("GetAllocationReversalContext")
             .WithSummary("Read the current reversal context of one allocation.")
             .WithDescription(
-                "Requires the TenantMember policy. OrganizationId comes only from the authenticated organization claim. "
-                + "A missing JWT sub is allowed. The read returns the current persisted allocation, including reversed rows and rows without a confirmation audit. "
+                "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. A client-supplied organization id is not the tenant. "
+                + "A missing actor id is allowed on this read. The read returns the current persisted allocation, including reversed rows and rows without a confirmation audit. "
                 + "The amount is the original allocation amount. Invoice number and bank reference are current source labels. "
                 + "The response does not include rowversion, idempotency keys, actor, audit, or balances. Any query parameter is rejected. "
                 + "This read does not lock or reserve the allocation and does not authorize POST /api/allocations/{allocationId}/reverse.")
             .Produces<AllocationReversalContextResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .AddOpenApiOperationTransformer(DocumentReversalContextOperation)
             .WithMetadata(FinancialEndpointClassification.Read("allocations.read"));
