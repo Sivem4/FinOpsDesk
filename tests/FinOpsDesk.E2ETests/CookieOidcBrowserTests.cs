@@ -60,9 +60,7 @@ public sealed class CookieOidcBrowserTests
             }
             catch (Exception exception)
             {
-                throw new InvalidOperationException(
-                    "Chromium is not available. Build the E2E project, then run playwright.ps1 install chromium from its output directory.",
-                    exception);
+                throw E2EChromium.Unavailable(exception);
             }
 
             IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions

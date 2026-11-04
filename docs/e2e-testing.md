@@ -2,7 +2,7 @@
 
 Phase 6I.1 runs one Chromium journey against the real Vite development application, a real ASP.NET Core process, and a disposable SQL Server database. It does not mock HTTP and it does not write to the Development database `FinOpsDesk`.
 
-The test project is `tests/FinOpsDesk.E2ETests`. It is not included in `FinOpsDesk.slnx`. `dotnet test FinOpsDesk.slnx` does not build it, install a browser, or run it. Backend CI and frontend CI are unchanged.
+The test project is `tests/FinOpsDesk.E2ETests`. It is not included in `FinOpsDesk.slnx`. `dotnet test FinOpsDesk.slnx` does not build it, install a browser, or run it. Backend CI and frontend CI do not run it. `.github/workflows/e2e-ci.yml` runs the complete project on a pull request and on a push to `main`. See ADR 0022.
 
 ## What the journey covers
 
@@ -29,7 +29,7 @@ Reversal, a lost HTTP response, explicit-amount recovery, and a second organizat
 
 `FINOPSDESK_TEST_SQLSERVER` selects the server only. Omit the database name, or set the catalog to `master`. A catalog of `FinOpsDesk`, `FinOpsDesk_IT...`, or any other name fails the run before a connection is used for migrations. The runner creates `FinOpsDesk_E2E_<guid>` itself.
 
-The journey does not use the ASP.NET HTTPS development certificate. The API process listens on loopback HTTP because no HTTPS address is configured, so the existing HTTPS redirection middleware does not redirect. The browser talks only to Vite. Vite proxies `/api` and `/health` to that loopback origin. `secure` stays `true`. JWT validation and `TenantMember` stay enabled. The signing key is created in memory for the API process and is not a `VITE_` variable, a source file, or a command-line argument.
+The DevelopmentJwt journey does not use the ASP.NET HTTPS development certificate. That API process listens on loopback HTTP because no HTTPS address is configured, so the existing HTTPS redirection middleware does not redirect. The browser talks only to Vite. Vite proxies `/api` and `/health` to that loopback origin. `secure` stays `true`. JWT validation and `TenantMember` stay enabled. The signing key is created in memory for the API process and is not a `VITE_` variable, a source file, or a command-line argument. Cookie tests are the exception: their API listens on `https://localhost` and the public development certificate is given only to the Vite process.
 
 Do not point `FINOPSDESK_TEST_SQLSERVER` at a production or shared application database.
 
@@ -44,9 +44,23 @@ powershell -File tests/FinOpsDesk.E2ETests/bin/Debug/net10.0/playwright.ps1 inst
 dotnet test tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj --no-restore
 ```
 
-A Release build uses `tests/FinOpsDesk.E2ETests/bin/Release/net10.0/playwright.ps1` and `dotnet test -c Release`.
+A Release build uses `tests/FinOpsDesk.E2ETests/bin/Release/net10.0/playwright.ps1` and `dotnet test -c Release`. The API harness uses `dotnet run --no-build` in that same configuration, so a Release test run must follow a Release build. On Ubuntu the same `playwright.ps1` is started with `pwsh`. The package does not ship a separate browser-revision pin.
 
 The Playwright browsers are installed outside the repository, under the user profile. Do not commit them.
+
+## Pull request gate
+
+`.github/workflows/e2e-ci.yml` has one job, `Chromium browser security`. The runner is `ubuntu-24.04` because Microsoft.Playwright 1.64.1 treats that release as an officially supported Chromium host. The job timeout is 30 minutes. Permissions are `contents: read`. Concurrency cancels a superseded run of this workflow only.
+
+The job checks out the repository, installs the .NET 10 SDK and Node 24, runs `npm ci` in `src/frontend`, runs `dotnet dev-certs https` without exporting a private key, builds the E2E project in Release, runs `playwright.ps1 install chromium --with-deps`, and runs the complete project once with `dotnet test --configuration Release --no-build`. It does not run `FinOpsDesk.slnx`. It does not filter by category and it does not retry a failed test.
+
+SQL Server 2022 is a service container. `FINOPSDESK_TEST_SQLSERVER` has no catalog. Each test creates `FinOpsDesk_E2E_<guid>` and drops it only after its API process is confirmed stopped. The workflow does not print the connection string. A database connection failure fails the test.
+
+`dotnet dev-certs https` puts the localhost development certificate, including its private key, in the current-user personal store. Kestrel loads that certificate for the cookie API. The test writes a temporary public PEM outside the repository and passes it to Vite as `NODE_EXTRA_CA_CERTS`. The CLI PEM export is not used, because it also writes a sibling private-key file. The private key is not committed, logged, or given to Chromium. TLS hostname checks stay enabled. `NODE_TLS_REJECT_UNAUTHORIZED` is not set. The Vite proxy keeps `secure: true`.
+
+Windows and Ubuntu both start Vite as `node` plus `src/frontend/node_modules/vite/bin/vite.js`. Disposal stops that process tree and does not hunt for an unrelated Node or Chrome process.
+
+The workflow does not change GitHub branch protection. After a green GitHub-hosted run, the main ruleset can require `Build, test and verify formatting`, `Typecheck, lint, test, and build`, and `Chromium browser security`. Until that ruleset change, the job can fail while a merge is still allowed.
 
 ## Isolation and cleanup
 
@@ -67,18 +81,19 @@ A failure names the component that stopped: browser, Vite, API, database, or fix
 - `E2E could not open the SQL Server master connection`: start LocalDB, or set `FINOPSDESK_TEST_SQLSERVER` without a database name.
 - `E2E refused supplied catalog`: the connection string names a database. Remove `Database` or `Initial Catalog`, or set it to `master`.
 - `Vite is not installed`: from `src/frontend`, run `npm ci`.
-- `Chromium is not available`: run the `playwright.ps1 install chromium` command above after a build.
+- `Chromium is not available`: the test fails. It is not skipped. Run `playwright.ps1 install chromium` from the test output directory after a build. On Ubuntu, start that script with `pwsh` and add `--with-deps` for the system libraries.
+- `dotnet dev-certs https failed` or a missing localhost certificate: cookie E2E fails. It does not fall back to HTTP or to an unverified TLS proxy.
 - `API health redirected`: the isolated process was given an HTTPS address. The E2E host sets `ASPNETCORE_URLS` to loopback HTTP and does not use a launch profile.
 - Vite exits immediately: port collision. The host passes `--strictPort` on a free loopback port and does not use port 7257.
 - The ordinary Development API on port 7257 is a different process. Leave `FINOPSDESK_E2E_API_ORIGIN` unset when you run `scripts/dev-frontend.ps1`.
 
 ## Cookie sign-in smoke
 
-`CookieOidcBrowserTests` is a separate browser test in the same project and the same non-parallel collection. It is not a financial journey. It starts `OidcProtocolStub` with redirect URI `http://localhost:<vite port>/signin-oidc`, starts the API as `ProductionCookie` on `https://localhost:<api port>`, and starts Vite in cookie mode on `http://localhost:<vite port>`. The API listens on HTTPS because antiforgery will not issue a token for a non-SSL request. The host environment name is `Development` only so Kestrel can use the trusted development certificate; `Authentication:Composition` remains `ProductionCookie`. Vite receives the public certificate through `NODE_EXTRA_CA_CERTS` and keeps `secure: true`. The browser origin stays `http://localhost`. Chromium then signs in through a real form POST, returns through the proxied `/signin-oidc` callback, sees the restricted screen, and signs out locally. The test checks that the `__Host-finopsdesk-session` cookie is stored for `localhost`, that financial controls are absent, that no `Authorization: Bearer` header is sent, and that `/api/invoices` is forbidden before sign-out and unauthorized after it. Screenshots, video, and Playwright traces stay off. The test client secret is not written into the assertion text.
+`CookieOidcBrowserTests` is a separate browser test in the same project and the same non-parallel collection. It is not a financial journey. It starts `OidcProtocolStub` with redirect URI `http://localhost:<vite port>/signin-oidc`, starts the API as `ProductionCookie` on `https://localhost:<api port>`, and starts Vite in cookie mode on `http://localhost:<vite port>`. The API listens on HTTPS because antiforgery will not issue a token for a non-SSL request. The host environment name is `Development` only so Kestrel can load the ASP.NET Core HTTPS development certificate from the current-user personal store; `Authentication:Composition` remains `ProductionCookie`. The private key stays in that store. Vite receives a temporary public certificate through `NODE_EXTRA_CA_CERTS` and keeps `secure: true`. Linux does not require the Windows Root store. `scripts/dev-frontend.ps1` is a separate local path and still exports the public certificate from CurrentUser\Root for the ordinary launch profile. The browser origin stays `http://localhost`. Chromium then signs in through a real form POST, returns through the proxied `/signin-oidc` callback, sees the restricted screen, and signs out locally. The test checks that the `__Host-finopsdesk-session` cookie is stored for `localhost`, that financial controls are absent, that no `Authorization: Bearer` header is sent, and that `/api/invoices` is forbidden before sign-out and unauthorized after it. Screenshots, video, and Playwright traces stay off. The test client secret is not written into the assertion text.
 
 `CookieOrganizationBrowserTests` uses the same host. Before sign-in it inserts two active Access organizations and memberships for the stub subject. Chromium checks that neither organization is selected automatically, that an explicit POST carries a CSRF header and no bearer token, that the next session read is what the screen calls active, that a second tab follows that server result, and that revoking a membership removes it after reload. One test holds the organization response with `Route.FetchAsync` until a second tab signs out, then fulfills that response. The late cookie is rejected because the same server session was revoked. The test does not sleep and does not add a production session endpoint. Financial routes stay forbidden.
 
-On Windows the runner starts `node` with `src/frontend/node_modules/vite/bin/vite.js` and keeps that process handle. Disposal stops that process tree only. It does not search for `node.exe`, `vite.js`, the frontend path, or the reserved port, and it does not stop an unrelated Node, Chrome, or editor process. If that owned process cannot be confirmed stopped, cleanup fails. The database is still dropped only after the owned API process is confirmed stopped. Non-Windows runs continue to start Vite through `npm`.
+Windows and Ubuntu start `node` with `src/frontend/node_modules/vite/bin/vite.js` and keep that process handle. Disposal stops that process tree only. It does not search for `node`, `vite.js`, the frontend path, or the reserved port, and it does not stop an unrelated Node, Chrome, or editor process. If that owned process cannot be confirmed stopped, cleanup fails. The database is still dropped only after the owned API process is confirmed stopped.
 
 Run it after the E2E build and Chromium install:
 
@@ -86,7 +101,7 @@ Run it after the E2E build and Chromium install:
 dotnet test tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj --configuration Release --filter "FullyQualifiedName~CookieOidcBrowserTests"
 ```
 
-The financial filter remains the way to run a money journey without this smoke. A passing E2E build is not this browser run.
+The financial filter remains the way to run a money journey without this smoke. Building the project does not run the browser. The pull-request job runs the whole project.
 
 ## Phase 6I.2
 
@@ -104,7 +119,7 @@ A lost response is accepted only when SQL already shows the commit and the real 
 
 Screenshots, video, and Playwright traces stay off. Intercepted requests are compared in memory. Failure output still goes through the host redaction and does not include authorization headers or JWTs. Idempotency keys and reversal reasons are not written to the host diagnostic log.
 
-Phase 6I.1 and Phase 6I.2 are implemented local browser coverage for the completed Phase 6 workspace. They run against Chromium, real Vite, real ASP.NET Core, and a disposable `FinOpsDesk_E2E_<guid>` SQL Server database. SQL assertions prove the committed financial state. A lost-response test accepts the case only after that commit and then checks that the manual retry repeats the same idempotency key and the same raw body. These tests stay outside `FinOpsDesk.slnx` and outside mandatory pull-request CI. Production browser sign-in remains Phase 7. Phase 7D.3b adds cookie financial-read journeys against the OIDC stub when the test host enables `Authentication:FinancialReadAuthorization`. The existing DevelopmentJwt journeys stay in place. Cookie financial POSTs must still return 403 without SQL mutation when the write activation key is unset. A test host that enables both flags may exercise exact confirmation, explicit allocation, and reversal. The other six cookie POSTs stay denied. Phase 7D.4a SQL Server tests enable both financial activation keys only inside that test host. The deployed configuration and the cookie browser journeys do not. These tests do not change matching, allocation, or reversal rules.
+Phase 6I.1 and Phase 6I.2 are implemented local browser coverage for the completed Phase 6 workspace. They run against Chromium, real Vite, real ASP.NET Core, and a disposable `FinOpsDesk_E2E_<guid>` SQL Server database. SQL assertions prove the committed financial state. A lost-response test accepts the case only after that commit and then checks that the manual retry repeats the same idempotency key and the same raw body. These tests stay outside `FinOpsDesk.slnx`. The complete project, including these tests, is the Chromium pull-request job in `.github/workflows/e2e-ci.yml`. That job is not a required merge check until the main branch ruleset says so. Production browser sign-in remains Phase 7. Phase 7D.3b adds cookie financial-read journeys against the OIDC stub when the test host enables `Authentication:FinancialReadAuthorization`. The existing DevelopmentJwt journeys stay in place. Cookie financial POSTs must still return 403 without SQL mutation when the write activation key is unset. A test host that enables both flags may exercise exact confirmation, explicit allocation, and reversal. The other six cookie POSTs stay denied. Phase 7D.4a SQL Server tests enable both financial activation keys only inside that test host. The deployed configuration and the cookie browser journeys do not. These tests do not change matching, allocation, or reversal rules.
 
 Run one scenario from the repository root after the build and Chromium install above:
 

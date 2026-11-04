@@ -20,7 +20,7 @@ FinOpsDesk.ArchitectureTests
 FinOpsDesk.E2ETests
 ```
 
-`FinOpsDesk.E2ETests` is a local Chromium journey. It is not a project in `FinOpsDesk.slnx`, so `dotnet test FinOpsDesk.slnx` does not install a browser or start the journey. The project creates one `FinOpsDesk_E2E_<guid>` database, applies the existing Reconciliation migrations, and starts a loopback API process plus the Vite development server. It does not target the Development database `FinOpsDesk`. See `docs/e2e-testing.md`.
+`FinOpsDesk.E2ETests` is the Chromium suite. It is not a project in `FinOpsDesk.slnx`, so `dotnet test FinOpsDesk.slnx` does not install a browser or start the journey. `.github/workflows/e2e-ci.yml` runs the complete project on Ubuntu 24.04 against SQL Server 2022. Each test creates one `FinOpsDesk_E2E_<guid>` database, applies the existing Reconciliation and Access migrations, and starts a loopback API process plus the Vite development server. DevelopmentJwt journeys use loopback HTTP. Cookie journeys use `https://localhost` and give Vite only the public development certificate. The project does not target the Development database `FinOpsDesk`. Making the job a required merge check is a GitHub ruleset step, not a workflow setting. See `docs/e2e-testing.md` and ADR 0022.
 
 ### FinOpsDesk.Api
 

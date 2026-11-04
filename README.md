@@ -93,7 +93,7 @@ Local options:
 - SQL Server LocalDB (Windows default);
 - `FINOPSDESK_TEST_SQLSERVER` pointing at another SQL Server instance. That login must be allowed to create and drop temporary integration-test databases.
 
-CI uses a SQL Server 2022 service container.
+CI uses a SQL Server 2022 service container. Backend CI runs architecture, unit, and integration tests. The Chromium project is a separate job, `Chromium browser security`, in `.github/workflows/e2e-ci.yml`. It uses the same test SQL contract and creates its own `FinOpsDesk_E2E_<guid>` databases. Local setup, the development certificate boundary, and the Ubuntu run are documented in [docs/e2e-testing.md](docs/e2e-testing.md). The workflow does not make that job a required merge check. See [docs/adr/0022-chromium-e2e-pull-request-gate.md](docs/adr/0022-chromium-e2e-pull-request-gate.md).
 
 Run repository verification with:
 

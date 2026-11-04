@@ -1,0 +1,75 @@
+name: E2E CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  FINOPSDESK_TEST_SQLSERVER: Server=localhost,1433;User Id=sa;Password=FinOpsDesk_CI_TestOnly#2026;TrustServerCertificate=True;Encrypt=True
+
+jobs:
+  chromium:
+    name: Chromium browser security
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: FinOpsDesk_CI_TestOnly#2026
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "bash -c ':> /dev/tcp/127.0.0.1/1433' || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+          --health-start-period 20s
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci
+
+      - name: Ensure the ASP.NET Core HTTPS development certificate
+        run: dotnet dev-certs https
+
+      - name: Restore and build the E2E project
+        run: dotnet build tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj --configuration Release
+
+      - name: Install Playwright Chromium
+        run: pwsh tests/FinOpsDesk.E2ETests/bin/Release/net10.0/playwright.ps1 install chromium --with-deps
+
+      - name: Run the Chromium suite
+        run: dotnet test tests/FinOpsDesk.E2ETests/FinOpsDesk.E2ETests.csproj --configuration Release --no-build
