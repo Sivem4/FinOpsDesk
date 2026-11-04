@@ -8,7 +8,9 @@ using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Domain;
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
+using FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.Modules.Reconciliation.Domain.Matching;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
 using FinOpsDesk.SharedKernel.Tenancy;
 
@@ -271,9 +273,15 @@ public sealed class ConfirmMatchEndpointTests : IDisposable
             reference: "SECRET-INV");
         await SeedAsync(invoice, bankTransaction);
         using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(caller.Value));
+        Guid rejectedKey = Guid.NewGuid();
+        FinancialState before = await ReadFinancialStateAsync(
+            invoice.Id,
+            bankTransaction.Id,
+            owner,
+            caller);
 
         HttpResponseMessage response = await client.SendAsync(
-            ConfirmRequest(invoice.Id.Value, bankTransaction.Id.Value, Guid.NewGuid().ToString("D")));
+            ConfirmRequest(invoice.Id.Value, bankTransaction.Id.Value, rejectedKey.ToString("D")));
 
         string body = await AssertProblemAsync(
             response,
@@ -282,6 +290,163 @@ public sealed class ConfirmMatchEndpointTests : IDisposable
         Assert.DoesNotContain("SECRET-INV", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("88.5", body, StringComparison.Ordinal);
         Assert.DoesNotContain(owner.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(invoice.Id.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(bankTransaction.Id.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        FinancialState after = await ReadFinancialStateAsync(
+            invoice.Id,
+            bankTransaction.Id,
+            owner,
+            caller);
+        Assert.Equal(before, after);
+        Assert.Equal(0m, after.InvoiceAllocated);
+        Assert.Equal(88.5m, after.InvoiceOutstanding);
+        Assert.Equal(0m, after.BankAllocated);
+        Assert.Equal(88.5m, after.BankUnapplied);
+        Assert.Equal(0, after.Allocations);
+        Assert.Equal(0, after.Audits);
+        await AssertIdempotencyKeyAbsentAsync(rejectedKey);
+    }
+
+    [Theory]
+    [InlineData("foreign-invoice")]
+    [InlineData("foreign-bank")]
+    public async Task Mixed_cross_tenant_exact_pair_returns_404_and_leaves_both_organizations_unchanged(
+        string foreignSide)
+    {
+        bool foreignInvoice = foreignSide == "foreign-invoice";
+        OrganizationId caller = OrganizationId.New();
+        OrganizationId other = OrganizationId.New();
+        string reference = "MIX-" + Guid.NewGuid().ToString("N")[..8];
+        const decimal amount = 440.41m;
+        Invoice invoice = PersistenceTestData.CreateInvoice(
+            foreignInvoice ? other : caller,
+            amount,
+            reference);
+        BankTransaction bankTransaction = PersistenceTestData.CreateBankTransaction(
+            foreignInvoice ? caller : other,
+            amount,
+            reference: reference);
+        await SeedAsync(invoice, bankTransaction);
+        Assert.True(
+            ExactMatchConfirmation.TryDeriveAmount(
+                invoice.InvoiceNumber,
+                bankTransaction.Reference,
+                invoice.OutstandingAmount,
+                bankTransaction.UnappliedAmount).IsSuccess);
+        Guid rejectedKey = Guid.NewGuid();
+        FinancialState before = await ReadFinancialStateAsync(
+            invoice.Id,
+            bankTransaction.Id,
+            caller,
+            other);
+        using HttpClient client = _factory.CreateApiClient(TestAccessTokens.Create(caller.Value));
+
+        HttpResponseMessage response = await client.SendAsync(
+            ConfirmRequest(invoice.Id.Value, bankTransaction.Id.Value, rejectedKey.ToString("D")));
+
+        string body = await AssertProblemAsync(
+            response,
+            HttpStatusCode.NotFound,
+            foreignInvoice
+                ? ReconciliationApplicationErrors.InvoiceNotFound.Code
+                : ReconciliationApplicationErrors.BankTransactionNotFound.Code);
+        Guid foreignResourceId = foreignInvoice ? invoice.Id.Value : bankTransaction.Id.Value;
+        Assert.DoesNotContain(reference, body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("440.41", body, StringComparison.Ordinal);
+        Assert.DoesNotContain(other.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignResourceId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await ReadFinancialStateAsync(invoice.Id, bankTransaction.Id, caller, other));
+        Assert.Equal(0, before.Allocations);
+        Assert.Equal(0, before.Audits);
+        await AssertIdempotencyKeyAbsentAsync(rejectedKey);
+    }
+
+    [Fact]
+    public async Task Same_idempotency_key_confirms_a_separate_allocation_in_each_organization()
+    {
+        OrganizationId organizationA = OrganizationId.New();
+        OrganizationId organizationB = OrganizationId.New();
+        const decimal amountA = 111.11m;
+        const decimal amountB = 222.22m;
+        Invoice invoiceA = PersistenceTestData.CreateInvoice(organizationA, amountA, "ORG-A-ONLY");
+        BankTransaction bankA = PersistenceTestData.CreateBankTransaction(
+            organizationA,
+            amountA,
+            reference: "ORG-A-ONLY");
+        Invoice invoiceB = PersistenceTestData.CreateInvoice(organizationB, amountB, "ORG-B-ONLY");
+        BankTransaction bankB = PersistenceTestData.CreateBankTransaction(
+            organizationB,
+            amountB,
+            reference: "ORG-B-ONLY");
+        await SeedAsync(invoiceA, bankA, invoiceB, bankB);
+        Guid sharedKey = Guid.NewGuid();
+        using HttpClient clientA = _factory.CreateApiClient(TestAccessTokens.Create(organizationA.Value));
+        using HttpClient clientB = _factory.CreateApiClient(TestAccessTokens.Create(organizationB.Value));
+
+        HttpResponseMessage createdA = await clientA.SendAsync(
+            ConfirmRequest(invoiceA.Id.Value, bankA.Id.Value, sharedKey.ToString("D")));
+        HttpResponseMessage createdB = await clientB.SendAsync(
+            ConfirmRequest(invoiceB.Id.Value, bankB.Id.Value, sharedKey.ToString("D")));
+        ConfirmedBody firstA = await ReadConfirmedAsync(createdA, HttpStatusCode.Created, replayed: false);
+        ConfirmedBody firstB = await ReadConfirmedAsync(createdB, HttpStatusCode.Created, replayed: false);
+        Assert.NotEqual(firstA.AllocationId, firstB.AllocationId);
+        Assert.Equal(invoiceA.Id.Value, firstA.InvoiceId);
+        Assert.Equal(bankA.Id.Value, firstA.BankTransactionId);
+        Assert.Equal(amountA, firstA.Amount);
+        Assert.Equal(invoiceB.Id.Value, firstB.InvoiceId);
+        Assert.Equal(bankB.Id.Value, firstB.BankTransactionId);
+        Assert.Equal(amountB, firstB.Amount);
+        AssertOwnConfirmation(firstA.Body, invoiceA.Id.Value, bankA.Id.Value, invoiceB.Id.Value, bankB.Id.Value, organizationB, "222.22");
+        AssertOwnConfirmation(firstB.Body, invoiceB.Id.Value, bankB.Id.Value, invoiceA.Id.Value, bankA.Id.Value, organizationA, "111.11");
+        await AssertConfirmedOrganizationAsync(
+            organizationA,
+            firstA.AllocationId,
+            invoiceA.Id,
+            bankA.Id,
+            sharedKey,
+            amountA,
+            "test-user");
+        await AssertConfirmedOrganizationAsync(
+            organizationB,
+            firstB.AllocationId,
+            invoiceB.Id,
+            bankB.Id,
+            sharedKey,
+            amountB,
+            "test-user");
+
+        HttpResponseMessage replayedA = await clientA.SendAsync(
+            ConfirmRequest(invoiceA.Id.Value, bankA.Id.Value, sharedKey.ToString("D")));
+        HttpResponseMessage replayedB = await clientB.SendAsync(
+            ConfirmRequest(invoiceB.Id.Value, bankB.Id.Value, sharedKey.ToString("D")));
+        ConfirmedBody secondA = await ReadConfirmedAsync(replayedA, HttpStatusCode.OK, replayed: true);
+        ConfirmedBody secondB = await ReadConfirmedAsync(replayedB, HttpStatusCode.OK, replayed: true);
+        Assert.Equal(firstA.AllocationId, secondA.AllocationId);
+        Assert.Equal(firstA.InvoiceId, secondA.InvoiceId);
+        Assert.Equal(firstA.BankTransactionId, secondA.BankTransactionId);
+        Assert.Equal(firstA.Amount, secondA.Amount);
+        Assert.Equal(firstB.AllocationId, secondB.AllocationId);
+        Assert.Equal(firstB.InvoiceId, secondB.InvoiceId);
+        Assert.Equal(firstB.BankTransactionId, secondB.BankTransactionId);
+        Assert.Equal(firstB.Amount, secondB.Amount);
+        AssertOwnConfirmation(secondA.Body, invoiceA.Id.Value, bankA.Id.Value, invoiceB.Id.Value, bankB.Id.Value, organizationB, "222.22");
+        AssertOwnConfirmation(secondB.Body, invoiceB.Id.Value, bankB.Id.Value, invoiceA.Id.Value, bankA.Id.Value, organizationA, "111.11");
+        await AssertConfirmedOrganizationAsync(
+            organizationA,
+            firstA.AllocationId,
+            invoiceA.Id,
+            bankA.Id,
+            sharedKey,
+            amountA,
+            "test-user");
+        await AssertConfirmedOrganizationAsync(
+            organizationB,
+            firstB.AllocationId,
+            invoiceB.Id,
+            bankB.Id,
+            sharedKey,
+            amountB,
+            "test-user");
     }
 
     [Fact]
@@ -484,6 +649,130 @@ public sealed class ConfirmMatchEndpointTests : IDisposable
         string json = await response.Content.ReadAsStringAsync();
         return JsonDocument.Parse(json);
     }
+
+    private async Task<FinancialState> ReadFinancialStateAsync(
+        InvoiceId invoiceId,
+        BankTransactionId bankTransactionId,
+        OrganizationId firstOrganization,
+        OrganizationId secondOrganization)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Invoice invoice = await context.Invoices.SingleAsync(candidate => candidate.Id == invoiceId);
+        BankTransaction bankTransaction = await context.BankTransactions.SingleAsync(
+            candidate => candidate.Id == bankTransactionId);
+        int allocations = await context.Allocations.CountAsync(allocation =>
+            allocation.OrganizationId == firstOrganization
+            || allocation.OrganizationId == secondOrganization);
+        int audits = await context.FinancialAuditEntries.CountAsync(entry =>
+            entry.OrganizationId == firstOrganization
+            || entry.OrganizationId == secondOrganization);
+        return new FinancialState(
+            invoice.AllocatedAmount.Amount,
+            invoice.OutstandingAmount.Amount,
+            bankTransaction.AllocatedAmount.Amount,
+            bankTransaction.UnappliedAmount.Amount,
+            allocations,
+            audits);
+    }
+
+    private async Task AssertIdempotencyKeyAbsentAsync(Guid key)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Assert.False(await context.Allocations.AnyAsync(allocation => allocation.IdempotencyKey == key));
+        Assert.False(await context.FinancialAuditEntries.AnyAsync(entry => entry.IdempotencyKey == key));
+    }
+
+    private async Task AssertConfirmedOrganizationAsync(
+        OrganizationId organizationId,
+        Guid allocationId,
+        InvoiceId invoiceId,
+        BankTransactionId bankTransactionId,
+        Guid idempotencyKey,
+        decimal amount,
+        string actorId)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Allocation allocation = await context.Allocations.SingleAsync(
+            candidate => candidate.Id == new AllocationId(allocationId));
+        Invoice invoice = await context.Invoices.SingleAsync(candidate => candidate.Id == invoiceId);
+        BankTransaction bankTransaction = await context.BankTransactions.SingleAsync(
+            candidate => candidate.Id == bankTransactionId);
+        FinancialAuditEntry audit = await context.FinancialAuditEntries.SingleAsync(
+            entry => entry.AllocationId == allocation.Id);
+        Assert.Equal(organizationId, allocation.OrganizationId);
+        Assert.Equal(invoiceId, allocation.InvoiceId);
+        Assert.Equal(bankTransactionId, allocation.BankTransactionId);
+        Assert.Equal(idempotencyKey, allocation.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.ExactMatch, allocation.IdempotencyOperation);
+        Assert.Equal(AllocationStatus.Confirmed, allocation.Status);
+        Assert.Equal(amount, allocation.Amount.Amount);
+        Assert.Equal(amount, invoice.AllocatedAmount.Amount);
+        Assert.Equal(0m, invoice.OutstandingAmount.Amount);
+        Assert.Equal(amount, bankTransaction.AllocatedAmount.Amount);
+        Assert.Equal(0m, bankTransaction.UnappliedAmount.Amount);
+        Assert.Equal(1, await context.Allocations.CountAsync(
+            candidate => candidate.OrganizationId == organizationId));
+        Assert.Equal(organizationId, audit.OrganizationId);
+        Assert.Equal(FinancialAuditAction.Confirmation, audit.Action);
+        Assert.Equal(actorId, audit.ActorId);
+        Assert.Equal(amount, audit.Amount.Amount);
+        Assert.Equal(idempotencyKey, audit.IdempotencyKey);
+        Assert.Equal(invoiceId, audit.InvoiceId);
+        Assert.Equal(bankTransactionId, audit.BankTransactionId);
+        Assert.Equal(1, await context.FinancialAuditEntries.CountAsync(
+            entry => entry.OrganizationId == organizationId));
+    }
+
+    private static async Task<ConfirmedBody> ReadConfirmedAsync(
+        HttpResponseMessage response,
+        HttpStatusCode statusCode,
+        bool replayed)
+    {
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == statusCode, body);
+        using JsonDocument document = JsonDocument.Parse(body);
+        JsonElement root = document.RootElement;
+        Assert.Equal(replayed, root.GetProperty("replayed").GetBoolean());
+        Assert.False(root.TryGetProperty("organizationId", out _));
+        return new ConfirmedBody(
+            root.GetProperty("allocationId").GetGuid(),
+            root.GetProperty("invoiceId").GetGuid(),
+            root.GetProperty("bankTransactionId").GetGuid(),
+            root.GetProperty("amount").GetProperty("amount").GetDecimal(),
+            body);
+    }
+
+    private static void AssertOwnConfirmation(
+        string body,
+        Guid ownInvoiceId,
+        Guid ownBankTransactionId,
+        Guid foreignInvoiceId,
+        Guid foreignBankTransactionId,
+        OrganizationId foreignOrganization,
+        string foreignAmount)
+    {
+        Assert.Contains(ownInvoiceId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(ownBankTransactionId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignInvoiceId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignBankTransactionId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignOrganization.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignAmount, body, StringComparison.Ordinal);
+    }
+
+    private sealed record FinancialState(
+        decimal InvoiceAllocated,
+        decimal InvoiceOutstanding,
+        decimal BankAllocated,
+        decimal BankUnapplied,
+        int Allocations,
+        int Audits);
+
+    private sealed record ConfirmedBody(
+        Guid AllocationId,
+        Guid InvoiceId,
+        Guid BankTransactionId,
+        decimal Amount,
+        string Body);
 
     private sealed class ConflictApiFactory : FinOpsDeskApiFactory
     {

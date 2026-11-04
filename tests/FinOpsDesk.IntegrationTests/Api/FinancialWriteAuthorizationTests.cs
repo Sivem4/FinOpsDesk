@@ -20,6 +20,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.Data.SqlClient;
@@ -168,6 +169,116 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         HttpResponseMessage imported = await host.Client.SendAsync(Import(host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, imported.StatusCode);
         Assert.Equal(0, await host.CountImportBatchesAsync(south.OrganizationId));
+    }
+
+    [Fact]
+    public async Task Operator_cookie_allocation_rejects_a_foreign_invoice_without_writing()
+    {
+        // Same-organization explicit allocation is covered by
+        // Permitted_cookie_writes_commit_allocation_import_review_and_batch_effects.
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair home = await host.SeedPairAsync("cookie-home");
+        Guid membership = await host.MembershipIdAsync(user.Id, home.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.Operator);
+        await host.SelectAsync(home.OrganizationId);
+        OrganizationId foreignOrganization = OrganizationId.New();
+        Invoice foreignInvoice = PersistenceTestData.CreateInvoice(foreignOrganization, 73.41m, "COOKIE-FOREIGN-INVOICE");
+        BankTransaction homeBank = PersistenceTestData.CreateBankTransaction(
+            new OrganizationId(home.OrganizationId),
+            25m,
+            reference: "COOKIE-FOREIGN-INVOICE");
+        await using (ReconciliationDbContext seed = _fixture.CreateContext())
+        {
+            seed.AddRange(foreignInvoice, homeBank);
+            await seed.SaveChangesAsync();
+        }
+
+        Guid rejectedKey = Guid.NewGuid();
+        CookieResourceState before = await ReadCookieResourceStateAsync(
+            foreignInvoice.Id,
+            homeBank.Id,
+            home.OrganizationId,
+            foreignOrganization.Value);
+        HttpResponseMessage response = await host.SendAsync(Allocate(
+            foreignInvoice.Id.Value,
+            homeBank.Id.Value,
+            10.00m,
+            rejectedKey));
+
+        string body = await ReadProblemAsync(
+            response,
+            HttpStatusCode.NotFound,
+            ReconciliationApplicationErrors.InvoiceNotFound.Code);
+        Assert.DoesNotContain("COOKIE-FOREIGN-INVOICE", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignOrganization.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignInvoice.Id.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("73.41", body, StringComparison.Ordinal);
+        Assert.Equal(
+            before,
+            await ReadCookieResourceStateAsync(
+                foreignInvoice.Id,
+                homeBank.Id,
+                home.OrganizationId,
+                foreignOrganization.Value));
+        Assert.Equal(0m, before.InvoiceAllocated);
+        Assert.Equal(73.41m, before.InvoiceOutstanding);
+        Assert.Equal(0m, before.BankAllocated);
+        Assert.Equal(25m, before.BankUnapplied);
+        Assert.Equal(0, before.Allocations);
+        Assert.Equal(0, before.Audits);
+        await AssertRejectedKeyAbsentAsync(rejectedKey);
+    }
+
+    [Fact]
+    public async Task Reversal_approver_cookie_reversal_rejects_a_foreign_allocation_without_writing()
+    {
+        // Same-organization reversal is covered by
+        // Write_matrix_follows_the_role_and_stays_inside_the_organization.
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Pair home = await host.SeedPairAsync("cookie-reversal-home");
+        Pair foreign = await host.SeedPairAsync("cookie-reversal-foreign", amount: 62.35m);
+        Guid membership = await host.MembershipIdAsync(user.Id, home.OrganizationId);
+        await host.GrantAsync(membership, OrganizationRole.ReversalApprover);
+        await host.SelectAsync(home.OrganizationId);
+        Allocation foreignAllocation = await host.SeedAllocationAsync(foreign, 62.35m);
+        Guid rejectedKey = Guid.NewGuid();
+        CookieReversalState before = await ReadCookieReversalStateAsync(foreignAllocation.Id.Value);
+        HomePairState homeBefore = await ReadHomePairStateAsync(home);
+        Assert.Equal(0m, homeBefore.InvoiceAllocated);
+        Assert.Equal(25m, homeBefore.InvoiceOutstanding);
+        Assert.Equal(0m, homeBefore.BankAllocated);
+        Assert.Equal(25m, homeBefore.BankUnapplied);
+        Assert.Equal(0, homeBefore.Allocations);
+        Assert.Equal(0, homeBefore.Audits);
+
+        HttpResponseMessage response = await host.SendAsync(
+            Reverse(foreignAllocation.Id.Value, "customer returned the payment", rejectedKey, host.Csrf));
+
+        string body = await ReadProblemAsync(
+            response,
+            HttpStatusCode.NotFound,
+            ReconciliationApplicationErrors.AllocationNotFound.Code);
+        Assert.DoesNotContain(foreign.OrganizationId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("cookie-reversal-foreign", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreignAllocation.Id.Value.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreign.InvoiceId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(foreign.BankTransactionId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("62.35", body, StringComparison.Ordinal);
+        CookieReversalState after = await ReadCookieReversalStateAsync(foreignAllocation.Id.Value);
+        Assert.Equal(homeBefore, await ReadHomePairStateAsync(home));
+        Assert.Equal(before, after);
+        Assert.Equal(AllocationStatus.Confirmed, after.Status);
+        Assert.NotNull(after.ConfirmationKey);
+        Assert.Null(after.ReversalKey);
+        Assert.Null(after.ReversedAt);
+        Assert.Null(after.ReversalReason);
+        Assert.Equal(62.35m, after.InvoiceAllocated);
+        Assert.Equal(0m, after.InvoiceOutstanding);
+        Assert.Equal(0, after.Audits);
+        Assert.Equal(0, await host.CountAllocationsAsync(home.OrganizationId));
+        await AssertRejectedKeyAbsentAsync(rejectedKey);
     }
 
     [Fact]
@@ -753,6 +864,130 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Equal(status, response.StatusCode);
     }
 
+    private async Task<CookieResourceState> ReadCookieResourceStateAsync(
+        InvoiceId invoiceId,
+        BankTransactionId bankTransactionId,
+        Guid homeOrganizationId,
+        Guid foreignOrganizationId)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Invoice invoice = await context.Invoices.SingleAsync(candidate => candidate.Id == invoiceId);
+        BankTransaction bankTransaction = await context.BankTransactions.SingleAsync(
+            candidate => candidate.Id == bankTransactionId);
+        OrganizationId home = new(homeOrganizationId);
+        OrganizationId foreign = new(foreignOrganizationId);
+        int allocations = await context.Allocations.CountAsync(allocation =>
+            allocation.OrganizationId == home || allocation.OrganizationId == foreign);
+        int audits = await context.FinancialAuditEntries.CountAsync(entry =>
+            entry.OrganizationId == home || entry.OrganizationId == foreign);
+        return new CookieResourceState(
+            invoice.AllocatedAmount.Amount,
+            invoice.OutstandingAmount.Amount,
+            bankTransaction.AllocatedAmount.Amount,
+            bankTransaction.UnappliedAmount.Amount,
+            allocations,
+            audits);
+    }
+
+    private async Task<HomePairState> ReadHomePairStateAsync(Pair pair)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        OrganizationId organizationId = new(pair.OrganizationId);
+        Invoice invoice = await context.Invoices.SingleAsync(
+            candidate => candidate.Id == new InvoiceId(pair.InvoiceId));
+        BankTransaction bankTransaction = await context.BankTransactions.SingleAsync(
+            candidate => candidate.Id == new BankTransactionId(pair.BankTransactionId));
+        int allocations = await context.Allocations.CountAsync(
+            allocation => allocation.OrganizationId == organizationId);
+        int audits = await context.FinancialAuditEntries.CountAsync(
+            entry => entry.OrganizationId == organizationId);
+        return new HomePairState(
+            invoice.AllocatedAmount.Amount,
+            invoice.OutstandingAmount.Amount,
+            bankTransaction.AllocatedAmount.Amount,
+            bankTransaction.UnappliedAmount.Amount,
+            allocations,
+            audits);
+    }
+
+    private async Task<CookieReversalState> ReadCookieReversalStateAsync(Guid allocationId)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Allocation allocation = await context.Allocations.SingleAsync(
+            candidate => candidate.Id == new AllocationId(allocationId));
+        Invoice invoice = await context.Invoices.SingleAsync(candidate => candidate.Id == allocation.InvoiceId);
+        BankTransaction bankTransaction = await context.BankTransactions.SingleAsync(
+            candidate => candidate.Id == allocation.BankTransactionId);
+        int audits = await context.FinancialAuditEntries.CountAsync(entry => entry.AllocationId == allocation.Id);
+        return new CookieReversalState(
+            allocation.Status,
+            allocation.ConfirmedAt,
+            allocation.IdempotencyKey,
+            allocation.ReversedAt,
+            allocation.ReversalReason,
+            context.Entry(allocation)
+                .Property<Guid?>(AllocationConfiguration.ReversalIdempotencyKeyPropertyName)
+                .CurrentValue,
+            invoice.AllocatedAmount.Amount,
+            invoice.OutstandingAmount.Amount,
+            bankTransaction.AllocatedAmount.Amount,
+            bankTransaction.UnappliedAmount.Amount,
+            audits);
+    }
+
+    private async Task AssertRejectedKeyAbsentAsync(Guid key)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Assert.False(await context.Allocations.AnyAsync(allocation => allocation.IdempotencyKey == key));
+        Assert.False(await context.Allocations.AnyAsync(allocation =>
+            EF.Property<Guid?>(allocation, AllocationConfiguration.ReversalIdempotencyKeyPropertyName) == key));
+        Assert.False(await context.FinancialAuditEntries.AnyAsync(entry => entry.IdempotencyKey == key));
+    }
+
+    private static async Task<string> ReadProblemAsync(
+        HttpResponseMessage response,
+        HttpStatusCode statusCode,
+        string code)
+    {
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.True(
+            response.StatusCode == statusCode,
+            "Expected " + (int)statusCode + " but got " + (int)response.StatusCode + ". Body: " + body);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        using JsonDocument document = JsonDocument.Parse(body);
+        Assert.Equal(code, document.RootElement.GetProperty("code").GetString());
+        return body;
+    }
+
+    private sealed record CookieResourceState(
+        decimal InvoiceAllocated,
+        decimal InvoiceOutstanding,
+        decimal BankAllocated,
+        decimal BankUnapplied,
+        int Allocations,
+        int Audits);
+
+    private sealed record HomePairState(
+        decimal InvoiceAllocated,
+        decimal InvoiceOutstanding,
+        decimal BankAllocated,
+        decimal BankUnapplied,
+        int Allocations,
+        int Audits);
+
+    private sealed record CookieReversalState(
+        AllocationStatus Status,
+        DateTimeOffset ConfirmedAt,
+        Guid? ConfirmationKey,
+        DateTimeOffset? ReversedAt,
+        string? ReversalReason,
+        Guid? ReversalKey,
+        decimal InvoiceAllocated,
+        decimal InvoiceOutstanding,
+        decimal BankAllocated,
+        decimal BankUnapplied,
+        int Audits);
+
     private static async Task AssertEveryWriteForbiddenAsync(Host host, Pair pair)
     {
         string allocationId = Guid.NewGuid().ToString("D");
@@ -804,6 +1039,22 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
         }
 
+        return request;
+    }
+
+    private static HttpRequestMessage Allocate(Guid invoiceId, Guid bankTransactionId, decimal amount, Guid key)
+    {
+        HttpRequestMessage request = new(HttpMethod.Post, "/api/allocations")
+        {
+            Content = new StringContent(
+                "{\"invoiceId\":\"" + invoiceId.ToString("D")
+                    + "\",\"bankTransactionId\":\"" + bankTransactionId.ToString("D")
+                    + "\",\"amount\":{\"amount\":" + amount.ToString("0.00", CultureInfo.InvariantCulture)
+                    + ",\"currency\":\"PLN\"}}",
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", key.ToString("D"));
         return request;
     }
 
@@ -1348,7 +1599,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             Csrf = await ReadCsrfAsync();
         }
 
-        public async Task<Pair> SeedPairAsync(string name, Guid? organizationId = null)
+        public async Task<Pair> SeedPairAsync(string name, Guid? organizationId = null, decimal amount = 25m)
         {
             Guid tenantId = organizationId ?? await CreateOrganizationAsync();
             if (organizationId is null)
@@ -1359,11 +1610,11 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
 
             OrganizationId tenant = new(tenantId);
             string reference = name;
-            Invoice invoice = new(InvoiceId.New(), tenant, reference, new Money(25m, PersistenceTestData.Pln));
+            Invoice invoice = new(InvoiceId.New(), tenant, reference, new Money(amount, PersistenceTestData.Pln));
             BankTransaction bank = new(
                 BankTransactionId.New(),
                 tenant,
-                new Money(25m, PersistenceTestData.Pln),
+                new Money(amount, PersistenceTestData.Pln),
                 new DateOnly(2026, 11, 2),
                 reference);
             await using ReconciliationDbContext context = _test._fixture.CreateContext();
@@ -1373,7 +1624,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             return new Pair(tenantId, invoice.Id.Value, bank.Id.Value, Guid.Empty);
         }
 
-        public async Task<Allocation> SeedAllocationAsync(Pair pair)
+        public async Task<Allocation> SeedAllocationAsync(Pair pair, decimal amount = 25m)
         {
             OrganizationId tenant = new(pair.OrganizationId);
             Invoice? invoice = null;
@@ -1381,14 +1632,14 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             await using ReconciliationDbContext context = _test._fixture.CreateContext();
             invoice = await context.Invoices.SingleAsync(candidate => candidate.Id == new InvoiceId(pair.InvoiceId));
             bank = await context.BankTransactions.SingleAsync(candidate => candidate.Id == new BankTransactionId(pair.BankTransactionId));
-            Money amount = new(25m, PersistenceTestData.Pln);
-            Assert.True(AllocationConfirmation.Apply(invoice, bank, amount).IsSuccess);
+            Money money = new(amount, PersistenceTestData.Pln);
+            Assert.True(AllocationConfirmation.Apply(invoice, bank, money).IsSuccess);
             Allocation allocation = new(
                 AllocationId.New(),
                 tenant,
                 invoice.Id,
                 bank.Id,
-                amount,
+                money,
                 DateTimeOffset.UtcNow,
                 Guid.NewGuid(),
                 AllocationIdempotencyOperation.ExplicitAmount);

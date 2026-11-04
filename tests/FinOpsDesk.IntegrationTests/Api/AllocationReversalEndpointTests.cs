@@ -10,6 +10,7 @@ using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
+using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configurations;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.EntityFrameworkCore;
@@ -201,6 +202,58 @@ public sealed class AllocationReversalEndpointTests : IDisposable
             foreignDocument.RootElement.GetProperty("detail").GetString());
         Assert.DoesNotContain("FOREIGN-ONLY-991", foreignBody, StringComparison.Ordinal);
         Assert.Equal(77m, await AllocatedAsync(allocationId));
+    }
+
+    [Fact]
+    public async Task Same_reversal_key_reverses_a_separate_allocation_in_each_organization()
+    {
+        OrganizationId organizationA = OrganizationId.New();
+        OrganizationId organizationB = OrganizationId.New();
+        const decimal amountA = 41.15m;
+        const decimal amountB = 62.35m;
+        AllocationId allocationA = await SeedAllocationAsync(organizationA, amountA, "REV-A-ONLY");
+        AllocationId allocationB = await SeedAllocationAsync(organizationB, amountB, "REV-B-ONLY");
+        ReversalState beforeA = await ReadReversalStateAsync(allocationA);
+        ReversalState beforeB = await ReadReversalStateAsync(allocationB);
+        Assert.Equal(AllocationStatus.Confirmed, beforeA.Status);
+        Assert.Equal(AllocationStatus.Confirmed, beforeB.Status);
+        Assert.Null(beforeA.ReversalKey);
+        Assert.Null(beforeB.ReversalKey);
+        Guid sharedKey = Guid.NewGuid();
+        using HttpClient clientA = Client(organizationA, "operator-a");
+        using HttpClient clientB = Client(organizationB, "operator-b");
+
+        HttpResponseMessage reversedA = await clientA.SendAsync(
+            ReverseRequest(allocationA.Value, "customer refund", sharedKey, spoof: false));
+        HttpResponseMessage reversedB = await clientB.SendAsync(
+            ReverseRequest(allocationB.Value, "customer refund", sharedKey, spoof: false));
+        ReversedBody firstA = await ReadReversedAsync(reversedA, replayed: false);
+        ReversedBody firstB = await ReadReversedAsync(reversedB, replayed: false);
+        Assert.Equal(allocationA.Value, firstA.AllocationId);
+        Assert.Equal(amountA, firstA.Amount);
+        Assert.Equal(allocationB.Value, firstB.AllocationId);
+        Assert.Equal(amountB, firstB.Amount);
+        Assert.DoesNotContain(allocationB.Value.ToString(), firstA.Body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("62.35", firstA.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain(organizationB.Value.ToString(), firstA.Body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(allocationA.Value.ToString(), firstB.Body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("41.15", firstB.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain(organizationA.Value.ToString(), firstB.Body, StringComparison.OrdinalIgnoreCase);
+        await AssertReversedOrganizationAsync(allocationA, organizationA, sharedKey, amountA, "operator-a", beforeA);
+        await AssertReversedOrganizationAsync(allocationB, organizationB, sharedKey, amountB, "operator-b", beforeB);
+
+        HttpResponseMessage replayedA = await clientA.SendAsync(
+            ReverseRequest(allocationA.Value, "customer refund", sharedKey, spoof: false));
+        HttpResponseMessage replayedB = await clientB.SendAsync(
+            ReverseRequest(allocationB.Value, "customer refund", sharedKey, spoof: false));
+        ReversedBody secondA = await ReadReversedAsync(replayedA, replayed: true);
+        ReversedBody secondB = await ReadReversedAsync(replayedB, replayed: true);
+        Assert.Equal(firstA.AllocationId, secondA.AllocationId);
+        Assert.Equal(firstA.Amount, secondA.Amount);
+        Assert.Equal(firstB.AllocationId, secondB.AllocationId);
+        Assert.Equal(firstB.Amount, secondB.Amount);
+        await AssertReversedOrganizationAsync(allocationA, organizationA, sharedKey, amountA, "operator-a", beforeA);
+        await AssertReversedOrganizationAsync(allocationB, organizationB, sharedKey, amountB, "operator-b", beforeB);
     }
 
     [Theory]
@@ -436,6 +489,102 @@ public sealed class AllocationReversalEndpointTests : IDisposable
         await context.SaveChangesAsync();
         return allocation.Id;
     }
+
+    private async Task<ReversalState> ReadReversalStateAsync(AllocationId allocationId)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        Allocation allocation = await context.Allocations.SingleAsync(candidate => candidate.Id == allocationId);
+        Invoice invoice = await context.Invoices.SingleAsync(candidate => candidate.Id == allocation.InvoiceId);
+        BankTransaction bankTransaction = await context.BankTransactions.SingleAsync(
+            candidate => candidate.Id == allocation.BankTransactionId);
+        int confirmationAudits = await context.FinancialAuditEntries.CountAsync(entry =>
+            entry.AllocationId == allocationId && entry.Action == FinancialAuditAction.Confirmation);
+        int reversalAudits = await context.FinancialAuditEntries.CountAsync(entry =>
+            entry.AllocationId == allocationId && entry.Action == FinancialAuditAction.Reversal);
+        return new ReversalState(
+            allocation.Status,
+            allocation.ConfirmedAt,
+            allocation.IdempotencyKey,
+            allocation.Amount.Amount,
+            allocation.ReversedAt,
+            allocation.ReversalReason,
+            context.Entry(allocation)
+                .Property<Guid?>(AllocationConfiguration.ReversalIdempotencyKeyPropertyName)
+                .CurrentValue,
+            invoice.AllocatedAmount.Amount,
+            invoice.OutstandingAmount.Amount,
+            bankTransaction.AllocatedAmount.Amount,
+            bankTransaction.UnappliedAmount.Amount,
+            confirmationAudits,
+            reversalAudits);
+    }
+
+    private async Task AssertReversedOrganizationAsync(
+        AllocationId allocationId,
+        OrganizationId organizationId,
+        Guid reversalKey,
+        decimal amount,
+        string actorId,
+        ReversalState before)
+    {
+        ReversalState after = await ReadReversalStateAsync(allocationId);
+        Assert.Equal(AllocationStatus.Reversed, after.Status);
+        Assert.Equal(before.ConfirmedAt, after.ConfirmedAt);
+        Assert.Equal(before.ConfirmationKey, after.ConfirmationKey);
+        Assert.Equal(amount, after.Amount);
+        Assert.Equal("customer refund", after.ReversalReason);
+        Assert.NotNull(after.ReversedAt);
+        Assert.Equal(reversalKey, after.ReversalKey);
+        Assert.Equal(0m, after.InvoiceAllocated);
+        Assert.Equal(amount, after.InvoiceOutstanding);
+        Assert.Equal(0m, after.BankAllocated);
+        Assert.Equal(amount, after.BankUnapplied);
+        Assert.Equal(before.ConfirmationAudits, after.ConfirmationAudits);
+        Assert.Equal(1, after.ReversalAudits);
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        FinancialAuditEntry audit = await context.FinancialAuditEntries.SingleAsync(entry =>
+            entry.AllocationId == allocationId && entry.Action == FinancialAuditAction.Reversal);
+        Assert.Equal(organizationId, audit.OrganizationId);
+        Assert.Equal(actorId, audit.ActorId);
+        Assert.Equal(amount, audit.Amount.Amount);
+        Assert.Equal(reversalKey, audit.IdempotencyKey);
+        Assert.Equal(AllocationIdempotencyOperation.Reversal, audit.IdempotencyOperation);
+        Assert.Equal(1, await context.Allocations.CountAsync(
+            candidate => candidate.OrganizationId == organizationId));
+    }
+
+    private static async Task<ReversedBody> ReadReversedAsync(HttpResponseMessage response, bool replayed)
+    {
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        using JsonDocument document = JsonDocument.Parse(body);
+        JsonElement root = document.RootElement;
+        Assert.Equal("reversed", root.GetProperty("status").GetString());
+        Assert.Equal("customer refund", root.GetProperty("reason").GetString());
+        Assert.Equal(replayed, root.GetProperty("replayed").GetBoolean());
+        Assert.False(root.TryGetProperty("organizationId", out _));
+        return new ReversedBody(
+            root.GetProperty("allocationId").GetGuid(),
+            root.GetProperty("amount").GetProperty("amount").GetDecimal(),
+            body);
+    }
+
+    private sealed record ReversalState(
+        AllocationStatus Status,
+        DateTimeOffset ConfirmedAt,
+        Guid? ConfirmationKey,
+        decimal Amount,
+        DateTimeOffset? ReversedAt,
+        string? ReversalReason,
+        Guid? ReversalKey,
+        decimal InvoiceAllocated,
+        decimal InvoiceOutstanding,
+        decimal BankAllocated,
+        decimal BankUnapplied,
+        int ConfirmationAudits,
+        int ReversalAudits);
+
+    private sealed record ReversedBody(Guid AllocationId, decimal Amount, string Body);
 
     private async Task<decimal> AllocatedAsync(AllocationId allocationId)
     {
