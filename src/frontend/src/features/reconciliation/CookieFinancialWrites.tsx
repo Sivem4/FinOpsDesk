@@ -1,7 +1,7 @@
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField } from '@mui/material';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { parse } from 'lossless-json';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 
 import {
   cookieRevokedMessage,
@@ -24,11 +24,28 @@ import { useSession } from '../../shared/auth/session';
 import { readMoney, serializeAllocationBody, type DecimalString } from '../../shared/money/money';
 import type { ExactMatchItem } from './reconciliation-api';
 
+const confirmedStaleMessage = 'The financial operation was confirmed, but the displayed data could not be refreshed. The lists may be outdated.';
+
 type Notice =
-  | { kind: 'success'; text: string; origin: CookieSecurityOrigin }
-  | { kind: 'rejected'; text: string; origin: CookieSecurityOrigin }
-  | { kind: 'uncertain'; text: string; origin: CookieSecurityOrigin }
-  | { kind: 'blocked'; text: string };
+  | { kind: 'success'; text: string; origin: CookieSecurityOrigin; generation: number }
+  | { kind: 'rejected'; text: string; origin: CookieSecurityOrigin; generation: number }
+  | { kind: 'uncertain'; text: string; origin: CookieSecurityOrigin; generation: number }
+  | {
+    kind: 'confirmed-stale';
+    text: string;
+    successText: string;
+    origin: CookieSecurityOrigin;
+    queryKeys: readonly QueryKey[];
+    refreshing: boolean;
+    generation: number;
+  }
+  | { kind: 'blocked'; text: string; generation: number };
+
+type RefreshLifecycle = { generation: number; manual: boolean };
+
+const ReversalOutcomeContext = createContext<((result: CookieDispatchResult) => void) | null>(null);
+
+type RefreshOutcome = 'refreshed' | 'failed' | 'ignored';
 
 export function CookieConfirmationControls({
   item,
@@ -62,6 +79,7 @@ export function CookieConfirmationDialog({
   const recovery = readRecovery('ConfirmExactMatch', session);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState(false);
+  const refreshLifecycle = useRef<RefreshLifecycle>({ generation: 0, manual: false });
   const allowed = session.capabilities.includes('reconciliation.confirm');
   useIdentityReset(setNotice, () => onClose());
 
@@ -76,10 +94,7 @@ export function CookieConfirmationDialog({
       const result = 'idempotencyKey' in record
         ? await retryCookieFinancialMutation('ConfirmExactMatch', session.signal)
         : await runCookieFinancialMutation({ ...record, signal: session.signal });
-      applyResult(result, setNotice, async (origin) => {
-        await queryClient.invalidateQueries({ queryKey: ['matches', origin.epoch, origin.readiness] });
-        await queryClient.invalidateQueries({ queryKey: ['allocations', 'history', origin.epoch, origin.readiness] });
-      }, 'Allocation recorded.');
+      applyResult(result, setNotice, queryClient, refreshLifecycle, 'Allocation recorded.');
     } finally {
       setPending(false);
     }
@@ -94,7 +109,7 @@ export function CookieConfirmationDialog({
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             {item ? <span>{`Invoice ${item.invoiceId} and bank transaction ${item.bankTransactionId}`}</span> : null}
-            <VisibleNotice notice={notice} />
+            <VisibleNotice notice={notice} onRefresh={() => retryConfirmedRefresh(notice, setNotice, queryClient, refreshLifecycle)} />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -134,6 +149,7 @@ export function CookieAllocationForm() {
   const [amount, setAmount] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState(false);
+  const refreshLifecycle = useRef<RefreshLifecycle>({ generation: 0, manual: false });
   const allowed = session.capabilities.includes('allocations.create');
   useIdentityReset(setNotice, () => {
     setInvoiceId('');
@@ -171,11 +187,10 @@ export function CookieAllocationForm() {
           signal: session.signal,
         });
       }
-      applyResult(result, setNotice, async (origin) => {
-        await queryClient.invalidateQueries({ queryKey: ['allocations', 'history', origin.epoch, origin.readiness] });
-      }, 'Allocation recorded.');
+      applyResult(result, setNotice, queryClient, refreshLifecycle, 'Allocation recorded.');
     } catch {
-      setNotice({ kind: 'blocked', text: 'The financial request was not sent.' });
+      refreshLifecycle.current.generation += 1;
+      setNotice({ kind: 'blocked', text: 'The financial request was not sent.', generation: refreshLifecycle.current.generation });
     } finally {
       setPending(false);
     }
@@ -195,21 +210,40 @@ export function CookieAllocationForm() {
           </Button>
         </Stack>
       ) : null}
-      <VisibleNotice notice={notice} />
+      <VisibleNotice notice={notice} onRefresh={() => retryConfirmedRefresh(notice, setNotice, queryClient, refreshLifecycle)} />
     </Stack>
+  );
+}
+
+export function CookieReversalOutcome({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const refreshLifecycle = useRef<RefreshLifecycle>({ generation: 0, manual: false });
+  const report = useCallback((result: CookieDispatchResult) => {
+    applyResult(result, setNotice, queryClient, refreshLifecycle, 'Reversal recorded.');
+  }, [queryClient]);
+  useIdentityReset(setNotice, () => undefined);
+
+  return (
+    <ReversalOutcomeContext.Provider value={report}>
+      <VisibleNotice notice={notice} onRefresh={() => retryConfirmedRefresh(notice, setNotice, queryClient, refreshLifecycle)} />
+      {children}
+    </ReversalOutcomeContext.Provider>
   );
 }
 
 export function CookieReversalRecovery() {
   const session = useSession();
   const queryClient = useQueryClient();
+  const reportReversal = useContext(ReversalOutcomeContext);
   useSyncExternalStore(subscribeCookieRecovery, cookieRecoveryVersion, cookieRecoveryVersion);
   const recovery = readRecovery('ReverseAllocation', session);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState(false);
+  const refreshLifecycle = useRef<RefreshLifecycle>({ generation: 0, manual: false });
   const allowed = session.capabilities.includes('allocations.reverse');
   useIdentityReset(setNotice, () => undefined);
-  if (recovery.status === 'none') {
+  if (recovery.status === 'none' && notice === null) {
     return null;
   }
 
@@ -223,14 +257,12 @@ export function CookieReversalRecovery() {
         onRetry={() => {
           setPending(true);
           void retryCookieFinancialMutation('ReverseAllocation', session.signal)
-            .then((result) => applyResult(result, setNotice, async (origin) => {
-              await queryClient.invalidateQueries({ queryKey: ['allocations', 'history', origin.epoch, origin.readiness] });
-            }, 'Reversal recorded.'))
+            .then((result) => deliverReversalResult(result, reportReversal, setNotice, queryClient, refreshLifecycle))
             .finally(() => setPending(false));
         }}
       />
       {recovery.status === 'invalid' || recovery.status === 'hidden' ? <BlockedStorage /> : null}
-      <VisibleNotice notice={notice} />
+      <VisibleNotice notice={notice} onRefresh={() => retryConfirmedRefresh(notice, setNotice, queryClient, refreshLifecycle)} />
     </Stack>
   );
 }
@@ -250,12 +282,14 @@ export function CookieReversalControl({
 }) {
   const session = useSession();
   const queryClient = useQueryClient();
+  const reportReversal = useContext(ReversalOutcomeContext);
   useSyncExternalStore(subscribeCookieRecovery, cookieRecoveryVersion, cookieRecoveryVersion);
   const recovery = readRecovery('ReverseAllocation', session);
   const [reason, setReason] = useState('');
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState(false);
+  const refreshLifecycle = useRef<RefreshLifecycle>({ generation: 0, manual: false });
   const allowed = session.capabilities.includes('allocations.reverse');
   useIdentityReset(setNotice, () => setOpen(false));
   if (!allowed) {
@@ -271,7 +305,7 @@ export function CookieReversalControl({
         <DialogTitle>Reverse allocation</DialogTitle>
         <DialogContent>
           <TextField label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} fullWidth />
-          <VisibleNotice notice={notice} />
+          <VisibleNotice notice={notice} onRefresh={() => retryConfirmedRefresh(notice, setNotice, queryClient, refreshLifecycle)} />
         </DialogContent>
         <DialogActions>
           <Button type="button" onClick={() => setOpen(false)}>Close</Button>
@@ -282,7 +316,8 @@ export function CookieReversalControl({
             onClick={() => {
               const trimmed = reason.trim();
               if (trimmed.length < 2) {
-                setNotice({ kind: 'blocked', text: 'The reversal was not sent.' });
+                refreshLifecycle.current.generation += 1;
+                setNotice({ kind: 'blocked', text: 'The reversal was not sent.', generation: refreshLifecycle.current.generation });
                 return;
               }
 
@@ -299,9 +334,7 @@ export function CookieReversalControl({
                   currency,
                 },
                 signal: session.signal,
-              }).then((result) => applyResult(result, setNotice, async (origin) => {
-                await queryClient.invalidateQueries({ queryKey: ['allocations', 'history', origin.epoch, origin.readiness] });
-              }, 'Reversal recorded.')).finally(() => setPending(false));
+              }).then((result) => deliverReversalResult(result, reportReversal, setNotice, queryClient, refreshLifecycle)).finally(() => setPending(false));
             }}
           >
             Reverse allocation
@@ -367,7 +400,7 @@ function BlockedStorage() {
   return <Alert severity="warning">An unresolved financial attempt is already stored. A new request was not sent.</Alert>;
 }
 
-function VisibleNotice({ notice }: { notice: Notice | null }) {
+function VisibleNotice({ notice, onRefresh }: { notice: Notice | null; onRefresh: () => void }) {
   if (notice === null) {
     return null;
   }
@@ -376,41 +409,170 @@ function VisibleNotice({ notice }: { notice: Notice | null }) {
     return null;
   }
 
+  if (notice.kind === 'confirmed-stale') {
+    return (
+      <>
+        <Alert severity="success">{notice.text}</Alert>
+        <Alert
+          severity="warning"
+          action={(
+            <Button type="button" color="inherit" disabled={notice.refreshing} onClick={onRefresh}>
+              Refresh displayed data
+            </Button>
+          )}
+        >
+          {confirmedStaleMessage}
+        </Alert>
+      </>
+    );
+  }
+
   return <Alert severity={severity(notice.kind)}>{notice.text}</Alert>;
+}
+
+function deliverReversalResult(
+  result: CookieDispatchResult,
+  reportReversal: ((result: CookieDispatchResult) => void) | null,
+  setNotice: Dispatch<SetStateAction<Notice | null>>,
+  queryClient: QueryClient,
+  refreshLifecycle: { current: RefreshLifecycle },
+): void {
+  if (reportReversal !== null && result.kind === 'confirmed') {
+    setNotice(null);
+    reportReversal(result);
+    return;
+  }
+
+  applyResult(result, setNotice, queryClient, refreshLifecycle, 'Reversal recorded.');
 }
 
 function applyResult(
   result: CookieDispatchResult,
-  setNotice: (notice: Notice | null) => void,
-  onConfirmed: (origin: CookieSecurityOrigin) => Promise<void>,
+  setNotice: Dispatch<SetStateAction<Notice | null>>,
+  queryClient: QueryClient,
+  refreshLifecycle: { current: RefreshLifecycle },
   successText: string,
 ): void {
-  if (result.kind === 'stale') {
+  const generation = refreshLifecycle.current.generation + 1;
+  refreshLifecycle.current.generation = generation;
+
+  if (result.kind === 'stale' || (result.kind !== 'blocked' && !originStillCurrent(result.origin))) {
     setNotice(null);
     return;
   }
 
   if (result.kind === 'blocked') {
-    setNotice({ kind: 'blocked', text: result.text });
-    return;
-  }
-
-  if (!originStillCurrent(result.origin)) {
-    setNotice(null);
+    setNotice({ kind: 'blocked', text: result.text, generation });
     return;
   }
 
   if (result.kind === 'confirmed') {
-    void onConfirmed(result.origin);
-    setNotice({
-      kind: 'success',
-      text: result.cleanup === 'failed' ? result.text : successText,
-      origin: result.origin,
-    });
+    const text = result.cleanup === 'failed' ? result.text : successText;
+    setNotice({ kind: 'success', text, origin: result.origin, generation });
+    beginConfirmedRefresh(queryClient, setNotice, result.origin, text, generation);
     return;
   }
 
-  setNotice({ kind: result.kind, text: result.text, origin: result.origin });
+  setNotice({ kind: result.kind, text: result.text, origin: result.origin, generation });
+}
+
+function beginConfirmedRefresh(
+  queryClient: QueryClient,
+  setNotice: Dispatch<SetStateAction<Notice | null>>,
+  origin: CookieSecurityOrigin,
+  successText: string,
+  generation: number,
+): void {
+  if (!originStillCurrent(origin)) {
+    return;
+  }
+
+  const queryKeys = financialReadKeys(origin);
+  void refreshFinancialReads(queryClient, origin, queryKeys).then((outcome) => {
+    publishRefresh(setNotice, origin, successText, queryKeys, generation, outcome);
+  });
+}
+
+function retryConfirmedRefresh(
+  notice: Notice | null,
+  setNotice: Dispatch<SetStateAction<Notice | null>>,
+  queryClient: QueryClient,
+  refreshLifecycle: { current: RefreshLifecycle },
+): void {
+  if (notice === null || notice.kind !== 'confirmed-stale' || notice.refreshing || refreshLifecycle.current.manual) {
+    return;
+  }
+
+  if (!originStillCurrent(notice.origin)) {
+    return;
+  }
+
+  refreshLifecycle.current.manual = true;
+  const { origin, successText, queryKeys, generation } = notice;
+  setNotice({ ...notice, refreshing: true });
+  void refreshFinancialReads(queryClient, origin, queryKeys).then((outcome) => {
+    refreshLifecycle.current.manual = false;
+    publishRefresh(setNotice, origin, successText, queryKeys, generation, outcome);
+  });
+}
+
+async function refreshFinancialReads(
+  queryClient: QueryClient,
+  origin: CookieSecurityOrigin,
+  queryKeys: readonly QueryKey[],
+): Promise<RefreshOutcome> {
+  try {
+    if (!originStillCurrent(origin)) {
+      return 'ignored';
+    }
+
+    await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries(
+      { queryKey, refetchType: 'active' },
+      { throwOnError: true },
+    )));
+
+    return originStillCurrent(origin) ? 'refreshed' : 'ignored';
+  } catch {
+    return originStillCurrent(origin) ? 'failed' : 'ignored';
+  }
+}
+
+function publishRefresh(
+  setNotice: Dispatch<SetStateAction<Notice | null>>,
+  origin: CookieSecurityOrigin,
+  successText: string,
+  queryKeys: readonly QueryKey[],
+  generation: number,
+  outcome: RefreshOutcome,
+): void {
+  setNotice((latest) => {
+    if (latest === null || latest.generation !== generation || !originStillCurrent(origin) || outcome === 'ignored') {
+      return latest;
+    }
+
+    if (outcome === 'refreshed') {
+      return { kind: 'success', text: successText, origin, generation };
+    }
+
+    return {
+      kind: 'confirmed-stale',
+      text: successText,
+      successText,
+      origin,
+      queryKeys,
+      refreshing: false,
+      generation,
+    };
+  });
+}
+
+function financialReadKeys(origin: CookieSecurityOrigin): readonly QueryKey[] {
+  const history: QueryKey = ['allocations', 'history', origin.epoch, origin.readiness];
+  if (origin.capability === 'reconciliation.confirm') {
+    return [['matches', origin.epoch, origin.readiness], history];
+  }
+
+  return [history];
 }
 
 function useIdentityReset(setNotice: (notice: Notice | null) => void, reset: () => void): void {
