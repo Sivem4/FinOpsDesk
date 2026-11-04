@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 
 using Microsoft.Data.SqlClient;
 
@@ -31,7 +33,6 @@ internal sealed class E2EApiProcess : IAsyncDisposable
 
     private readonly Process _process;
     private readonly E2EProcessLog _log;
-    private bool _disposed;
 
     private E2EApiProcess(Process process, E2EProcessLog log, string origin, int port)
     {
@@ -200,6 +201,8 @@ internal sealed class E2EApiProcess : IAsyncDisposable
             ? "Enabled"
             : string.Empty;
 
+        DevelopmentCertificateExport.DevelopmentCertificateMaterial material = DevelopmentCertificateExport.LoadMaterial();
+        using X509Certificate2 trusted = X509CertificateLoader.LoadCertificate(material.PublicDer);
         Process process = new() { StartInfo = start };
         if (!process.Start())
         {
@@ -217,11 +220,22 @@ internal sealed class E2EApiProcess : IAsyncDisposable
             throw await StartupCompletion.AbandonAsync(process, exception);
         }
 
-        await StartupCompletion.CompleteAsync(
-            () => WaitForHealthAsync(process, log, origin, cancellationToken),
-            api.DisposeAsync,
-            () => api.TerminationEstablished);
-        return api;
+        return await CompleteStartupAsync(
+            api,
+            () => WaitForHealthAsync(process, log, origin, cancellationToken, trusted));
+    }
+
+    internal static async Task<E2EApiProcess> CompleteStartupAsync(E2EApiProcess api, Func<Task> waitUntilReady)
+    {
+        try
+        {
+            await StartupCompletion.CompleteAsync(waitUntilReady, api.DisposeAsync, () => api.TerminationEstablished);
+            return api;
+        }
+        catch (ProcessStartupException exception)
+        {
+            throw new E2EApiStartupException(api, exception);
+        }
     }
 
     public string Diagnostics()
@@ -231,12 +245,11 @@ internal sealed class E2EApiProcess : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        if (TerminationEstablished)
         {
             return;
         }
 
-        _disposed = true;
         try
         {
             ProcessStopResult result = await ProcessTermination.ConfirmStoppedAsync(_process, TimeSpan.FromSeconds(15));
@@ -249,16 +262,79 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         }
         finally
         {
-            _process.Dispose();
+            if (TerminationEstablished)
+            {
+                _process.Dispose();
+            }
         }
     }
 
-    internal static HttpClient CreateHealthClient()
+    internal static E2EApiProcess ForTerminationTest(Process process)
     {
-        return new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }, disposeHandler: true)
+        return new E2EApiProcess(process, new E2EProcessLog(), "http://127.0.0.1", 9);
+    }
+
+    internal static HttpClient CreateHealthClient(X509Certificate2? trustedDevelopmentCertificate = null)
+    {
+        HttpClientHandler handler = new() { AllowAutoRedirect = false };
+        if (trustedDevelopmentCertificate is not null)
+        {
+            X509Certificate2 trusted = trustedDevelopmentCertificate;
+            handler.ServerCertificateCustomValidationCallback = (request, certificate, chain, errors) =>
+                AllowsDevelopmentCertificate(request.RequestUri, certificate, chain, errors, trusted);
+        }
+
+        return new HttpClient(handler, disposeHandler: true)
         {
             Timeout = TimeSpan.FromSeconds(2),
         };
+    }
+
+    internal static bool AllowsDevelopmentCertificate(
+        Uri? requestUri,
+        X509Certificate2? presented,
+        X509Chain? chain,
+        SslPolicyErrors errors,
+        X509Certificate2 trusted)
+    {
+        if (requestUri is null
+            || presented is null
+            || chain is null
+            || !requestUri.IsAbsoluteUri
+            || !string.Equals(requestUri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(requestUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if ((errors & (SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateNotAvailable)) != 0)
+        {
+            return false;
+        }
+
+        if ((errors & ~(SslPolicyErrors.None | SslPolicyErrors.RemoteCertificateChainErrors)) != 0)
+        {
+            return false;
+        }
+
+        if (!string.Equals(presented.Thumbprint, trusted.Thumbprint, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // The platform chain was built against the system trust store. Rebuild it
+        // against only this certificate. chain.Build checks time and signature.
+        // It does not check the requested hostname; that is the SslPolicyErrors
+        // name check above. The development certificate has no CRL, so revocation
+        // is not consulted. CustomRootTrust accepts this self-signed end-entity
+        // certificate as the sole trust anchor.
+        using X509Chain custom = new();
+        custom.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        custom.ChainPolicy.CustomTrustStore.Add(trusted);
+        custom.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        custom.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+        custom.ChainPolicy.VerificationTime = DateTime.UtcNow;
+        return custom.Build(presented);
     }
 
     internal static async Task EnsureSuccessfulHealthAsync(
@@ -282,13 +358,33 @@ internal sealed class E2EApiProcess : IAsyncDisposable
         throw new InvalidOperationException("API health returned " + status + ".");
     }
 
-    private static async Task WaitForHealthAsync(
+    internal static bool IsPermanentCertificateFailure(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is System.Security.Authentication.AuthenticationException)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static async Task WaitForHealthAsync(
         Process process,
         E2EProcessLog log,
         string origin,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        X509Certificate2? trustedDevelopmentCertificate = null)
     {
-        using HttpClient client = CreateHealthClient();
+        if (origin.StartsWith("https://", StringComparison.OrdinalIgnoreCase) && trustedDevelopmentCertificate is null)
+        {
+            throw new InvalidOperationException(
+                "The cookie HTTPS health probe has no development certificate. Startup was not continued.");
+        }
+
+        using HttpClient client = CreateHealthClient(trustedDevelopmentCertificate);
         string url = origin + "/health";
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(90);
         Exception? lastException = null;
@@ -318,6 +414,14 @@ internal sealed class E2EApiProcess : IAsyncDisposable
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
+                if (IsPermanentCertificateFailure(exception))
+                {
+                    throw new InvalidOperationException(
+                        "API health failed TLS certificate validation for " + origin
+                        + ". The probe trusts only the ASP.NET Core localhost development certificate. Startup was not retried.",
+                        exception);
+                }
+
                 lastException = exception;
             }
 
@@ -328,6 +432,17 @@ internal sealed class E2EApiProcess : IAsyncDisposable
             $"API health at {url} was not ready.{Environment.NewLine}{log.Tail()}",
             lastException);
     }
+}
+
+internal sealed class E2EApiStartupException : Exception
+{
+    public E2EApiStartupException(E2EApiProcess api, Exception innerException)
+        : base("Cookie API startup failed.", innerException)
+    {
+        Api = api;
+    }
+
+    public E2EApiProcess Api { get; }
 }
 
 internal sealed class ApiHealthRedirectException : InvalidOperationException

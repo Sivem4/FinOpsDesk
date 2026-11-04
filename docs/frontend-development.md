@@ -126,7 +126,7 @@ A `BroadcastChannel` named `finopsdesk.session` may carry `{ "type": "revalidate
 
 Two tabs can still post overlapping cookie changes. A delayed `Set-Cookie` from organization selection can arrive after another tab has signed out, and the browser can store that cookie. Ignoring the late response in React does not stop that store. The late cookie repeats the original `finopsdesk_sid`. The server rejects it when that `BrowserSession` is revoked, clears the cookie, and the next session read is anonymous. Epoch tracking and `BroadcastChannel` are not that control. See ADR 0016.
 
-The Chromium checks are `CookieOidcBrowserTests` and `CookieOrganizationBrowserTests` in `tests/FinOpsDesk.E2ETests`. They start the existing protocol stub, the API in `ProductionCookie`, Vite in cookie mode, and headless Chromium against `http://localhost`. The organization tests seed Access memberships before sign-in. They are outside `FinOpsDesk.slnx`. The financial browser suite stays on `DevelopmentJwt` for the existing journeys. Cookie mode sends a financial POST only for an advertised activated write, after a version 2 recovery descriptor is stored. Import, batch, and review-case mutations stay rejected. See ADR 0020 and `docs/e2e-testing.md`.
+The Chromium checks are `CookieOidcBrowserTests` and `CookieOrganizationBrowserTests` in `tests/FinOpsDesk.E2ETests`. They start the existing protocol stub, the API in `ProductionCookie`, Vite in cookie mode, and headless Chromium against `http://localhost`. The organization tests seed Access memberships before sign-in. The E2E project is outside `FinOpsDesk.slnx`. The financial browser suite stays on `DevelopmentJwt` for the existing journeys. Cookie mode sends a financial POST only for an advertised activated write, after a version 2 recovery descriptor is stored. Import, batch, and review-case mutations stay rejected. The complete Chromium project is the pull-request job documented in `docs/e2e-testing.md` and ADR 0022. See also ADR 0020.
 
 ## CSV import
 
@@ -211,4 +211,4 @@ npm test
 npm run build
 ```
 
-The production build must not contain the development token screen. Frontend CI is `.github/workflows/frontend-ci.yml`. `npm test` runs Vitest with `maxWorkers: 2` from `vite.config.ts`. Local runs and frontend CI use that same limit. The timeout is unchanged. Phase 7D.6b Chromium CI is not part of this check.
+The production build must not contain the development token screen. Frontend CI is `.github/workflows/frontend-ci.yml`. `npm test` runs Vitest with `maxWorkers: 2` from `vite.config.ts`. Local runs and frontend CI use that same limit. The timeout is unchanged. Frontend CI does not install Chromium or run the browser suite. That suite is `.github/workflows/e2e-ci.yml`.

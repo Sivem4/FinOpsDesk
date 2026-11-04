@@ -60,9 +60,7 @@ public sealed class CookieOidcBrowserTests
             }
             catch (Exception exception)
             {
-                throw new InvalidOperationException(
-                    "Chromium is not available. Build the E2E project, then run playwright.ps1 install chromium from its output directory.",
-                    exception);
+                throw E2EChromium.Unavailable(exception);
             }
 
             IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions
@@ -194,6 +192,7 @@ public sealed class CookieOidcBrowserTests
         }
         catch (Exception exception)
         {
+            api ??= exception is E2EApiStartupException startup ? startup.Api : null;
             testFailure = exception;
         }
         finally
@@ -212,7 +211,17 @@ public sealed class CookieOidcBrowserTests
 
             if (api is not null)
             {
-                await api.DisposeAsync();
+                try
+                {
+                    await api.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    testFailure = testFailure is null
+                        ? exception
+                        : new AggregateException(testFailure, exception);
+                }
+
                 apiStopped = api.TerminationEstablished;
             }
 

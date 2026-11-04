@@ -116,11 +116,7 @@ internal sealed class E2EHost : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                throw new InvalidOperationException(
-                    "Chromium is not available. Build the E2E project, then run "
-                    + "powershell -File tests/FinOpsDesk.E2ETests/bin/Debug/net10.0/playwright.ps1 install chromium. "
-                    + SensitiveText.Redact(exception.Message),
-                    exception);
+                throw E2EChromium.Unavailable(exception);
             }
 
             IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions

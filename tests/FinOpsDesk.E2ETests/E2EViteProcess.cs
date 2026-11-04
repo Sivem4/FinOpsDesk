@@ -56,63 +56,8 @@ internal sealed class E2EViteProcess : IAsyncDisposable
         int port = launch.Port ?? LoopbackPort.Reserve();
         string origin = $"http://{launch.Host}:{port}";
         E2EProcessLog log = new();
-        ProcessStartInfo start = new()
-        {
-            FileName = OperatingSystem.IsWindows() ? "node" : "npm",
-            WorkingDirectory = RepoPaths.FrontendDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
-
-        string script = launch.CookieMode ? "dev:cookie" : "dev";
-        if (OperatingSystem.IsWindows())
-        {
-            // The retained handle is the Node process that runs Vite. A port or a
-            // command-line fragment is not used to find or stop another process.
-            start.ArgumentList.Add(viteEntry);
-            if (launch.CookieMode)
-            {
-                start.ArgumentList.Add("--mode");
-                start.ArgumentList.Add("cookie");
-            }
-
-            start.ArgumentList.Add("--host");
-            start.ArgumentList.Add(launch.Host);
-            start.ArgumentList.Add("--port");
-            start.ArgumentList.Add(port.ToString());
-            start.ArgumentList.Add("--strictPort");
-        }
-        else
-        {
-            start.ArgumentList.Add("run");
-            start.ArgumentList.Add(script);
-            start.ArgumentList.Add("--");
-            start.ArgumentList.Add("--host");
-            start.ArgumentList.Add(launch.Host);
-            start.ArgumentList.Add("--port");
-            start.ArgumentList.Add(port.ToString());
-            start.ArgumentList.Add("--strictPort");
-        }
-
-        start.Environment["FINOPSDESK_E2E_API_ORIGIN"] = apiOrigin;
-        start.Environment["BROWSER"] = "none";
-        if (launch.CookieMode)
-        {
-            start.Environment["VITE_AUTH_MODE"] = "cookie";
-        }
-
-        if (!string.IsNullOrWhiteSpace(launch.NodeExtraCaCerts))
-        {
-            start.Environment["NODE_EXTRA_CA_CERTS"] = launch.NodeExtraCaCerts;
-        }
-
-        Process process = new() { StartInfo = start };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("E2E could not start the Vite process.");
-        }
+        ProcessStartInfo start = CreateStartInfo(apiOrigin, launch, port, viteEntry);
+        Process process = StartOwnedProcess(start);
 
         E2EViteProcess vite;
         try
@@ -161,7 +106,72 @@ internal sealed class E2EViteProcess : IAsyncDisposable
         }
     }
 
-    private static async Task WaitUntilReadyAsync(
+    internal static ProcessStartInfo CreateStartInfo(
+        string apiOrigin,
+        E2EViteLaunch launch,
+        int port,
+        string viteEntry)
+    {
+        // The retained handle is the Node process that runs Vite. npm is not the
+        // parent, so disposal does not leave a wrapper behind. A port or a
+        // command-line fragment is not used to find or stop another process.
+        ProcessStartInfo start = new()
+        {
+            FileName = "node",
+            WorkingDirectory = RepoPaths.FrontendDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add(viteEntry);
+        if (launch.CookieMode)
+        {
+            start.ArgumentList.Add("--mode");
+            start.ArgumentList.Add("cookie");
+        }
+
+        start.ArgumentList.Add("--host");
+        start.ArgumentList.Add(launch.Host);
+        start.ArgumentList.Add("--port");
+        start.ArgumentList.Add(port.ToString());
+        start.ArgumentList.Add("--strictPort");
+        start.Environment["FINOPSDESK_E2E_API_ORIGIN"] = apiOrigin;
+        start.Environment["BROWSER"] = "none";
+        start.Environment.Remove("NODE_TLS_REJECT_UNAUTHORIZED");
+        if (launch.CookieMode)
+        {
+            start.Environment["VITE_AUTH_MODE"] = "cookie";
+        }
+
+        if (!string.IsNullOrWhiteSpace(launch.NodeExtraCaCerts))
+        {
+            start.Environment["NODE_EXTRA_CA_CERTS"] = launch.NodeExtraCaCerts;
+        }
+
+        return start;
+    }
+
+    internal static Process StartOwnedProcess(ProcessStartInfo start)
+    {
+        Process process = new() { StartInfo = start };
+        try
+        {
+            if (!process.Start())
+            {
+                throw new InvalidOperationException("E2E could not start the Vite process.");
+            }
+
+            return process;
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+    }
+
+    internal static async Task WaitUntilReadyAsync(
         Process process,
         E2EProcessLog log,
         string origin,

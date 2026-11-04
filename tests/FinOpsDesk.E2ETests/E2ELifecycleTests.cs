@@ -1,6 +1,10 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace FinOpsDesk.E2ETests;
@@ -209,6 +213,260 @@ public sealed class E2ELifecycleTests
     }
 
     [Fact]
+    public async Task Https_health_client_accepts_the_localhost_development_certificate()
+    {
+        using X509Certificate2 serverCertificate = DevelopmentCertificateExport.CopyServerCertificate();
+        using X509Certificate2 trusted = X509CertificateLoader.LoadCertificate(serverCertificate.Export(X509ContentType.Cert));
+        string body = await ReadHttpsHealthAsync(serverCertificate, trusted, "https://localhost:{0}/health");
+        Assert.Equal("Healthy", body);
+        Assert.False(body.Contains("PRIVATE KEY", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Https_health_client_rejects_a_substituted_certificate()
+    {
+        using X509Certificate2 serverCertificate = CreateCertificate("localhost", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        using X509Certificate2 development = DevelopmentCertificateExport.CopyServerCertificate();
+        using X509Certificate2 trusted = X509CertificateLoader.LoadCertificate(development.Export(X509ContentType.Cert));
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            ReadHttpsHealthAsync(serverCertificate, trusted, "https://localhost:{0}/health"));
+        Assert.IsType<AuthenticationException>(exception.InnerException);
+        Assert.False(exception.ToString().Contains("PRIVATE KEY", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Https_health_client_rejects_a_different_hostname()
+    {
+        using X509Certificate2 serverCertificate = CreateCertificate("example.com", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        using X509Certificate2 trusted = X509CertificateLoader.LoadCertificate(serverCertificate.Export(X509ContentType.Cert));
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            ReadHttpsHealthAsync(serverCertificate, trusted, "https://localhost:{0}/health"));
+        Assert.IsType<AuthenticationException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task Https_health_client_rejects_an_expired_certificate_without_retrying()
+    {
+        using X509Certificate2 serverCertificate = CreateCertificate("localhost", DateTimeOffset.UtcNow.AddDays(-2), DateTimeOffset.UtcNow.AddMinutes(-5));
+        using X509Certificate2 trusted = X509CertificateLoader.LoadCertificate(serverCertificate.Export(X509ContentType.Cert));
+        Process? process = StartIdleProcess();
+        using TcpListener listener = StartHttpsListener();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Task server = ServeHttpsAsync(listener, serverCertificate);
+        try
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                E2EApiProcess.WaitForHealthAsync(
+                    process,
+                    new E2EProcessLog(),
+                    "https://localhost:" + port,
+                    CancellationToken.None,
+                    trusted));
+            watch.Stop();
+            Assert.Contains("Startup was not retried", exception.Message, StringComparison.Ordinal);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15));
+            Assert.False(exception.ToString().Contains("PRIVATE KEY", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await SwallowServerAsync(server);
+            StopProcess(process);
+        }
+    }
+
+    [Fact]
+    public async Task Missing_development_certificate_fails_the_https_probe_closed()
+    {
+        Process? process = StartIdleProcess();
+        try
+        {
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                E2EApiProcess.WaitForHealthAsync(
+                    process,
+                    new E2EProcessLog(),
+                    "https://localhost:9",
+                    CancellationToken.None,
+                    trustedDevelopmentCertificate: null));
+            Assert.Contains("no development certificate", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            StopProcess(process);
+        }
+    }
+
+    [Fact]
+    public async Task Confirmed_api_stop_can_be_disposed_twice_and_an_unconfirmed_stop_keeps_the_database()
+    {
+        Process? running = StartIdleProcess();
+        try
+        {
+            int processId = running.Id;
+            E2EApiProcess api = E2EApiProcess.ForTerminationTest(running);
+            await api.DisposeAsync();
+            Assert.True(api.TerminationEstablished);
+            Assert.False(ProcessTermination.IsAlive(processId));
+            await api.DisposeAsync();
+            running = null;
+
+            Process detached = StartIdleProcess();
+            int detachedId = detached.Id;
+            E2EApiProcess unconfirmed = E2EApiProcess.ForTerminationTest(detached);
+            detached.Dispose();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => unconfirmed.DisposeAsync().AsTask());
+            Assert.False(unconfirmed.TerminationEstablished);
+            E2ECleanupDecision decision = E2ECleanupPolicy.Decide(
+                browserWorkOutstanding: false,
+                apiTerminationEstablished: unconfirmed.TerminationEstablished,
+                viteTerminationEstablished: true,
+                browserStopFailed: false);
+            Assert.False(decision.DropOwnedDatabase);
+            using Process leftover = Process.GetProcessById(detachedId);
+            leftover.Kill(entireProcessTree: true);
+        }
+        finally
+        {
+            StopProcess(running);
+        }
+
+        E2EApiProcess? visible = E2EApiProcess.ForTerminationTest(StartIdleProcess());
+        try
+        {
+            E2EApiStartupException exposed = await Assert.ThrowsAsync<E2EApiStartupException>(() =>
+                E2EApiProcess.CompleteStartupAsync(
+                    visible,
+                    () => throw new InvalidOperationException(
+                        "API health failed TLS certificate validation for https://localhost:9. Startup was not retried.")));
+            Assert.Same(visible, exposed.Api);
+            Assert.True(exposed.Api.TerminationEstablished);
+            E2ECleanupDecision drop = E2ECleanupPolicy.Decide(
+                browserWorkOutstanding: false,
+                apiTerminationEstablished: exposed.Api.TerminationEstablished,
+                viteTerminationEstablished: true,
+                browserStopFailed: false);
+            Assert.True(drop.DropOwnedDatabase);
+            visible = null;
+        }
+        finally
+        {
+            if (visible is not null)
+            {
+                await visible.DisposeAsync();
+            }
+        }
+    }
+
+    private static async Task<string> ReadHttpsHealthAsync(
+        X509Certificate2 serverCertificate,
+        X509Certificate2 trusted,
+        string urlFormat)
+    {
+        using TcpListener listener = StartHttpsListener();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Task server = ServeHttpsAsync(listener, serverCertificate);
+        Exception? clientFailure = null;
+        try
+        {
+            using HttpClient client = E2EApiProcess.CreateHealthClient(trusted);
+            using HttpResponseMessage response = await client.GetAsync(string.Format(System.Globalization.CultureInfo.InvariantCulture, urlFormat, port));
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception exception)
+        {
+            clientFailure = exception;
+            throw;
+        }
+        finally
+        {
+            await SwallowServerAsync(server, clientFailure);
+        }
+    }
+
+    private static TcpListener StartHttpsListener()
+    {
+        TcpListener listener = new(IPAddress.IPv6Loopback, 0);
+        listener.Server.DualMode = true;
+        listener.Start();
+        return listener;
+    }
+
+    private static async Task ServeHttpsAsync(TcpListener listener, X509Certificate2 serverCertificate)
+    {
+        using TcpClient client = await listener.AcceptTcpClientAsync();
+        await using NetworkStream network = client.GetStream();
+        await using SslStream ssl = new(network);
+        await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+        {
+            ServerCertificateContext = SslStreamCertificateContext.Create(serverCertificate, additionalCertificates: null),
+            ApplicationProtocols = [SslApplicationProtocol.Http11],
+            ClientCertificateRequired = false,
+        });
+        byte[] buffer = new byte[1024];
+        using MemoryStream received = new();
+        while (true)
+        {
+            int read = await ssl.ReadAsync(buffer);
+            if (read == 0)
+            {
+                break;
+            }
+
+            received.Write(buffer, 0, read);
+            if (Encoding.ASCII.GetString(received.GetBuffer(), 0, (int)received.Length).Contains("\r\n\r\n", StringComparison.Ordinal))
+            {
+                break;
+            }
+        }
+
+        string body = "Healthy";
+        byte[] payload = Encoding.ASCII.GetBytes(
+            "HTTP/1.1 200 OK\r\nContent-Length: " + Encoding.ASCII.GetByteCount(body) + "\r\nConnection: close\r\n\r\n" + body);
+        await ssl.WriteAsync(payload);
+    }
+
+    private static async Task SwallowServerAsync(Task server, Exception? clientFailure = null)
+    {
+        try
+        {
+            await server.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception) when (clientFailure is not null || server.IsFaulted || server.IsCanceled)
+        {
+        }
+    }
+
+    private static X509Certificate2 CreateCertificate(string dnsName, DateTimeOffset notBefore, DateTimeOffset notAfter)
+    {
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        CertificateRequest request = new("CN=" + dnsName, key, HashAlgorithmName.SHA256);
+        SubjectAlternativeNameBuilder san = new();
+        san.AddDnsName(dnsName);
+        request.CertificateExtensions.Add(san.Build());
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: false));
+        OidCollection serverAuthentication = new()
+        {
+            new Oid("1.3.6.1.5.5.7.3.1"),
+        };
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(serverAuthentication, critical: false));
+        X509Certificate2 created = request.CreateSelfSigned(notBefore, notAfter);
+        string password = Guid.NewGuid().ToString("N");
+        byte[] pfx = created.Export(X509ContentType.Pfx, password);
+        created.Dispose();
+        try
+        {
+            return X509CertificateLoader.LoadPkcs12(
+                pfx,
+                password,
+                X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(pfx);
+        }
+    }
+
+    [Fact]
     public void Diagnostics_redact_tokens_passwords_and_authorization_headers()
     {
         const string signingKey = "signing-key-value-that-is-not-logged";
@@ -372,6 +630,27 @@ public sealed class E2ELifecycleTests
 
             return ValueTask.CompletedTask;
         }
+    }
+
+    private static void StopProcess(Process? process)
+    {
+        if (process is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        process.Dispose();
     }
 
     private static Process StartIdleProcess()
