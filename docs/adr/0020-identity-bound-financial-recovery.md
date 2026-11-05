@@ -21,7 +21,7 @@ A descriptor starts as `dispatched` before `fetch`. A response that the server p
 
 Manual retry sends the stored key and body. There is no automatic retry and no new key after an uncertain outcome, including HTTP 5xx, a lost response, or a later HTTP 403. A descriptor for another issuer, subject, or organization is not shown and is not rebound. DevelopmentJwt keeps recovery descriptor v1.
 
-Invoice import, bank import, batch execution, and ReviewCase writes stay outside the allowlist and have no cookie mutation UI. Batch receipt finalization and a general operation-audit table stay deferred. Deployed configuration leaves both activation flags unset. Removing the write flag stops new cookie writes and does not revoke `BrowserSession` or delete a stored descriptor.
+Invoice import, bank import, batch execution, and ReviewCase writes stay outside the allowlist and have no cookie mutation UI. A `DevelopmentJwt` review-case open keeps its own schema version 1 descriptor and is not part of cookie recovery v2. Batch receipt finalization and a general operation-audit table stay deferred. Deployed configuration leaves both activation flags unset. Removing the write flag stops new cookie writes and does not revoke `BrowserSession` or delete a stored descriptor.
 
 ## Consequences
 

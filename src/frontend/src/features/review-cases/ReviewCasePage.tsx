@@ -16,9 +16,9 @@ import {
   Typography,
 } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
-import { useSearchParams } from 'react-router';
+import { UNSAFE_DataRouterContext, useNavigate, useSearchParams } from 'react-router';
 
 import { ApiError, NetworkError, StaleSessionError, UnexpectedResponseError } from '../../shared/api/errors';
 import { browserAuthMode } from '../../shared/auth/auth-mode';
@@ -37,6 +37,7 @@ import {
   type ReviewCaseStatusName,
 } from './review-case-api';
 import { reviewCaseFilterSchema, type ReviewCaseFilterValues } from './review-case-filters';
+import { ReviewCaseOpenPanel } from './ReviewCaseOpenPanel';
 
 const defaultPage = 1;
 const defaultPageSize = 50;
@@ -49,6 +50,21 @@ export function ReviewCasePage() {
   const session = useSession();
   const cookie = browserAuthMode() === 'cookie';
   const [searchParams, setSearchParams] = useSearchParams();
+  const dataRouter = useContext(UNSAFE_DataRouterContext);
+  const navigate = useNavigate();
+  const searchParamsRef = useRef(searchParams);
+  const setSearchParamsRef = useRef(setSearchParams);
+  const pageMounted = useRef(false);
+  useLayoutEffect(() => {
+    searchParamsRef.current = searchParams;
+    setSearchParamsRef.current = setSearchParams;
+  }, [searchParams, setSearchParams]);
+  useEffect(() => {
+    pageMounted.current = true;
+    return () => {
+      pageMounted.current = false;
+    };
+  }, []);
   const page = readPage(searchParams.get('page'));
   const pageSize = readPageSize(searchParams.get('pageSize'));
   const status = readStatus(searchParams.get('status'));
@@ -116,12 +132,49 @@ export function ReviewCasePage() {
     setSearchParams(next);
   }
 
+  function currentSearch(): string {
+    if (dataRouter !== null) {
+      return dataRouter.router.state.location.search;
+    }
+
+    if (window.location.pathname === '/review-cases') {
+      return window.location.search;
+    }
+
+    return searchParamsRef.current.toString();
+  }
+
+  function selectOpenedCase(reviewCaseId: string) {
+    if (!pageMounted.current) {
+      return;
+    }
+
+    const next = new URLSearchParams(currentSearch());
+    next.set('selected', reviewCaseId);
+    if (dataRouter !== null) {
+      void navigate({
+        pathname: dataRouter.router.state.location.pathname,
+        search: `?${next.toString()}`,
+      });
+      return;
+    }
+
+    setSearchParamsRef.current(next);
+  }
+
   return (
     <Stack spacing={2}>
       <Typography variant="h4" component="h1">Review cases</Typography>
       <Typography color="text.secondary">
-        These are existing reconciliation exceptions. This screen only reads them.
+        {cookie
+          ? 'These are existing reconciliation exceptions. This screen only reads them.'
+          : 'These are existing reconciliation exceptions. You can open one case for this organization.'}
       </Typography>
+      {readable && !cookie ? (
+        <ReviewCaseOpenPanel
+          onSelect={selectOpenedCase}
+        />
+      ) : null}
       {!readable ? <Alert severity="warning">Review cases are not available for this session.</Alert> : null}
       {readable && (!paginationValid || !filtersValid) ? <InvalidAddress /> : null}
       {readable && paginationValid && filtersValid && !selectedValid ? (

@@ -362,6 +362,8 @@ Phase 8D shows that stored history on the existing review-case detail. `View aud
 
 Phase 8E makes `Idempotency-Key` optional on `POST /api/review-cases`. A missing header keeps the open-subject repetition. A present key is one UUID in `D` format with no surrounding whitespace, and the same normalized request returns that case after resolve or dismiss. The binding is `ReviewCaseOpenAttempts`, protected by `PK_ReviewCaseOpenAttempts`. Historical cases are not backfilled. Resolve, dismiss, the audit model, the cookie allowlist, and the financial flags stay unchanged. See ADR 0027.
 
+Phase 8F lets a `DevelopmentJwt` operator open one case from `/review-cases`. The form names documents by GUID. `CompetingMatch` requires both, and `NeedsInvestigation` requires exactly one. The browser stores one `finopsdesk.review-case-open-attempt` record before the POST and retries that same key and body only after an explicit click. A verified `201` names an open case. A verified `200` can name that open case or a terminal resolved or dismissed case. `ProductionCookie` keeps the read-only list, detail, and audit. The cookie write allowlist, flags, and capabilities stay unchanged. Phase 8 stays Planned.
+
 Add:
 
 - Disputes module;

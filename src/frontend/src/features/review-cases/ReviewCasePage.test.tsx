@@ -2,13 +2,15 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router';
+import { BrowserRouter, Link, MemoryRouter, Route, RouterProvider, Routes, createMemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { queryClient } from '../../shared/api/query-client';
 import { sessionStore, type CookieSessionFields } from '../../shared/api/session-store';
 import { server } from '../../test/server';
+import { fakeJwt } from '../../test/jwt';
 import { ReviewCasePage } from './ReviewCasePage';
+import { reviewCaseOpenAttemptStorageKey } from './review-case-open-attempt';
 
 const caseId = '11111111-1111-4111-8111-111111111111';
 const invoiceId = '22222222-2222-4222-8222-222222222222';
@@ -18,9 +20,426 @@ const secretToken = 'concurrency-token-must-stay-hidden';
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  sessionStorage.removeItem(reviewCaseOpenAttemptStorageKey);
 });
 
 describe('review case page', () => {
+  it('shows an opening form for a development token and keeps reads free of POST', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage('/review-cases');
+
+    expect(await screen.findByRole('button', { name: 'Open review case' })).toBeInTheDocument();
+    expect(screen.getByText(/You can open one case for this organization/)).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Status'));
+    await user.click(screen.getByRole('option', { name: 'Open' }));
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    expect(posts).toBe(0);
+  });
+
+  it('does not show opening or recovery in a cookie session', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStorage.setItem(reviewCaseOpenAttemptStorageKey, '{"schemaVersion":1}');
+    let posts = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+    );
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    renderPage('/review-cases');
+
+    expect(await screen.findByText(/This screen only reads them/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open review case' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send the same opening again' })).not.toBeInTheDocument();
+    expect(posts).toBe(0);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBe('{"schemaVersion":1}');
+  });
+
+  it('keeps the confirmation when the later read fails and retries only that read', async () => {
+    const user = userEvent.setup();
+    const openedId = '55555555-5555-4555-8555-555555555555';
+    let posts = 0;
+    let reads = 0;
+    queryClient.clear();
+    server.use(
+      http.get('/api/review-cases', () => {
+        reads += 1;
+        if (reads === 1) {
+          return text(listDocument());
+        }
+        return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+      }),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return HttpResponse.json(openedCase(openedId, invoiceId), {
+          status: 201,
+          headers: { Location: `/api/review-cases/${openedId}` },
+        });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = renderReviewCases();
+    await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+    await user.click(screen.getByRole('button', { name: 'Open review case' }));
+
+    expect(await screen.findByText('Review case opened.')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
+    expect(screen.getByText('The opening is confirmed. The review case lists could not be refreshed.')).toBeInTheDocument();
+    expect(posts).toBe(1);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+    expect(router.state.location.search).not.toContain('selected=');
+
+    const readsAtFailure = reads;
+    server.use(http.get('/api/review-cases', () => {
+      reads += 1;
+      return text(listDocument());
+    }));
+    await user.click(screen.getByRole('button', { name: 'Refresh displayed data' }));
+    await waitFor(() => expect(router.state.location.search).toContain(`selected=${openedId}`));
+    expect(reads).toBeGreaterThan(readsAtFailure);
+    expect(posts).toBe(1);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+    expect(screen.getByText('Review case opened.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh displayed data' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send the same opening again' })).not.toBeInTheDocument();
+  }, 15000);
+
+  it('keeps filters changed while an opening or its refresh is still waiting', async () => {
+    const user = userEvent.setup();
+    const openedId = '55555555-5555-4555-8555-555555555555';
+    const postGate = deferred<void>();
+    const refreshGate = deferred<void>();
+    const refreshHold = { armed: false, held: false };
+    let posts = 0;
+    let lists = 0;
+    queryClient.clear();
+    server.use(
+      http.get('/api/review-cases', async () => {
+        lists += 1;
+        if (refreshHold.armed) {
+          refreshHold.armed = false;
+          refreshHold.held = true;
+          await refreshGate.promise;
+        }
+        return text(listDocument());
+      }),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases', async () => {
+        posts += 1;
+        await postGate.promise;
+        return HttpResponse.json(openedCase(openedId, invoiceId), {
+          status: 201,
+          headers: { Location: `/api/review-cases/${openedId}` },
+        });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = renderReviewCases();
+    await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+    await user.click(screen.getByRole('button', { name: 'Open review case' }));
+    await waitFor(() => expect(posts).toBe(1));
+    const listsBeforeFilter = lists;
+    await chooseStatus(user, 'Open');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    expect(router.state.location.search).toContain('status=Open');
+    await waitFor(() => expect(lists).toBeGreaterThan(listsBeforeFilter));
+    refreshHold.armed = true;
+    postGate.resolve();
+    expect(await screen.findByText('Review case opened.')).toBeInTheDocument();
+    await waitFor(() => expect(refreshHold.held).toBe(true));
+    await user.type(screen.getByLabelText('Invoice id'), invoiceId);
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    expect(router.state.location.search).toContain(`invoiceId=${invoiceId}`);
+    expect(router.state.location.search).toContain('status=Open');
+    expect(router.state.location.search).not.toContain('selected=');
+    refreshGate.resolve();
+    await flush();
+    const retry = screen.queryByRole('button', { name: 'Refresh displayed data' });
+    if (retry !== null) {
+      await user.click(retry);
+    }
+    await waitFor(() => expect(router.state.location.search).toContain(`selected=${openedId}`));
+    expect(router.state.location.search).toContain('status=Open');
+    expect(router.state.location.search).toContain(`invoiceId=${invoiceId}`);
+    expect(posts).toBe(1);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+  }, 15000);
+
+  it('lets the later opening win when refreshes finish out of order', async () => {
+    const user = userEvent.setup();
+    const firstOpenedId = '55555555-5555-4555-8555-555555555555';
+    const secondOpenedId = '66666666-6666-4666-8666-666666666666';
+    const gates: Array<ReturnType<typeof deferred<void>>> = [];
+    let posts = 0;
+    queryClient.clear();
+    server.use(
+      http.get('/api/review-cases', async () => {
+        if (gates.length === 0 && posts === 0) {
+          return text(listDocument());
+        }
+        const gate = deferred<void>();
+        gates.push(gate);
+        await gate.promise;
+        return text(listDocument());
+      }),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases', async ({ request }) => {
+        posts += 1;
+        const body = await request.json() as { invoiceId?: string };
+        const openedId = posts === 1 ? firstOpenedId : secondOpenedId;
+        return HttpResponse.json(openedCase(openedId, body.invoiceId ?? invoiceId), {
+          status: 201,
+          headers: { Location: `/api/review-cases/${openedId}` },
+        });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = renderReviewCases();
+    await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+    await user.click(screen.getByRole('button', { name: 'Open review case' }));
+    expect(await screen.findByText('Review case opened.')).toBeInTheDocument();
+    await waitFor(() => expect(gates).toHaveLength(1));
+    await user.clear(screen.getByLabelText('Opening invoice id'));
+    await user.type(screen.getByLabelText('Opening invoice id'), bankId);
+    await user.click(screen.getByRole('button', { name: 'Open review case' }));
+    expect(await screen.findByText(`Case ${secondOpenedId}`)).toBeInTheDocument();
+    await waitFor(() => expect(gates.length).toBeGreaterThanOrEqual(2));
+    const firstRefresh = gates[0];
+    const secondRefresh = gates[gates.length - 1];
+    if (firstRefresh === undefined || secondRefresh === undefined) {
+      throw new Error('The opening refreshes were not started.');
+    }
+    secondRefresh.resolve();
+    await waitFor(() => expect(router.state.location.search).toContain(`selected=${secondOpenedId}`));
+    firstRefresh.resolve();
+    await flush();
+    expect(router.state.location.search).toContain(`selected=${secondOpenedId}`);
+    expect(router.state.location.search).not.toContain(`selected=${firstOpenedId}`);
+    expect(posts).toBe(2);
+    gates.forEach((gate) => gate.resolve());
+  }, 15000);
+
+  it('does not apply a manual refresh after the session changes', async () => {
+    const user = userEvent.setup();
+    const openedId = '55555555-5555-4555-8555-555555555555';
+    const refreshGate = deferred<void>();
+    let posts = 0;
+    let reads = 0;
+    let holdRead = false;
+    queryClient.clear();
+    server.use(
+      http.get('/api/review-cases', async () => {
+        reads += 1;
+        if (reads === 1) {
+          return text(listDocument());
+        }
+        if (holdRead) {
+          await refreshGate.promise;
+          return text(listDocument());
+        }
+        return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+      }),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return HttpResponse.json(openedCase(openedId, invoiceId), {
+          status: 201,
+          headers: { Location: `/api/review-cases/${openedId}` },
+        });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = renderReviewCases();
+    await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+    await user.click(screen.getByRole('button', { name: 'Open review case' }));
+    expect(await screen.findByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
+    expect(router.state.location.search).not.toContain('selected=');
+    const readsAtFailure = reads;
+    holdRead = true;
+    await user.click(screen.getByRole('button', { name: 'Refresh displayed data' }));
+    await waitFor(() => expect(reads).toBeGreaterThan(readsAtFailure));
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    refreshGate.resolve();
+    await flush();
+    expect(screen.getByText('Review case opened.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
+    expect(router.state.location.search).not.toContain('selected=');
+    expect(posts).toBe(1);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+  }, 15000);
+
+  describe('browser router', () => {
+    const openedId = '55555555-5555-4555-8555-555555555555';
+
+    afterEach(() => {
+      window.history.pushState({}, '', '/');
+    });
+
+    it('does not return to the review case after leaving during the opening', async () => {
+      const user = userEvent.setup();
+      const postGate = deferred<void>();
+      let posts = 0;
+      queryClient.clear();
+      server.use(
+        http.get('/api/review-cases', () => text(listDocument())),
+        http.get('/api/review-cases/:id', () => text(detailDocument())),
+        http.post('/api/review-cases', async () => {
+          posts += 1;
+          await postGate.promise;
+          return HttpResponse.json(openedCase(openedId, invoiceId), {
+            status: 201,
+            headers: { Location: `/api/review-cases/${openedId}` },
+          });
+        }),
+      );
+      sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+      renderBrowserWorkspace();
+      await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+      await user.click(screen.getByRole('button', { name: 'Open review case' }));
+      await waitFor(() => expect(posts).toBe(1));
+      await user.click(screen.getByRole('link', { name: 'Invoices' }));
+      expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+      postGate.resolve();
+      await waitFor(() => expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull());
+      expect(window.location.pathname).toBe('/invoices');
+      expect(window.location.search).not.toContain('selected=');
+      expect(posts).toBe(1);
+    }, 15000);
+
+    it('does not apply an opening that was left and reopened before the response', async () => {
+      const user = userEvent.setup();
+      const postGate = deferred<void>();
+      let posts = 0;
+      queryClient.clear();
+      server.use(
+        http.get('/api/review-cases', () => text(listDocument())),
+        http.get('/api/review-cases/:id', () => text(detailDocument())),
+        http.post('/api/review-cases', async () => {
+          posts += 1;
+          await postGate.promise;
+          return HttpResponse.json(openedCase(openedId, invoiceId), {
+            status: 201,
+            headers: { Location: `/api/review-cases/${openedId}` },
+          });
+        }),
+      );
+      sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+      renderBrowserWorkspace();
+      await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+      await user.click(screen.getByRole('button', { name: 'Open review case' }));
+      await waitFor(() => expect(posts).toBe(1));
+      await user.click(screen.getByRole('link', { name: 'Invoices' }));
+      expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+      await user.click(screen.getByRole('link', { name: 'Review cases' }));
+      expect(await screen.findByText('This opening has no verified result. Sending it again uses the same request.')).toBeInTheDocument();
+      postGate.resolve();
+      await waitFor(() => expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull());
+      expect(window.location.pathname).toBe('/review-cases');
+      expect(window.location.search).not.toContain('selected=');
+      expect(posts).toBe(1);
+      expect(screen.queryByText('Review case opened.')).not.toBeInTheDocument();
+    }, 15000);
+
+    it('does not apply a refresh that finishes after the panel unmounts', async () => {
+      const user = userEvent.setup();
+      const refreshGate = deferred<void>();
+      let posts = 0;
+      let lists = 0;
+      queryClient.clear();
+      server.use(
+        http.get('/api/review-cases', async () => {
+          lists += 1;
+          if (lists > 1) {
+            await refreshGate.promise;
+          }
+          return text(listDocument());
+        }),
+        http.get('/api/review-cases/:id', () => text(detailDocument())),
+        http.post('/api/review-cases', () => {
+          posts += 1;
+          return HttpResponse.json(openedCase(openedId, invoiceId), {
+            status: 201,
+            headers: { Location: `/api/review-cases/${openedId}` },
+          });
+        }),
+      );
+      sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+      renderBrowserWorkspace();
+      await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+      await user.click(screen.getByRole('button', { name: 'Open review case' }));
+      expect(await screen.findByText('Review case opened.')).toBeInTheDocument();
+      await waitFor(() => expect(lists).toBeGreaterThan(1));
+      expect(window.location.search).not.toContain('selected=');
+      await user.click(screen.getByRole('link', { name: 'Invoices' }));
+      expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+      refreshGate.resolve();
+      await flush();
+      expect(window.location.pathname).toBe('/invoices');
+      expect(window.location.search).not.toContain('selected=');
+      expect(posts).toBe(1);
+    }, 15000);
+
+    it('does not apply a manual refresh that finishes after the panel unmounts', async () => {
+      const user = userEvent.setup();
+      const refreshGate = deferred<void>();
+      let posts = 0;
+      let lists = 0;
+      let holdRead = false;
+      queryClient.clear();
+      server.use(
+        http.get('/api/review-cases', async () => {
+          lists += 1;
+          if (lists === 1) {
+            return text(listDocument());
+          }
+          if (holdRead) {
+            await refreshGate.promise;
+            return text(listDocument());
+          }
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }),
+        http.get('/api/review-cases/:id', () => text(detailDocument())),
+        http.post('/api/review-cases', () => {
+          posts += 1;
+          return HttpResponse.json(openedCase(openedId, invoiceId), {
+            status: 201,
+            headers: { Location: `/api/review-cases/${openedId}` },
+          });
+        }),
+      );
+      sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+      renderBrowserWorkspace();
+      await user.type(await screen.findByLabelText('Opening invoice id'), invoiceId);
+      await user.click(screen.getByRole('button', { name: 'Open review case' }));
+      expect(await screen.findByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
+      expect(window.location.search).not.toContain('selected=');
+      const listsAtFailure = lists;
+      holdRead = true;
+      await user.click(screen.getByRole('button', { name: 'Refresh displayed data' }));
+      await waitFor(() => expect(lists).toBeGreaterThan(listsAtFailure));
+      await user.click(screen.getByRole('link', { name: 'Invoices' }));
+      expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+      refreshGate.resolve();
+      await flush();
+      expect(window.location.pathname).toBe('/invoices');
+      expect(window.location.search).not.toContain('selected=');
+      expect(posts).toBe(1);
+      expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+    }, 15000);
+  });
+
   it('shows a development list and detail without sending the selected id as a list filter', async () => {
     const user = userEvent.setup();
     const listUrls: string[] = [];
@@ -589,6 +1008,55 @@ function renderPage(path: string) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+function renderBrowserWorkspace() {
+  window.history.pushState({}, '', '/review-cases');
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <nav>
+          <Link to="/invoices">Invoices</Link>
+          <Link to="/review-cases">Review cases</Link>
+        </nav>
+        <Routes>
+          <Route path="/review-cases" element={<ReviewCasePage />} />
+          <Route path="/invoices" element={<h1>Invoices</h1>} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function renderReviewCases() {
+  const router = createMemoryRouter(
+    [{ path: '/review-cases', element: <ReviewCasePage /> }],
+    { initialEntries: ['/review-cases'] },
+  );
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return router;
+}
+
+function openedCase(openedId: string, openedInvoiceId: string) {
+  return {
+    reviewCaseId: openedId,
+    reason: 'NeedsInvestigation',
+    status: 'Open',
+    invoiceId: openedInvoiceId,
+    bankTransactionId: null,
+    sourceLabel: null,
+    note: null,
+    outcome: null,
+    resolutionNote: null,
+    allocationId: null,
+    openedAt: '2026-11-05T08:00:00Z',
+    closedAt: null,
+    concurrencyToken: secretToken,
+  };
 }
 
 function text(body: string) {
