@@ -761,11 +761,13 @@ public sealed class ReviewCaseWorkflowTests
     {
         return new OpenReviewCaseHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             services.GetRequiredService<IInvoiceRepository>(),
             services.GetRequiredService<IBankTransactionRepository>(),
             services.GetRequiredService<IReviewCaseRepository>(),
             services.GetRequiredService<IReviewCaseSnapshotLookup>(),
             services.GetRequiredService<IReviewCaseOpenConflict>(),
+            services.GetRequiredService<IReviewCaseAuditWriter>(),
             unitOfWork ?? services.GetRequiredService<IUnitOfWork>(),
             time ?? new FixedTimeProvider(OpenedAt));
     }
@@ -777,9 +779,12 @@ public sealed class ReviewCaseWorkflowTests
     {
         return new ResolveReviewCaseHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             services.GetRequiredService<IReviewCaseRepository>(),
             services.GetRequiredService<IReviewCaseSnapshotLookup>(),
             services.GetRequiredService<IAllocationLinkLookup>(),
+            services.GetRequiredService<IReviewCaseAuditWriter>(),
+            services.GetRequiredService<IReviewCaseAuditConflict>(),
             unitOfWork ?? services.GetRequiredService<IUnitOfWork>(),
             new FixedTimeProvider(OpenedAt));
     }
@@ -791,8 +796,11 @@ public sealed class ReviewCaseWorkflowTests
     {
         return new DismissReviewCaseHandler(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             services.GetRequiredService<IReviewCaseRepository>(),
             services.GetRequiredService<IReviewCaseSnapshotLookup>(),
+            services.GetRequiredService<IReviewCaseAuditWriter>(),
+            services.GetRequiredService<IReviewCaseAuditConflict>(),
             unitOfWork ?? services.GetRequiredService<IUnitOfWork>(),
             new FixedTimeProvider(OpenedAt));
     }

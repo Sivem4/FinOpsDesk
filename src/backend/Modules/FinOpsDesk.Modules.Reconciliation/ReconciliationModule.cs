@@ -74,6 +74,8 @@ public static class ReconciliationModule
         services.AddScoped<IReviewCaseRepository, ReviewCaseRepository>();
         services.AddScoped<IReviewCaseSnapshotLookup, ReviewCaseSnapshotLookup>();
         services.AddScoped<IReviewCaseOpenConflict, ReviewCaseOpenConflict>();
+        services.AddScoped<IReviewCaseAuditConflict, ReviewCaseAuditConflict>();
+        services.AddScoped<IReviewCaseAuditWriter, ReviewCaseAuditWriter>();
         services.AddScoped<IAllocationLinkLookup, AllocationLinkLookup>();
         services.AddScoped<IReviewCaseQueries, ReviewCaseQueries>();
         services.AddScoped<OpenReviewCaseHandler>();

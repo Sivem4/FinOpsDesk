@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-27
+- Follow-up: [ADR 0025](0025-review-case-audit.md) records a server actor and one append-only review-case audit entry for a newly executed open, resolve, or dismiss. The lifecycle, subject uniqueness, terminal replay, and `rowversion` decisions below stay in place. Historical cases are not backfilled.
 
 ## Context
 
@@ -81,7 +82,7 @@ A new case returns 201 and `Location: /api/review-cases/{id}`. An existing open 
 
 ### Known limits
 
-The workflow is actorless. It does not record which user opened, resolved, or dismissed a case. It does not write an immutable audit record. It does not assign, comment, or reopen. Those gaps are accepted for this phase. Phase 5 owns financial audit. Phase 6 can present this API in the React operations workspace. Phase 7 owns finer roles and OpenAPI Bearer security metadata. Those roles and the later OpenAPI description were delivered after this decision. See ADR 0017 and ADR 0024.
+The workflow is actorless. It does not record which user opened, resolved, or dismissed a case. It does not write an immutable audit record. It does not assign, comment, or reopen. Those gaps are accepted for this phase. Phase 5 owns financial audit. Phase 6 can present this API in the React operations workspace. Phase 7 owns finer roles and OpenAPI Bearer security metadata. Those roles and the later OpenAPI description were delivered after this decision. See ADR 0017 and ADR 0024. ADR 0025 later adds the server actor and the append-only review-case audit entry. It does not assign, comment, or reopen a case, and it does not add an audit read.
 
 The generated OpenAPI document describes the five operations, their schemas, and the response codes. It does not yet include Bearer security metadata for these routes, which is the same gap already recorded for `GET /api/matches` and `GET /api/matches/smart`. Runtime authorization still requires `TenantMember`. That was the state of this decision. Phase 7G later described the active host composition. See ADR 0024.
 
@@ -112,5 +113,5 @@ Rejected. The unique open subject stops two active investigations of the same ro
 - `AllocationRecorded` validates an existing confirmed allocation and does not allocate.
 - Linked balances can change after the case is opened. Readers must treat them as observations.
 - Inconsistent stored money is a controlled HTTP 500, not a missing case.
-- There is no actor and no immutable audit trail for review actions.
+- There is no actor and no immutable audit trail for review actions. ADR 0025 later requires a server actor and one audit entry for a newly executed action. This sentence records the Phase 4F decision.
 - The React workspace can call these routes later without another review-case model.

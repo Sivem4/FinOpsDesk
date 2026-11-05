@@ -26,3 +26,28 @@ internal sealed class ReviewCaseOpenConflict : IReviewCaseOpenConflict
         return false;
     }
 }
+
+internal sealed class ReviewCaseAuditConflict : IReviewCaseAuditConflict
+{
+    public bool IsAuditUniquenessConflict(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqlException sqlException
+                && sqlException.Number is 2601 or 2627
+                && (sqlException.Message.Contains(
+                        ReviewCaseAuditEntryConfiguration.ActionUniqueIndexName,
+                        StringComparison.Ordinal)
+                    || sqlException.Message.Contains(
+                        ReviewCaseAuditEntryConfiguration.TerminalUniqueIndexName,
+                        StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

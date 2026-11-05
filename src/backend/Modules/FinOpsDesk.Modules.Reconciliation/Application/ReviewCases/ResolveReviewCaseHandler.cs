@@ -10,31 +10,43 @@ namespace FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 public sealed class ResolveReviewCaseHandler
 {
     private readonly ICurrentOrganizationContext _currentOrganizationContext;
+    private readonly ICurrentActorContext _currentActorContext;
     private readonly IReviewCaseRepository _reviewCaseRepository;
     private readonly IReviewCaseSnapshotLookup _snapshotLookup;
     private readonly IAllocationLinkLookup _allocationLinkLookup;
+    private readonly IReviewCaseAuditWriter _auditWriter;
+    private readonly IReviewCaseAuditConflict _auditConflict;
     private readonly IUnitOfWork _unitOfWork;
     private readonly TimeProvider _timeProvider;
 
     public ResolveReviewCaseHandler(
         ICurrentOrganizationContext currentOrganizationContext,
+        ICurrentActorContext currentActorContext,
         IReviewCaseRepository reviewCaseRepository,
         IReviewCaseSnapshotLookup snapshotLookup,
         IAllocationLinkLookup allocationLinkLookup,
+        IReviewCaseAuditWriter auditWriter,
+        IReviewCaseAuditConflict auditConflict,
         IUnitOfWork unitOfWork,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(currentOrganizationContext);
+        ArgumentNullException.ThrowIfNull(currentActorContext);
         ArgumentNullException.ThrowIfNull(reviewCaseRepository);
         ArgumentNullException.ThrowIfNull(snapshotLookup);
         ArgumentNullException.ThrowIfNull(allocationLinkLookup);
+        ArgumentNullException.ThrowIfNull(auditWriter);
+        ArgumentNullException.ThrowIfNull(auditConflict);
         ArgumentNullException.ThrowIfNull(unitOfWork);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _currentOrganizationContext = currentOrganizationContext;
+        _currentActorContext = currentActorContext;
         _reviewCaseRepository = reviewCaseRepository;
         _snapshotLookup = snapshotLookup;
         _allocationLinkLookup = allocationLinkLookup;
+        _auditWriter = auditWriter;
+        _auditConflict = auditConflict;
         _unitOfWork = unitOfWork;
         _timeProvider = timeProvider;
     }
@@ -54,6 +66,12 @@ public sealed class ResolveReviewCaseHandler
         if (!TryNormalize(command, out string? resolutionNote, out Error? shapeError))
         {
             return Result<ReviewCaseResponse>.Failure(shapeError!);
+        }
+
+        if (!_currentActorContext.TryGetActorId(out string actorId))
+        {
+            return Result<ReviewCaseResponse>.Failure(
+                ReconciliationApplicationErrors.ActorRequired);
         }
 
         OrganizationId organizationId = _currentOrganizationContext.OrganizationId;
@@ -110,11 +128,21 @@ public sealed class ResolveReviewCaseHandler
         }
 
         _reviewCaseRepository.ExpectRowVersion(reviewCase, expectedVersion);
+        _auditWriter.AppendResolved(reviewCase, actorId);
         try
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch (ConcurrencyConflictException)
+        {
+            return await RecoverAsync(
+                organizationId,
+                command,
+                resolutionNote,
+                cancellationToken);
+        }
+        catch (UniqueConstraintConflictException exception)
+            when (_auditConflict.IsAuditUniquenessConflict(exception))
         {
             return await RecoverAsync(
                 organizationId,

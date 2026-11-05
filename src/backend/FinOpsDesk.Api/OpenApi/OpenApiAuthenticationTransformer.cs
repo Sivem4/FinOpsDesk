@@ -143,7 +143,14 @@ internal static class OpenApiAuthenticationTransformer
         bool commitGuard = state.UsesProductionCookie && allowlisted;
         bool handlerProblem = HasProblemContent(operation, "403")
             && !(state.UsesProductionCookie && excludedWrite);
-        AppendDescription(operation, FinancialDescription(state, classification, allowlisted, excludedWrite));
+        string description = FinancialDescription(state, classification, allowlisted, excludedWrite);
+        if (handlerProblem)
+        {
+            description +=
+                " A missing or invalid server actor returns 403 application/problem+json with code reconciliation.actor.required, including an identical replay.";
+        }
+
+        AppendDescription(operation, description);
         string unauthenticated =
             "Authentication challenge. The response has no body. Cache-Control is no-store.";
         if (commitGuard)

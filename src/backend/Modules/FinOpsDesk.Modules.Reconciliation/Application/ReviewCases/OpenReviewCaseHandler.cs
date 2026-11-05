@@ -10,39 +10,47 @@ namespace FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 public sealed class OpenReviewCaseHandler
 {
     private readonly ICurrentOrganizationContext _currentOrganizationContext;
+    private readonly ICurrentActorContext _currentActorContext;
     private readonly IInvoiceRepository _invoiceRepository;
     private readonly IBankTransactionRepository _bankTransactionRepository;
     private readonly IReviewCaseRepository _reviewCaseRepository;
     private readonly IReviewCaseSnapshotLookup _snapshotLookup;
     private readonly IReviewCaseOpenConflict _openConflict;
+    private readonly IReviewCaseAuditWriter _auditWriter;
     private readonly IUnitOfWork _unitOfWork;
     private readonly TimeProvider _timeProvider;
 
     public OpenReviewCaseHandler(
         ICurrentOrganizationContext currentOrganizationContext,
+        ICurrentActorContext currentActorContext,
         IInvoiceRepository invoiceRepository,
         IBankTransactionRepository bankTransactionRepository,
         IReviewCaseRepository reviewCaseRepository,
         IReviewCaseSnapshotLookup snapshotLookup,
         IReviewCaseOpenConflict openConflict,
+        IReviewCaseAuditWriter auditWriter,
         IUnitOfWork unitOfWork,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(currentOrganizationContext);
+        ArgumentNullException.ThrowIfNull(currentActorContext);
         ArgumentNullException.ThrowIfNull(invoiceRepository);
         ArgumentNullException.ThrowIfNull(bankTransactionRepository);
         ArgumentNullException.ThrowIfNull(reviewCaseRepository);
         ArgumentNullException.ThrowIfNull(snapshotLookup);
         ArgumentNullException.ThrowIfNull(openConflict);
+        ArgumentNullException.ThrowIfNull(auditWriter);
         ArgumentNullException.ThrowIfNull(unitOfWork);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _currentOrganizationContext = currentOrganizationContext;
+        _currentActorContext = currentActorContext;
         _invoiceRepository = invoiceRepository;
         _bankTransactionRepository = bankTransactionRepository;
         _reviewCaseRepository = reviewCaseRepository;
         _snapshotLookup = snapshotLookup;
         _openConflict = openConflict;
+        _auditWriter = auditWriter;
         _unitOfWork = unitOfWork;
         _timeProvider = timeProvider;
     }
@@ -57,6 +65,12 @@ public sealed class OpenReviewCaseHandler
         {
             return Result<OpenReviewCaseResponse>.Failure(
                 ReconciliationApplicationErrors.ReviewCaseInvalidRequest);
+        }
+
+        if (!_currentActorContext.TryGetActorId(out string actorId))
+        {
+            return Result<OpenReviewCaseResponse>.Failure(
+                ReconciliationApplicationErrors.ActorRequired);
         }
 
         OrganizationId organizationId = _currentOrganizationContext.OrganizationId;
@@ -110,6 +124,7 @@ public sealed class OpenReviewCaseHandler
         }
 
         _reviewCaseRepository.Add(reviewCase);
+        _auditWriter.AppendOpened(reviewCase, actorId);
         try
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);

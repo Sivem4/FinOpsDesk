@@ -2,13 +2,13 @@
 
 - Status: Accepted
 - Date: 2026-10-28
-- Follow-up: [ADR 0012](0012-allocation-reversal.md) adds the reversal action and its read mapping. The confirmation-audit decision below remains the foundation.
+- Follow-up: [ADR 0012](0012-allocation-reversal.md) adds the reversal action and its read mapping. The confirmation-audit decision below remains the foundation. [ADR 0025](0025-review-case-audit.md) adds a separate review-case audit entry. It does not extend `FinancialAuditEntry`.
 
 ## Context
 
 Exact-match confirmation, explicit-amount allocation, and operator-approved batch exact matching already change invoice balances, bank-transaction balances, and allocations. Those commits need a durable record of who confirmed the amount and which financial operation produced it. A later reversal will need to sit beside that record rather than erase it.
 
-The authenticated organization already comes from the trusted `org_id` claim. The acting user is a separate fact. `TenantMember` checks the organization claim and does not identify the person. Review cases and batch receipts were intentionally actorless when they were introduced.
+The authenticated organization already comes from the trusted `org_id` claim. The acting user is a separate fact. `TenantMember` checks the organization claim and does not identify the person. Review cases and batch receipts were intentionally actorless when they were introduced. ADR 0025 later attributes a newly executed review open, resolve, or dismiss without adding those facts to `FinancialAuditEntry`.
 
 `MatchSuggestion` is still an unmapped domain type. Confirming an allocation is not a suggestion state transition. Persisting suggestions remains a separate, deferred decision.
 

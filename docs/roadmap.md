@@ -354,6 +354,8 @@ Status: Planned.
 
 Phase 8A adds a read-only review case workspace. `DevelopmentJwt` and `ProductionCookie` list existing cases through `GET /api/review-cases` and open one case through `GET /api/review-cases/{id}`. The cookie screen requires verified `review-cases.read`. The detail shows the persisted case fields and current linked balances as observations, including a zero balance. Optional notes, outcome, allocation id, and closed time stay absent when the case has none. A cookie read denial revalidates the session and does not sign the browser out while that session remains verified. It does not create, resolve, or dismiss a case, and it does not show `concurrencyToken`. Deployed financial flags stay unset. The cookie write allowlist is unchanged. A Chromium journey seeds one case in the existing cookie read host, with the read flag enabled only in that test process, and checks that browsing sends no review-case POST. Assignment, comments, a dispute capability, audit, and the operational dashboard remain later Phase 8 work.
 
+Phase 8B records a newly executed review open, resolve, or dismiss in `ReviewCaseAuditEntry`. The entry stores the server actor, the action, and the decision payload, and it commits in the same SQL Server transaction as the case change. An identical replay requires a valid actor and does not append an entry. Historical cases are not backfilled. There is no audit read endpoint and no audit UI. The list and detail responses still omit the actor. Deployed financial flags stay unset. The cookie write allowlist is unchanged. See ADR 0025.
+
 Add:
 
 - Disputes module;

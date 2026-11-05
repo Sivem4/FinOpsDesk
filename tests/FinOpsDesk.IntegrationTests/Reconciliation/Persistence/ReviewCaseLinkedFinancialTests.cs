@@ -297,11 +297,13 @@ public sealed class ReviewCaseLinkedFinancialTests
         await using AsyncServiceScope scope = provider.CreateAsyncScope();
         OpenReviewCaseHandler handler = new(
             new TestCurrentOrganizationContext(organizationId),
+            new TestCurrentActorContext(),
             scope.ServiceProvider.GetRequiredService<IInvoiceRepository>(),
             scope.ServiceProvider.GetRequiredService<IBankTransactionRepository>(),
             scope.ServiceProvider.GetRequiredService<IReviewCaseRepository>(),
             scope.ServiceProvider.GetRequiredService<IReviewCaseSnapshotLookup>(),
             scope.ServiceProvider.GetRequiredService<IReviewCaseOpenConflict>(),
+            scope.ServiceProvider.GetRequiredService<IReviewCaseAuditWriter>(),
             scope.ServiceProvider.GetRequiredService<IUnitOfWork>(),
             new FixedTimeProvider(OpenedAt));
         Result<OpenReviewCaseResponse> result = await handler.Handle(command, CancellationToken.None);

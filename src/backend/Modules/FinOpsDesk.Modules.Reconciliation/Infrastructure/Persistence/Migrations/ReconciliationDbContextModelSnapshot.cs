@@ -534,6 +534,9 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("OrganizationId", "Id")
+                        .HasName("AK_ReviewCases_OrganizationId_Id");
+
                     b.HasIndex("OrganizationId", "BankTransactionId");
 
                     b.HasIndex("OrganizationId", "InvoiceId");
@@ -553,6 +556,90 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                             t.HasCheckConstraint("CK_ReviewCases_StatusShape", "([Status] IN (1, 2, 3)) AND ([Outcome] IS NULL OR [Outcome] IN (1, 2, 3)) AND (([Status] = 1 AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ResolutionNote] IS NULL AND [ClosedAt] IS NULL) OR ([Status] = 2 AND [Outcome] IS NOT NULL AND [ClosedAt] IS NOT NULL AND (([Outcome] = 1 AND [AllocationId] IS NOT NULL) OR ([Outcome] IN (2, 3) AND [AllocationId] IS NULL))) OR ([Status] = 3 AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ClosedAt] IS NOT NULL))");
                         });
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseAuditEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Action")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid?>("AllocationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("BankTransactionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("Outcome")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("Reason")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("ReviewCaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SourceLabel")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "AllocationId");
+
+                    b.HasIndex("OrganizationId", "BankTransactionId");
+
+                    b.HasIndex("OrganizationId", "InvoiceId");
+
+                    b.HasIndex("OrganizationId", "ReviewCaseId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReviewCaseAuditEntries_OrganizationId_ReviewCaseId_Terminal")
+                        .HasFilter("[Action] IN (2, 3)");
+
+                    b.HasIndex("OrganizationId", "ReviewCaseId", "Action")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReviewCaseAuditEntries_OrganizationId_ReviewCaseId_Action");
+
+                    b.ToTable("ReviewCaseAuditEntries", "reconciliation", t =>
+                        {
+                            t.HasTrigger("TR_ReviewCaseAuditEntries_RejectMutation");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAuditEntries_Action", "([Action] IN (1, 2, 3))");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAuditEntries_ActorId", "DATALENGTH([ActorId]) = DATALENGTH(LTRIM(RTRIM([ActorId]))) AND DATALENGTH([ActorId]) BETWEEN 2 AND 512");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAuditEntries_DismissedShape", "([Action] <> 3 OR ([Reason] IS NULL AND [InvoiceId] IS NULL AND [BankTransactionId] IS NULL AND [SourceLabel] IS NULL AND [Note] IS NULL AND [Outcome] IS NULL AND [AllocationId] IS NULL AND ([ResolutionNote] IS NULL OR (DATALENGTH([ResolutionNote]) = DATALENGTH(LTRIM(RTRIM([ResolutionNote]))) AND DATALENGTH([ResolutionNote]) BETWEEN 2 AND 1000))))");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAuditEntries_OpenedShape", "([Action] <> 1 OR ([Reason] IS NOT NULL AND ([Reason] IN (1, 2)) AND (([Reason] = 1 AND [InvoiceId] IS NOT NULL AND [BankTransactionId] IS NOT NULL) OR ([Reason] = 2 AND (([InvoiceId] IS NOT NULL AND [BankTransactionId] IS NULL) OR ([InvoiceId] IS NULL AND [BankTransactionId] IS NOT NULL)))) AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ResolutionNote] IS NULL AND ([SourceLabel] IS NULL OR [SourceLabel] COLLATE Latin1_General_100_BIN2 IN (N'manual', N'exact-1', N'smart-1')) AND ([Note] IS NULL OR (DATALENGTH([Note]) = DATALENGTH(LTRIM(RTRIM([Note]))) AND DATALENGTH([Note]) BETWEEN 2 AND 1000))))");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAuditEntries_ResolvedShape", "([Action] <> 2 OR ([Reason] IS NULL AND [InvoiceId] IS NULL AND [BankTransactionId] IS NULL AND [SourceLabel] IS NULL AND [Note] IS NULL AND [Outcome] IS NOT NULL AND [Outcome] IN (1, 2, 3) AND (([Outcome] = 1 AND [AllocationId] IS NOT NULL) OR ([Outcome] IN (2, 3) AND [AllocationId] IS NULL)) AND ([ResolutionNote] IS NULL OR (DATALENGTH([ResolutionNote]) = DATALENGTH(LTRIM(RTRIM([ResolutionNote]))) AND DATALENGTH([ResolutionNote]) BETWEEN 2 AND 1000))))");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
@@ -665,6 +752,34 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasForeignKey("OrganizationId", "InvoiceId")
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseAuditEntry", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "AllocationId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "BankTransactionId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Invoices.Invoice", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "InvoiceId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ReviewCaseId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

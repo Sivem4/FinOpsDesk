@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-03
+- Follow-up: [ADR 0025](0025-review-case-audit.md) adds `ReviewCaseAuditEntry` for a newly executed review open, resolve, or dismiss. Those three routes stay outside the cookie write allowlist.
 
 ## Context
 
@@ -137,7 +138,7 @@ The existing keys stay as they are: import hash, confirmation and explicit-alloc
 
 Exact confirmation, explicit allocation, reversal, and each committed batch item still write `FinancialAuditEntry`. The cookie actor is `ApplicationUser.Id`. The JWT actor is the validated `sub`. `audit.read` is unchanged.
 
-CSV import, the batch execution header, and review open, resolve, and dismiss do not write that entry. `FinancialAuditEntry` requires an allocation, an invoice, and a bank transaction, so those operations cannot be attributed through it without a schema change. This increment does not add a general operation-audit table. The later model, when one of those routes is considered for the allowlist, is a small reconciliation record written in the same transaction as the protected effect: organization, operation, subject, server-side actor, and time. It does not replace allocation audit rows. Until that record and a reviewed recovery path exist, those six routes stay outside the cookie allowlist. The cookie actor for an allocation audit remains `ApplicationUser.Id`. The JWT actor remains the validated `sub`.
+CSV import and the batch execution header do not write `FinancialAuditEntry`. Review open, resolve, and dismiss also do not write that entry. `FinancialAuditEntry` requires an allocation, an invoice, and a bank transaction, so those operations cannot be attributed through it without a schema change. This increment does not add a general operation-audit table. Before cookie activation of CSV import or batch execution can be considered, that route still needs an operation audit written in the same transaction as its effect—organization, operation, subject, server-side actor, and time—and a reviewed recovery path. ADR 0025 delivers `ReviewCaseAuditEntry` for a newly executed review open, resolve, or dismiss, in the same transaction as that case change. That record does not replace allocation audit rows. The three review routes stay outside the cookie allowlist. Activating them still requires a reviewed recovery path and a separate decision to admit those operations. The cookie actor for an allocation audit remains `ApplicationUser.Id`. The JWT actor remains the validated `sub`.
 
 ### Browser contract
 

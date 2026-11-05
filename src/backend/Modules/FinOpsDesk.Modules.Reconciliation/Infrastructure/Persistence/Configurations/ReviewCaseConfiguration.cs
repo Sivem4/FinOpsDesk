@@ -22,6 +22,8 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
     internal const string ClosedAtCheckSql =
         "[ClosedAt] IS NULL OR [ClosedAt] >= [OpenedAt]";
 
+    internal const string OrganizationAlternateKeyName = "AK_ReviewCases_OrganizationId_Id";
+
     internal const string OpenSubjectIndexName = "UX_ReviewCases_OrganizationId_SubjectKey_Open";
 
     internal static readonly string ReasonShapeCheckSql =
@@ -74,6 +76,13 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
         });
 
         builder.HasKey(reviewCase => reviewCase.Id);
+
+        builder.HasAlternateKey(reviewCase => new
+        {
+            reviewCase.OrganizationId,
+            reviewCase.Id,
+        })
+            .HasName(OrganizationAlternateKeyName);
 
         builder.Property(reviewCase => reviewCase.Id)
             .HasConversion(ReconciliationValueConverters.ReviewCaseId)

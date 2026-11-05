@@ -187,17 +187,75 @@ public sealed class DismissReviewCaseHandlerTests
             CancellationToken.None);
     }
 
+    [Fact]
+    public async Task Handle_should_append_one_dismissed_entry_and_skip_an_identical_replay()
+    {
+        ReviewCase reviewCase = OpenCase();
+        FakeReviewCaseRepository reviewCases = new();
+        reviewCases.Seed(reviewCase, ReviewCaseHandlerTestDoubles.CurrentVersion);
+        DateTimeOffset closedAt = ReviewCaseHandlerTestDoubles.OpenedAt.AddMinutes(2);
+        FixedTimeProvider time = new(closedAt);
+        RecordingReviewCaseAuditWriter audit = new();
+        ScriptedUnitOfWork unitOfWork = new();
+        DismissReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            reviewCases,
+            unitOfWork: unitOfWork,
+            time: time,
+            audit: audit);
+
+        Result<ReviewCaseResponse> applied = await handler.Handle(
+            new DismissReviewCaseCommand(
+                reviewCase.Id,
+                " closed ",
+                Convert.ToBase64String(ReviewCaseHandlerTestDoubles.CurrentVersion)),
+            CancellationToken.None);
+
+        Assert.True(applied.IsSuccess);
+        ReviewCaseAuditEntry entry = Assert.Single(audit.Entries);
+        Assert.Equal(ReviewCaseAuditAction.Dismissed, entry.Action);
+        Assert.Equal("operator-a", entry.ActorId);
+        Assert.Equal(closedAt, entry.RecordedAt);
+        Assert.Equal("closed", entry.ResolutionNote);
+        Assert.Null(entry.Outcome);
+        Assert.Equal(1, time.ReadCount);
+
+        DismissReviewCaseHandler replay = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            reviewCases,
+            unitOfWork: unitOfWork,
+            time: time,
+            actor: new FixedActorContext(null),
+            audit: audit);
+        Result<ReviewCaseResponse> repeated = await replay.Handle(
+            new DismissReviewCaseCommand(
+                reviewCase.Id,
+                "closed",
+                Convert.ToBase64String(ReviewCaseHandlerTestDoubles.CurrentVersion)),
+            CancellationToken.None);
+
+        Assert.True(repeated.IsFailure);
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired.Code, repeated.Error.Code);
+        Assert.Single(audit.Entries);
+        Assert.Equal(1, unitOfWork.SaveCount);
+    }
+
     private static DismissReviewCaseHandler CreateHandler(
         ICurrentOrganizationContext organization,
         FakeReviewCaseRepository reviewCases,
         FakeReviewCaseSnapshotLookup? lookup = null,
         ScriptedUnitOfWork? unitOfWork = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ICurrentActorContext? actor = null,
+        RecordingReviewCaseAuditWriter? audit = null)
     {
         return new DismissReviewCaseHandler(
             organization,
+            actor ?? new FixedActorContext(),
             reviewCases,
             lookup ?? new FakeReviewCaseSnapshotLookup(),
+            audit ?? new RecordingReviewCaseAuditWriter(),
+            new NoReviewCaseAuditConflict(),
             unitOfWork ?? new ScriptedUnitOfWork(),
             time ?? new FixedTimeProvider(ReviewCaseHandlerTestDoubles.OpenedAt));
     }

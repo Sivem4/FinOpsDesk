@@ -109,6 +109,58 @@ internal sealed class FixedTimeProvider : TimeProvider
     }
 }
 
+internal sealed class FixedActorContext : ICurrentActorContext
+{
+    private readonly string? _actorId;
+
+    public FixedActorContext(string? actorId = "operator-a")
+    {
+        _actorId = actorId;
+    }
+
+    public bool TryGetActorId(out string actorId)
+    {
+        if (string.IsNullOrWhiteSpace(_actorId)
+            || _actorId != _actorId.Trim()
+            || _actorId.Length > ReviewCaseAuditEntry.MaxActorIdLength)
+        {
+            actorId = string.Empty;
+            return false;
+        }
+
+        actorId = _actorId;
+        return true;
+    }
+}
+
+internal sealed class NoReviewCaseAuditConflict : IReviewCaseAuditConflict
+{
+    public bool IsAuditUniquenessConflict(Exception exception)
+    {
+        return false;
+    }
+}
+
+internal sealed class RecordingReviewCaseAuditWriter : IReviewCaseAuditWriter
+{
+    public List<ReviewCaseAuditEntry> Entries { get; } = [];
+
+    public void AppendOpened(ReviewCase reviewCase, string actorId)
+    {
+        Entries.Add(ReviewCaseAuditEntry.ForOpened(ReviewCaseAuditEntryId.New(), reviewCase, actorId));
+    }
+
+    public void AppendResolved(ReviewCase reviewCase, string actorId)
+    {
+        Entries.Add(ReviewCaseAuditEntry.ForResolved(ReviewCaseAuditEntryId.New(), reviewCase, actorId));
+    }
+
+    public void AppendDismissed(ReviewCase reviewCase, string actorId)
+    {
+        Entries.Add(ReviewCaseAuditEntry.ForDismissed(ReviewCaseAuditEntryId.New(), reviewCase, actorId));
+    }
+}
+
 internal sealed class ScriptedUnitOfWork : IUnitOfWork
 {
     public int SaveCount { get; private set; }
