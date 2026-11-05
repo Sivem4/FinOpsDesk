@@ -161,6 +161,10 @@ function capabilityForPath(path: string): string | null {
     return 'audit.read';
   }
 
+  if (/^\/api\/review-cases\/[^/]+\/audit$/.test(pathname)) {
+    return 'audit.read';
+  }
+
   if (pathname === '/api/review-cases' || /^\/api\/review-cases\/[^/]+$/.test(pathname)) {
     return 'review-cases.read';
   }

@@ -4,6 +4,10 @@ The operations workspace is a Vite application in `src/frontend`. It shows the i
 
 Ordinary `npm run dev` uses `DevelopmentJwt` and proxies `/api` and `/health` only. `npm run dev:cookie`, or `scripts\dev-frontend.ps1 -Cookie`, selects the cookie session and also proxies `/login`, `/logout`, and `/signin-oidc`. A production build always uses the cookie session. It does not include the development token screen, and a `VITE_` variable, query parameter, or browser storage value cannot turn that screen back on.
 
+## Review cases
+
+`/review-cases` reads the existing case list and one selected case. Choosing a case does not read its audit. `View audit` on that detail calls `GET /api/review-cases/{id}/audit` with `page=1` and `pageSize=50`. Cookie mode shows the action only when the verified session also has `audit.read`. A session with only `review-cases.read` keeps the case detail and does not send the audit request. DevelopmentJwt shows the action when the current token is present. The panel keeps the returned order and does not turn the current balances into historical amounts. An empty page does not mean that no earlier action occurred. A page that contains only a closing entry does not invent the opening entry. There is no separate audit route and no pager on that panel.
+
 ## Prerequisites
 
 - .NET 10 SDK

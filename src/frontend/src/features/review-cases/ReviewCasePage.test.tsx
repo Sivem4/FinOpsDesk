@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router';
@@ -301,6 +301,284 @@ describe('review case page', () => {
     renderPage('/review-cases?page=0&selected=not-a-guid');
     expect(screen.getByText('This review case address can’t be opened. Open Review cases again from the menu.')).toBeInTheDocument();
   });
+
+  it('loads stored history only after View audit and keeps the returned order', async () => {
+    const user = userEvent.setup();
+    const auditUrls: string[] = [];
+    let posts = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', ({ request }) => {
+        auditUrls.push(request.url);
+        return text(auditDocument([
+          auditEntry({
+            id: dismissedAuditId,
+            action: 'Dismissed',
+            actorId: 'later-closer',
+            recordedAt: '2026-11-05T08:00:00Z',
+            reason: null,
+            invoiceId: null,
+            bankTransactionId: null,
+            sourceLabel: null,
+            note: null,
+          }),
+          auditEntry({ id: openedAuditId, action: 'Opened', actorId: 'actor with spaces', recordedAt: '2026-11-05T09:00:00Z' }),
+        ]));
+      }),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/resolve', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/dismiss', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+
+    expect(await screen.findByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.getByText('Invoice outstanding 0.00 PLN')).toBeInTheDocument();
+    expect(auditUrls).toHaveLength(0);
+    expect(posts).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'View audit' }));
+    const actor = await screen.findByText('Actor actor with spaces');
+    const closer = screen.getByText('Actor later-closer');
+    expect(closer.compareDocumentPosition(actor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Reason CompetingMatch')).toBeInTheDocument();
+    expect(screen.getByText('Stored history is separate from the current case and from the balances above.')).toBeInTheDocument();
+    expect(screen.queryByText('The opening entry is not in the stored history.')).not.toBeInTheDocument();
+    expect(new URL(auditUrls[0] ?? 'http://localhost/missing').searchParams.get('page')).toBe('1');
+    expect(new URL(auditUrls[0] ?? 'http://localhost/missing').searchParams.get('pageSize')).toBe('50');
+    expect(posts).toBe(0);
+    expect(screen.getByLabelText('Status')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide audit' }));
+    expect(screen.queryByText('Actor actor with spaces')).not.toBeInTheDocument();
+  });
+
+  it('shows a closing entry when the count is zero and does not invent the opening entry', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => text(auditDocument([
+        auditEntry({
+          action: 'Dismissed',
+          actorId: 'historical-closer',
+          reason: null,
+          invoiceId: null,
+          bankTransactionId: null,
+          sourceLabel: null,
+          note: null,
+          resolutionNote: null,
+        }),
+      ], 0))),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+
+    const history = await screen.findByRole('region', { name: 'Stored history' });
+    expect(within(history).getByText('Actor historical-closer')).toBeInTheDocument();
+    expect(within(history).getByText('Dismissed')).toBeInTheDocument();
+    expect(within(history).getByText('Resolution note none')).toBeInTheDocument();
+    expect(screen.getByText('The opening entry is not in the stored history.')).toBeInTheDocument();
+    expect(screen.queryByText('No stored history was found for this case. Earlier actions may not have been recorded.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Actor opening-actor')).not.toBeInTheDocument();
+    expect(screen.getByText('Invoice outstanding 0.00 PLN')).toBeInTheDocument();
+  });
+
+  it('shows an empty history without claiming that nothing happened', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => text(auditDocument([], 0))),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+
+    expect(await screen.findByText('No stored history was found for this case. Earlier actions may not have been recorded.')).toBeInTheDocument();
+    expect(screen.queryByText('Actor')).not.toBeInTheDocument();
+  });
+
+  it('does not show audit or request it for a cookie session without audit.read', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    let auditCalls = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => {
+        auditCalls += 1;
+        return text(auditDocument([auditEntry()]));
+      }),
+    );
+
+    renderPage(`/review-cases?selected=${caseId}`);
+
+    expect(await screen.findByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View audit' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Actor opening-actor')).not.toBeInTheDocument();
+    expect(auditCalls).toBe(0);
+  });
+
+  it('reads cookie history when audit.read is verified', async () => {
+    const user = userEvent.setup();
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => text(auditDocument([
+        auditEntry({ action: 'Resolved', actorId: 'cookie-resolver', reason: null, invoiceId: null, bankTransactionId: null, sourceLabel: null, note: null, outcome: 'NoActionRequired', resolutionNote: 'handled in the book' }),
+      ]))),
+    );
+
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+
+    const history = await screen.findByRole('region', { name: 'Stored history' });
+    expect(within(history).getByText('Actor cookie-resolver')).toBeInTheDocument();
+    expect(within(history).getByText('Outcome NoActionRequired')).toBeInTheDocument();
+    expect(within(history).getByText('Allocation none')).toBeInTheDocument();
+    expect(within(history).getByText('Resolution note handled in the book')).toBeInTheDocument();
+    expect(screen.queryByText('Ada Operator')).not.toBeInTheDocument();
+  });
+
+  it('drops a late audit response when another case is selected', async () => {
+    const user = userEvent.setup();
+    const gate = deferred<void>();
+    server.use(
+      http.get('/api/review-cases', () => text(`{"items":[${caseDocument()},${caseDocument({ reviewCaseId: otherCaseId, note: 'second case' })}],"page":1,"pageSize":50,"totalCount":2}`)),
+      http.get('/api/review-cases/:id', ({ params }) => text(detailFrom(caseDocument({
+        reviewCaseId: String(params.id),
+        note: params.id === otherCaseId ? 'second case' : 'watch the zero balance',
+      })))),
+      http.get('/api/review-cases/:id/audit', async () => {
+        await gate.promise;
+        return text(auditDocument([
+          auditEntry({ actorId: 'actor-from-first-case' }),
+        ]));
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+    expect(await screen.findByText('Loading stored history')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: `Show review case ${otherCaseId}` }));
+    gate.resolve();
+    expect(await screen.findByText(`Case ${otherCaseId}`)).toBeInTheDocument();
+    expect(screen.queryByText('Actor actor-from-first-case')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide audit' })).not.toBeInTheDocument();
+  });
+
+  it('hides history when verified authorization becomes unavailable', async () => {
+    const user = userEvent.setup();
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
+    let auditCalls = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => {
+        auditCalls += 1;
+        return text(auditDocument([auditEntry({ actorId: 'actor-kept' })]));
+      }),
+    );
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+    expect(await screen.findByText('Actor actor-kept')).toBeInTheDocument();
+    const callsBeforeLoss = auditCalls;
+
+    sessionStore.markAuthorizationUnavailable();
+
+    expect(await screen.findByText('Review cases are not available for this session.')).toBeInTheDocument();
+    expect(screen.queryByText('Actor actor-kept')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View audit' })).not.toBeInTheDocument();
+    await flush();
+    expect(auditCalls).toBe(callsBeforeLoss);
+  });
+
+  it('keeps the cookie session when stored history stays forbidden', async () => {
+    const user = userEvent.setup();
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => HttpResponse.json({ title: 'Forbidden' }, { status: 403 })),
+    );
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+
+    expect(await screen.findByText('Stored history is not available for this organization.')).toBeInTheDocument();
+    expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update access' })).not.toBeInTheDocument();
+    expect(sessionStore.getSnapshot().authenticated).toBe(true);
+    expect(sessionStore.getSnapshot().authorization).toBe('verified');
+    expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
+    expect(sessionStore.getSnapshot().activeOrganization?.displayName).toBe('North Ledger');
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Stored history is not available for this organization.')).toBeInTheDocument();
+    expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
+    expect(screen.getByText('Invoice outstanding 0.00 PLN')).toBeInTheDocument();
+  });
+
+  it('keeps the development token and the case detail when stored history is forbidden', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => HttpResponse.json({ title: 'Forbidden' }, { status: 403 })),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+
+    expect(await screen.findByText('You don’t have access to this stored history.')).toBeInTheDocument();
+    expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.getByText('Invoice outstanding 0.00 PLN')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update access' })).not.toBeInTheDocument();
+    expect(sessionStore.getSnapshot().token).toBe('memory-token');
+  });
+
+  it('does not keep a previous history visible after the next read cannot be read', async () => {
+    const user = userEvent.setup();
+    let auditCalls = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/audit', () => {
+        auditCalls += 1;
+        if (auditCalls === 1) {
+          return text(auditDocument([auditEntry({ actorId: 'actor-once' })]));
+        }
+        return text('{"items":[{"action":"Nope"}]}');
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+    expect(await screen.findByText('Actor actor-once')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide audit' }));
+    await user.click(screen.getByRole('button', { name: 'View audit' }));
+
+    expect(await screen.findByText('We couldn’t read the stored history.')).toBeInTheDocument();
+    expect(screen.queryByText('Actor actor-once')).not.toBeInTheDocument();
+    expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
+  });
 });
 
 function renderPage(path: string) {
@@ -395,7 +673,11 @@ async function chooseStatus(user: ReturnType<typeof userEvent.setup>, status: st
   await user.click(screen.getByRole('option', { name: status }));
 }
 
-function cookieSession(capabilities: readonly string[]): CookieSessionFields {
+function cookieSession(
+  capabilities: readonly string[],
+  organizationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  displayName = 'North Ledger',
+): CookieSessionFields {
   return {
     authenticated: true,
     csrfToken: 'csrf-session',
@@ -405,12 +687,44 @@ function cookieSession(capabilities: readonly string[]): CookieSessionFields {
     expiresAt: null,
     organizations: [],
     activeOrganization: {
-      organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      displayName: 'North Ledger',
+      organizationId,
+      displayName,
     },
     authorization: capabilities.length > 0 ? 'verified' : 'restricted',
     capabilities,
   };
+}
+
+const otherCaseId = '88888888-8888-4888-8888-888888888888';
+const openedAuditId = '99999999-9999-4999-8999-999999999999';
+const dismissedAuditId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+function auditDocument(items: Record<string, unknown>[], totalCount = items.length): string {
+  return JSON.stringify({ items, page: 1, pageSize: 50, totalCount });
+}
+
+function auditEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: openedAuditId,
+    action: 'Opened',
+    actorId: 'opening-actor',
+    recordedAt: '2026-11-05T08:00:00Z',
+    reason: 'CompetingMatch',
+    invoiceId,
+    bankTransactionId: bankId,
+    sourceLabel: 'manual',
+    note: 'opening note',
+    outcome: null,
+    allocationId: null,
+    resolutionNote: null,
+    ...overrides,
+  };
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
 function deferred<T>() {

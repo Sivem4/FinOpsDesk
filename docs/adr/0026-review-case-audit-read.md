@@ -30,7 +30,7 @@ No index and no migration are added. One case still has at most one `Opened` row
 - Viewer and OrganizationAdmin alone cannot read this history when cookie reads are enabled. Operator and ReversalApprover can.
 - `DevelopmentJwt` still ignores Access roles. A token without `sub` can read the stored actor.
 - Deployed `Authentication:FinancialReadAuthorization` and `Authentication:FinancialWriteAuthorization` stay unset. The cookie write allowlist stays unchanged.
-- There is still no audit UI. Phase 8 stays planned.
+- The existing `/review-cases` screen opens this history with `View audit` on the selected case. The list does not call the route, and the address does not open the panel. Cookie mode shows the action only when authorization is verified and `audit.read` is present. `review-cases.read` still shows the case without the history or the actor. DevelopmentJwt shows the action when the current token is present and does not consult cookie capabilities. The browser requests page 1 and page size 50, keeps the returned order, and does not treat a count that differs from the returned rows as a corrupt payload. A cookie HTTP 403 uses the existing session revalidation and does not sign out. A DevelopmentJwt HTTP 403 stays on the case detail and does not clear the token. The panel adds no route, permission, or backend contract. Phase 8 stays planned.
 
 ## Alternatives considered
 

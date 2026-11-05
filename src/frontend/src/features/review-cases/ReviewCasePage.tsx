@@ -16,14 +16,18 @@ import {
   Typography,
 } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { useSearchParams } from 'react-router';
 
-import { ApiError, NetworkError, UnexpectedResponseError } from '../../shared/api/errors';
+import { ApiError, NetworkError, StaleSessionError, UnexpectedResponseError } from '../../shared/api/errors';
 import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { endSession, useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
+import {
+  listReviewCaseAudit,
+  type ReviewCaseAuditEntry,
+} from './review-case-audit-api';
 import {
   getReviewCase,
   listReviewCases,
@@ -333,7 +337,15 @@ function SelectedReviewCase({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
+  const session = useSession();
+  const cookie = browserAuthMode() === 'cookie';
   const item = detail.reviewCase;
+  const canReadAudit = cookie
+    ? session.authorization === 'verified' && session.capabilities.includes('audit.read')
+    : session.token !== null;
+  const auditKey = cookie
+    ? `${session.epoch}:${session.readiness}:${item.reviewCaseId}`
+    : `${session.epoch}:${item.reviewCaseId}`;
   return (
     <Paper component="section" aria-label="Selected review case" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
@@ -357,7 +369,174 @@ function SelectedReviewCase({
       <DocumentId label="Bank transaction" documentId={item.bankTransactionId} />
       <Observation label="Invoice" named={item.invoiceId !== null} observation={detail.invoice} kind="outstanding" />
       <Observation label="Bank transaction" named={item.bankTransactionId !== null} observation={detail.bankTransaction} kind="unapplied" />
+      {canReadAudit ? <ReviewCaseAuditHost key={auditKey} reviewCaseId={item.reviewCaseId} /> : null}
     </Paper>
+  );
+}
+
+function ReviewCaseAuditHost({ reviewCaseId }: { reviewCaseId: string }) {
+  const [open, setOpen] = useState(false);
+  const panelId = `review-case-audit-${reviewCaseId}`;
+
+  return (
+    <Stack spacing={1} sx={{ mt: 2 }}>
+      <Button
+        type="button"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {open ? 'Hide audit' : 'View audit'}
+      </Button>
+      {open ? <ReviewCaseAuditPanel id={panelId} reviewCaseId={reviewCaseId} /> : null}
+    </Stack>
+  );
+}
+
+function ReviewCaseAuditPanel({ id, reviewCaseId }: { id: string; reviewCaseId: string }) {
+  const session = useSession();
+  const cookie = browserAuthMode() === 'cookie';
+  const canReadAudit = cookie
+    ? session.authorization === 'verified' && session.capabilities.includes('audit.read')
+    : session.token !== null;
+  const query = useQuery({
+    queryKey: cookie
+      ? ['review-cases', 'audit', session.epoch, session.readiness, reviewCaseId]
+      : ['review-cases', 'audit', session.epoch, reviewCaseId],
+    enabled: canReadAudit,
+    queryFn: ({ signal }) => listReviewCaseAudit(reviewCaseId, signal),
+  });
+  const history = query.isSuccess ? query.data : null;
+  const openingMissing = history !== null
+    && history.items.length > 0
+    && history.items.every((entry) => entry.action !== 'Opened');
+
+  return (
+    <Stack id={id} spacing={1} component="section" aria-label="Stored history">
+      <Typography color="text.secondary">
+        Stored history is separate from the current case and from the balances above.
+      </Typography>
+      {query.isPending ? <Alert severity="info" role="status">Loading stored history</Alert> : null}
+      {query.isError ? (
+        <ReviewCaseAuditError error={query.error} onRetry={() => void query.refetch()} retrying={query.isFetching} />
+      ) : null}
+      {history !== null && history.items.length === 0 ? (
+        <Alert severity="info">
+          No stored history was found for this case. Earlier actions may not have been recorded.
+        </Alert>
+      ) : null}
+      {history !== null && history.items.length > 0 ? (
+        <Stack component="ol" aria-label="Stored history entries" spacing={1} sx={{ m: 0, pl: 0, listStyle: 'none' }}>
+          {history.items.map((entry) => <AuditEntry key={entry.id} entry={entry} />)}
+        </Stack>
+      ) : null}
+      {openingMissing ? (
+        <Typography color="text.secondary">The opening entry is not in the stored history.</Typography>
+      ) : null}
+    </Stack>
+  );
+}
+
+function AuditEntry({ entry }: { entry: ReviewCaseAuditEntry }) {
+  return (
+    <Stack component="li" spacing={0.5}>
+      <Typography>{entry.action}</Typography>
+      <Typography>{`Recorded ${entry.recordedAt}`}</Typography>
+      <Typography sx={{ fontFamily: 'monospace' }}>{`Actor ${entry.actorId}`}</Typography>
+      {entry.action === 'Opened' ? <OpenedPayload entry={entry} /> : null}
+      {entry.action === 'Resolved' ? <ResolvedPayload entry={entry} /> : null}
+      {entry.action === 'Dismissed' ? <DismissedPayload entry={entry} /> : null}
+    </Stack>
+  );
+}
+
+function OpenedPayload({ entry }: { entry: ReviewCaseAuditEntry }) {
+  return (
+    <>
+      <Typography>{`Reason ${entry.reason ?? 'none'}`}</Typography>
+      <Typography>{`Invoice id ${entry.invoiceId ?? 'none'}`}</Typography>
+      <Typography>{`Bank transaction id ${entry.bankTransactionId ?? 'none'}`}</Typography>
+      <Typography>{`Source ${entry.sourceLabel ?? 'none'}`}</Typography>
+      <Typography>{`Note ${entry.note ?? 'none'}`}</Typography>
+    </>
+  );
+}
+
+function ResolvedPayload({ entry }: { entry: ReviewCaseAuditEntry }) {
+  return (
+    <>
+      <Typography>{`Outcome ${entry.outcome ?? 'none'}`}</Typography>
+      <Typography>{`Allocation ${entry.allocationId ?? 'none'}`}</Typography>
+      <Typography>{`Resolution note ${entry.resolutionNote ?? 'none'}`}</Typography>
+    </>
+  );
+}
+
+function DismissedPayload({ entry }: { entry: ReviewCaseAuditEntry }) {
+  return <Typography>{`Resolution note ${entry.resolutionNote ?? 'none'}`}</Typography>;
+}
+
+function ReviewCaseAuditError({
+  error,
+  onRetry,
+  retrying,
+}: {
+  error: unknown;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  if (error instanceof StaleSessionError) {
+    return null;
+  }
+
+  if (error instanceof ApiError && error.status === 401) {
+    if (browserAuthMode() === 'cookie') {
+      return <Alert severity="warning">The browser session needs to be checked again. Stored history stays hidden until that check succeeds.</Alert>;
+    }
+
+    return (
+      <Alert severity="warning" action={<Button color="inherit" onClick={() => endSession('unauthorized')}>Update access</Button>}>
+        Your access has expired or is no longer valid. Update it to continue.
+      </Alert>
+    );
+  }
+
+  if (error instanceof ApiError && error.status === 403) {
+    if (browserAuthMode() === 'cookie') {
+      return (
+        <Alert severity="warning" action={<RetryButton onRetry={onRetry} retrying={retrying} />}>
+          Stored history is not available for this organization.
+        </Alert>
+      );
+    }
+
+    return <Alert severity="warning">You don’t have access to this stored history.</Alert>;
+  }
+
+  if (error instanceof ApiError && error.status === 404) {
+    return <Alert severity="warning">That review case was not found.</Alert>;
+  }
+
+  if (error instanceof NetworkError) {
+    return (
+      <Alert severity="error" action={<RetryButton onRetry={onRetry} retrying={retrying} />}>
+        We couldn’t connect. Check your connection and try again.
+      </Alert>
+    );
+  }
+
+  if (error instanceof UnexpectedResponseError) {
+    return (
+      <Alert severity="error" action={<RetryButton onRetry={onRetry} retrying={retrying} />}>
+        We couldn’t read the stored history.
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert severity="error" action={<RetryButton onRetry={onRetry} retrying={retrying} />}>
+      Stored history could not be loaded.
+    </Alert>
   );
 }
 
