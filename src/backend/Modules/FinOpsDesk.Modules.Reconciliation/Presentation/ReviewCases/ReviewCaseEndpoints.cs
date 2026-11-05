@@ -64,7 +64,8 @@ internal static class ReviewCaseEndpoints
             .WithDescription(
                 TenantDescription
                 + " A new case returns 201 and a Location header for GET /api/review-cases/{id}. "
-                + "An existing open case for the same subject returns 200 and does not change the stored note, source, or concurrency token. "
+                + "Without Idempotency-Key, an existing open case for the same subject returns 200 and does not change the stored note, source, or concurrency token. "
+                + "A present Idempotency-Key must be one UUID in D format with no surrounding whitespace. The same key and the same normalized request return that case after it is resolved or dismissed. "
                 + "This operation does not allocate money and does not run exact-1 or smart-1. "
                 + ActorDescription)
             .Produces<ReviewCaseResponse>(StatusCodes.Status201Created, "application/json")
@@ -184,6 +185,11 @@ internal static class ReviewCaseEndpoints
             return queryProblem;
         }
 
+        if (!TryReadIdempotencyKey(httpRequest, out Guid? idempotencyKey, out ProblemHttpResult? keyProblem))
+        {
+            return keyProblem!;
+        }
+
         JsonRead read = await TryReadJsonObjectAsync(httpRequest, OpenPropertyNames, cancellationToken);
         if (read.Problem is not null)
         {
@@ -192,7 +198,11 @@ internal static class ReviewCaseEndpoints
 
         using (read.Document)
         {
-            if (!TryReadOpen(read.Properties!, out OpenReviewCaseCommand? command, out ProblemHttpResult? requestProblem))
+            if (!TryReadOpen(
+                    read.Properties!,
+                    idempotencyKey,
+                    out OpenReviewCaseCommand? command,
+                    out ProblemHttpResult? requestProblem))
             {
                 return requestProblem!;
             }
@@ -397,8 +407,45 @@ internal static class ReviewCaseEndpoints
         return JsonRead.Succeeded(document, properties!);
     }
 
+    private static bool TryReadIdempotencyKey(
+        HttpRequest httpRequest,
+        out Guid? idempotencyKey,
+        out ProblemHttpResult? problem)
+    {
+        idempotencyKey = null;
+        problem = null;
+        if (!httpRequest.Headers.TryGetValue("Idempotency-Key", out StringValues values))
+        {
+            return true;
+        }
+
+        if (values.Count != 1 || !IsExactIdempotencyKey(values[0], out Guid key))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseIdempotencyKeyInvalid);
+            return false;
+        }
+
+        idempotencyKey = key;
+        return true;
+    }
+
+    // Guid.TryParseExact trims Char.IsWhiteSpace in .NET 10. The raw value is rejected first.
+    private static bool IsExactIdempotencyKey(string? value, out Guid key)
+    {
+        key = Guid.Empty;
+        if (string.IsNullOrEmpty(value)
+            || char.IsWhiteSpace(value[0])
+            || char.IsWhiteSpace(value[^1]))
+        {
+            return false;
+        }
+
+        return Guid.TryParseExact(value, "D", out key) && key != Guid.Empty;
+    }
+
     private static bool TryReadOpen(
         Dictionary<string, JsonElement> properties,
+        Guid? idempotencyKey,
         out OpenReviewCaseCommand? command,
         out ProblemHttpResult? problem)
     {
@@ -420,7 +467,8 @@ internal static class ReviewCaseEndpoints
             invoiceId is null ? null : new InvoiceId(invoiceId.Value),
             bankTransactionId is null ? null : new BankTransactionId(bankTransactionId.Value),
             sourceLabel,
-            note);
+            note,
+            idempotencyKey);
         return true;
     }
 
@@ -936,6 +984,19 @@ internal static class ReviewCaseEndpoints
         operation.RequestBody = JsonBody(
             "Reason is CompetingMatch or NeedsInvestigation. CompetingMatch requires invoiceId and bankTransactionId. NeedsInvestigation requires exactly one of them. sourceLabel is manual, exact-1, or smart-1.",
             CreateOpenRequestSchema());
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "Idempotency-Key",
+            In = ParameterLocation.Header,
+            Required = false,
+            Description = "Optional. Absence keeps open-subject repetition. A present value is one UUID in D format with no surrounding whitespace and is not trimmed.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
+            },
+        });
         DescribeCreatedLocation(operation);
         AnnotateReviewCaseSchemas(context);
         return Task.CompletedTask;
@@ -1349,6 +1410,7 @@ internal static class ReviewCaseEndpoints
     private static int StatusCodeFor(Error error)
     {
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseIdempotencyKeyInvalid.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidConcurrencyToken.Code
@@ -1369,7 +1431,9 @@ internal static class ReviewCaseEndpoints
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseConcurrencyConflict.Code
             || error.Code == ReconciliationErrors.ReviewCaseTerminalConflict.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAllocationMismatch.Code
-            || error.Code == ReconciliationApplicationErrors.ReviewCaseSubjectConflict.Code)
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseSubjectConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseOpenRequestConflict.Code)
         {
             return StatusCodes.Status409Conflict;
         }
@@ -1408,6 +1472,11 @@ internal static class ReviewCaseEndpoints
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidRequest.Code)
         {
             return "Review case request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseIdempotencyKeyInvalid.Code)
+        {
+            return "Idempotency-Key is invalid.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidConcurrencyToken.Code)
@@ -1469,6 +1538,16 @@ internal static class ReviewCaseEndpoints
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseSubjectConflict.Code)
         {
             return "The open review case could not be recovered.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code)
+        {
+            return "Idempotency key was used for a different request.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseOpenRequestConflict.Code)
+        {
+            return "The open review case stores a different request.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInconsistentLinkedMoney.Code)

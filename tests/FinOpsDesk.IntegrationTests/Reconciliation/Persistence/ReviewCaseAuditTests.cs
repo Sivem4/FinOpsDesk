@@ -918,6 +918,9 @@ public sealed class ReviewCaseAuditTests
             services.GetRequiredService<IReviewCaseRepository>(),
             services.GetRequiredService<IReviewCaseSnapshotLookup>(),
             services.GetRequiredService<IReviewCaseOpenConflict>(),
+            services.GetRequiredService<IReviewCaseOpenAttemptLookup>(),
+            services.GetRequiredService<IReviewCaseOpenAttemptWriter>(),
+            services.GetRequiredService<IReviewCaseOpenAttemptConflict>(),
             duplicateAudit
                 ? new DuplicateReviewCaseAuditWriter(context)
                 : services.GetRequiredService<IReviewCaseAuditWriter>(),

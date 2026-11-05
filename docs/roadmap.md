@@ -360,6 +360,8 @@ Phase 8C reads that stored history through `GET /api/review-cases/{id}/audit`. T
 
 Phase 8D shows that stored history on the existing review-case detail. `View audit` opens the panel and `Hide audit` closes it. The list, the filter form, list paging, and opening the detail do not request the history. Reloading the address does not open it. Cookie mode shows the action only when authorization is verified and `audit.read` is present; `review-cases.read` still opens the case without the history. DevelopmentJwt shows the action when the current token is present. The panel requests page 1 and page size 50, keeps the API order, and shows the stored actor id with the payload of that action. It does not invent a display name or a missing opening entry. A cookie HTTP 403 revalidates the session and does not sign the browser out. A DevelopmentJwt HTTP 403 stays on the detail and does not clear the token. Phase 8 stays Planned. Deployed financial flags stay unset. The cookie write allowlist is unchanged.
 
+Phase 8E makes `Idempotency-Key` optional on `POST /api/review-cases`. A missing header keeps the open-subject repetition. A present key is one UUID in `D` format with no surrounding whitespace, and the same normalized request returns that case after resolve or dismiss. The binding is `ReviewCaseOpenAttempts`, protected by `PK_ReviewCaseOpenAttempts`. Historical cases are not backfilled. Resolve, dismiss, the audit model, the cookie allowlist, and the financial flags stay unchanged. See ADR 0027.
+
 Add:
 
 - Disputes module;

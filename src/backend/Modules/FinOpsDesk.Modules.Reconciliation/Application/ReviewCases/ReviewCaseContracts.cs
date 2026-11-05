@@ -12,7 +12,8 @@ public sealed record OpenReviewCaseCommand(
     InvoiceId? InvoiceId,
     BankTransactionId? BankTransactionId,
     string? SourceLabel,
-    string? Note);
+    string? Note,
+    Guid? IdempotencyKey = null);
 
 public sealed record ResolveReviewCaseCommand(
     ReviewCaseId ReviewCaseId,

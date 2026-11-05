@@ -350,6 +350,70 @@ internal sealed class FakeReviewCaseSnapshotLookup : IReviewCaseSnapshotLookup
     }
 }
 
+internal sealed class FakeReviewCaseOpenAttempts :
+    IReviewCaseOpenAttemptLookup,
+    IReviewCaseOpenAttemptWriter,
+    IReviewCaseOpenAttemptConflict
+{
+    private readonly List<ReviewCaseOpenAttempt> _stored = [];
+
+    public int FindCount { get; private set; }
+
+    public int AddCount { get; private set; }
+
+    public int InsertCount { get; private set; }
+
+    public bool ClassifyPrimaryKey { get; set; }
+
+    public bool ThrowPrimaryKeyOnInsert { get; set; }
+
+    public List<ReviewCaseOpenAttempt> Added { get; } = [];
+
+    public Func<int, ReviewCaseOpenAttempt?>? FindScript { get; set; }
+
+    public Task<ReviewCaseOpenAttempt?> FindAsync(
+        OrganizationId organizationId,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        FindCount++;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (FindScript is not null)
+        {
+            return Task.FromResult(FindScript(FindCount));
+        }
+
+        return Task.FromResult(_stored.SingleOrDefault(attempt =>
+            attempt.OrganizationId == organizationId
+            && attempt.IdempotencyKey == idempotencyKey));
+    }
+
+    public void Add(ReviewCaseOpenAttempt attempt)
+    {
+        AddCount++;
+        Added.Add(attempt);
+        _stored.Add(attempt);
+    }
+
+    public Task InsertAsync(ReviewCaseOpenAttempt attempt, CancellationToken cancellationToken)
+    {
+        InsertCount++;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ThrowPrimaryKeyOnInsert)
+        {
+            throw new UniqueConstraintConflictException("primary key");
+        }
+
+        _stored.Add(attempt);
+        return Task.CompletedTask;
+    }
+
+    public bool IsPrimaryKeyConflict(Exception exception)
+    {
+        return ClassifyPrimaryKey;
+    }
+}
+
 internal sealed class FakeReviewCaseOpenConflict : IReviewCaseOpenConflict
 {
     public bool Conflict { get; set; }

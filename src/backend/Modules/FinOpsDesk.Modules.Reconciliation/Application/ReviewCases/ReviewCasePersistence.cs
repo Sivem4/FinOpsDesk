@@ -39,6 +39,26 @@ public interface IReviewCaseOpenConflict
     bool IsOpenSubjectConflict(Exception exception);
 }
 
+public interface IReviewCaseOpenAttemptLookup
+{
+    Task<ReviewCaseOpenAttempt?> FindAsync(
+        OrganizationId organizationId,
+        Guid idempotencyKey,
+        CancellationToken cancellationToken);
+}
+
+public interface IReviewCaseOpenAttemptWriter
+{
+    void Add(ReviewCaseOpenAttempt attempt);
+
+    Task InsertAsync(ReviewCaseOpenAttempt attempt, CancellationToken cancellationToken);
+}
+
+public interface IReviewCaseOpenAttemptConflict
+{
+    bool IsPrimaryKeyConflict(Exception exception);
+}
+
 public interface IReviewCaseAuditConflict
 {
     bool IsAuditUniquenessConflict(Exception exception);
