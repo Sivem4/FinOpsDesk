@@ -75,6 +75,19 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         HttpResponseMessage foreignAudit = await client.GetAsync("/api/allocations/" + north.AllocationId.ToString("D") + "/audit");
         string foreignAuditBody = await foreignAudit.Content.ReadAsStringAsync();
         Assert.Equal(HttpStatusCode.NotFound, foreignAudit.StatusCode);
+        HttpResponseMessage foreignReviewAudit = await client.GetAsync(
+            "/api/review-cases/" + north.ReviewCaseId.ToString("D") + "/audit");
+        string foreignReviewAuditBody = await foreignReviewAudit.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.NotFound, foreignReviewAudit.StatusCode);
+        using (JsonDocument foreignReviewAuditDocument = JsonDocument.Parse(foreignReviewAuditBody))
+        {
+            Assert.Equal(
+                ReconciliationApplicationErrors.ReviewCaseNotFound.Code,
+                foreignReviewAuditDocument.RootElement.GetProperty("code").GetString());
+        }
+
+        Assert.DoesNotContain(north.AuditActor, foreignReviewAuditBody, StringComparison.Ordinal);
+        Assert.DoesNotContain(north.ReviewNote, foreignReviewAuditBody, StringComparison.Ordinal);
         using (JsonDocument foreignAuditDocument = JsonDocument.Parse(foreignAuditBody))
         {
             Assert.Equal(
@@ -94,12 +107,15 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(southMembership, OrganizationRole.Operator));
         await AssertStatusAsync(client, "/api/allocations/" + south.AllocationId.ToString("D") + "/audit", HttpStatusCode.Forbidden);
+        await AssertReviewAuditHiddenAsync(client, south, HttpStatusCode.Forbidden);
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.ReversalApprover));
         await AssertStatusAsync(client, "/api/allocations/" + south.AllocationId.ToString("D") + "/audit", HttpStatusCode.OK);
+        await AssertReviewAuditVisibleAsync(client, south, north);
 
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(southMembership, OrganizationRole.ReversalApprover));
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.OrganizationAdmin));
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        await AssertReviewAuditHiddenAsync(client, south, HttpStatusCode.Forbidden);
     }
 
     [Fact]
@@ -321,6 +337,33 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         string csrf = await ReadCsrfAsync(client);
         Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, organizationId)).StatusCode);
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        OrganizationId tenant = new(organizationId);
+        Invoice invoice = new(InvoiceId.New(), tenant, "CLOSED-FLAG", new Money(3m, PersistenceTestData.Pln));
+        ReviewCase reviewCase = ReviewCase.Open(
+            ReviewCaseId.New(),
+            tenant,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            null,
+            "closed-flag-note",
+            DateTimeOffset.UtcNow);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            context.Invoices.Add(invoice);
+            context.ReviewCases.Add(reviewCase);
+            context.ReviewCaseAuditEntries.Add(
+                ReviewCaseAuditEntry.ForOpened(ReviewCaseAuditEntryId.New(), reviewCase, "closed-flag-actor"));
+            await context.SaveChangesAsync();
+        }
+
+        HttpResponseMessage closedAudit = await client.GetAsync(
+            "/api/review-cases/" + reviewCase.Id.Value.ToString("D") + "/audit");
+        string closedAuditBody = await closedAudit.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, closedAudit.StatusCode);
+        Assert.DoesNotContain("closed-flag-actor", closedAuditBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("closed-flag-note", closedAuditBody, StringComparison.Ordinal);
+        Assert.DoesNotContain(ReconciliationApplicationErrors.ReviewCaseNotFound.Code, closedAuditBody, StringComparison.Ordinal);
         using HttpRequestMessage post = new(HttpMethod.Post, "/api/matches/confirm")
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
@@ -629,6 +672,15 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             client,
             "/api/allocations/" + pair.AllocationId.ToString("D") + "/audit",
             allowAudit ? HttpStatusCode.OK : HttpStatusCode.Forbidden);
+        if (allowAudit)
+        {
+            await AssertReviewAuditVisibleAsync(client, pair, hidden);
+        }
+        else
+        {
+            await AssertReviewAuditHiddenAsync(client, pair, HttpStatusCode.Forbidden);
+            await AssertReviewAuditHiddenAsync(client, hidden, HttpStatusCode.Forbidden);
+        }
     }
 
     private async Task<FinancialPair> CreateOrganizationWithFinancialDataAsync(ApplicationUser user, string name)
@@ -665,6 +717,11 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             context.BankTransactions.Add(bank);
             context.Allocations.Add(allocation);
             context.ReviewCases.Add(reviewCase);
+            context.ReviewCaseAuditEntries.Add(
+                ReviewCaseAuditEntry.ForOpened(
+                    ReviewCaseAuditEntryId.New(),
+                    reviewCase,
+                    name + "-audit-actor"));
             await context.SaveChangesAsync();
         }
 
@@ -676,7 +733,40 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             bank.Reference ?? throw new InvalidOperationException("Bank reference was missing."),
             allocation.Id.Value,
             reviewCase.Id.Value,
-            name + "-review");
+            name + "-review",
+            name + "-audit-actor");
+    }
+
+    private static async Task AssertReviewAuditVisibleAsync(
+        HttpClient client,
+        FinancialPair pair,
+        FinancialPair hidden)
+    {
+        HttpResponseMessage response = await client.GetAsync(ReviewAuditPath(pair.ReviewCaseId));
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(pair.AuditActor, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(hidden.AuditActor, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(hidden.ReviewCaseId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(hidden.OrganizationId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task AssertReviewAuditHiddenAsync(
+        HttpClient client,
+        FinancialPair pair,
+        HttpStatusCode status)
+    {
+        HttpResponseMessage response = await client.GetAsync(ReviewAuditPath(pair.ReviewCaseId));
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(status, response.StatusCode);
+        Assert.DoesNotContain(pair.AuditActor, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(pair.ReviewNote, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(pair.ReviewCaseId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ReviewAuditPath(Guid reviewCaseId)
+    {
+        return "/api/review-cases/" + reviewCaseId.ToString("D") + "/audit";
     }
 
     private async Task<ApplicationUser> RequireUserAsync()
@@ -971,5 +1061,6 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         string BankReference,
         Guid AllocationId,
         Guid ReviewCaseId,
-        string ReviewNote);
+        string ReviewNote,
+        string AuditActor);
 }
