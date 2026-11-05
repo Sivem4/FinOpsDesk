@@ -542,6 +542,493 @@ public sealed class OpenReviewCaseHandlerTests
         Assert.Equal(1, unitOfWork.SaveCount);
     }
 
+    [Fact]
+    public async Task Handle_should_keep_a_request_without_a_key_on_the_open_subject_path()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        FakeReviewCaseOpenAttempts attempts = new();
+        ReviewCase open = ReviewCase.Open(
+            ReviewCaseId.New(),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        OpenReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: new FakeReviewCaseSnapshotLookup
+            {
+                OpenSnapshot = ReviewCaseHandlerTestDoubles.Snapshot(
+                    open,
+                    ReviewCaseHandlerTestDoubles.CurrentVersion),
+            },
+            attempts: attempts);
+
+        Result<OpenReviewCaseResponse> result = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "smart-1",
+                "other"),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.Created);
+        Assert.Equal(open.Id.Value, result.Value.ReviewCase.ReviewCaseId);
+        Assert.Equal(0, attempts.FindCount);
+        Assert.Equal(0, attempts.AddCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_preserve_a_byte_order_mark_and_reject_a_different_payload()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        FakeReviewCaseOpenAttempts attempts = new();
+        Guid key = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        OpenReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            attempts: attempts);
+        string marked = "\uFEFFkept\uFEFF";
+
+        Result<OpenReviewCaseResponse> created = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                " exact-1 ",
+                "  " + marked + "  ",
+                key),
+            CancellationToken.None);
+
+        Assert.True(created.IsSuccess);
+        ReviewCaseOpenAttempt stored = Assert.Single(attempts.Added);
+        Assert.Equal(marked, stored.Note);
+        Assert.Equal(ReviewCaseSource.Exact1, stored.SourceLabel);
+        Result<OpenReviewCaseResponse> conflict = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "exact-1",
+                "kept",
+                key),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code,
+            conflict.Error!.Code);
+        Assert.Single(attempts.Added);
+    }
+
+    [Fact]
+    public async Task Handle_should_replay_a_closed_case_for_the_same_key_without_a_new_entry()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        FakeReviewCaseOpenAttempts attempts = new();
+        RecordingReviewCaseAuditWriter audit = new();
+        ScriptedUnitOfWork unitOfWork = new();
+        FakeReviewCaseSnapshotLookup lookup = new();
+        Guid key = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        OpenReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            unitOfWork: unitOfWork,
+            audit: audit,
+            attempts: attempts);
+        OpenReviewCaseCommand command = new(
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            "manual",
+            "kept",
+            key);
+
+        Result<OpenReviewCaseResponse> created = await handler.Handle(command, CancellationToken.None);
+        Assert.True(created.IsSuccess);
+        ReviewCase closed = ReviewCase.Open(
+            new ReviewCaseId(created.Value!.ReviewCase.ReviewCaseId),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "kept",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        Assert.True(closed.Dismiss("done", ReviewCaseHandlerTestDoubles.OpenedAt.AddHours(1)).IsSuccess);
+        lookup.ById = ReviewCaseHandlerTestDoubles.Snapshot(
+            closed,
+            ReviewCaseHandlerTestDoubles.CurrentVersion);
+        OpenReviewCaseHandler replay = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            unitOfWork: unitOfWork,
+            actor: new FixedActorContext("operator-b"),
+            audit: audit,
+            attempts: attempts);
+
+        Result<OpenReviewCaseResponse> result = await replay.Handle(command, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.Created);
+        Assert.Equal(closed.Id.Value, result.Value.ReviewCase.ReviewCaseId);
+        Assert.Equal(ReviewCaseStatus.Dismissed.ToString(), result.Value.ReviewCase.Status);
+        Assert.Equal(
+            ReviewCaseConcurrencyToken.Encode(ReviewCaseHandlerTestDoubles.CurrentVersion),
+            result.Value.ReviewCase.ConcurrencyToken);
+        Assert.Single(audit.Entries);
+        Assert.Equal("operator-a", audit.Entries[0].ActorId);
+        Assert.Equal(1, unitOfWork.SaveCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_bind_a_second_matching_key_and_reject_a_different_open_request()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        ReviewCase open = ReviewCase.Open(
+            ReviewCaseId.New(),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        FakeReviewCaseSnapshotLookup lookup = new()
+        {
+            OpenSnapshot = ReviewCaseHandlerTestDoubles.Snapshot(
+                open,
+                ReviewCaseHandlerTestDoubles.CurrentVersion),
+        };
+        FakeReviewCaseOpenAttempts matching = new();
+        RecordingReviewCaseAuditWriter audit = new();
+        OpenReviewCaseHandler match = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            audit: audit,
+            attempts: matching);
+
+        Result<OpenReviewCaseResponse> bound = await match.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                "stored",
+                Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")),
+            CancellationToken.None);
+
+        Assert.True(bound.IsSuccess);
+        Assert.False(bound.Value.Created);
+        Assert.Equal(open.Id.Value, Assert.Single(matching.Added).ReviewCaseId.Value);
+        Assert.Empty(audit.Entries);
+
+        FakeReviewCaseOpenAttempts different = new();
+        OpenReviewCaseHandler mismatch = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            attempts: different);
+        Result<OpenReviewCaseResponse> conflict = await mismatch.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                "other",
+                Guid.Parse("dddddddd-dddd-4ddd-8ddd-dddddddddddd")),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.ReviewCaseOpenRequestConflict.Code,
+            conflict.Error!.Code);
+        Assert.Equal(0, different.AddCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_a_missing_actor_before_reading_a_stored_attempt()
+    {
+        RecordingOrganizationContext organization = new(OrganizationId);
+        FakeReviewCaseOpenAttempts attempts = new()
+        {
+            FindScript = _ => throw new InvalidOperationException("The attempt lookup ran."),
+        };
+        OpenReviewCaseHandler handler = CreateHandler(
+            organization,
+            new FakeInvoiceRepository(),
+            actor: new FixedActorContext(null),
+            attempts: attempts);
+
+        Result<OpenReviewCaseResponse> result = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                InvoiceId.New(),
+                null,
+                "manual",
+                "note",
+                Guid.Parse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")),
+            CancellationToken.None);
+
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired.Code, result.Error!.Code);
+        Assert.Equal(0, organization.ReadCount);
+        Assert.Equal(0, attempts.FindCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_let_a_concurrent_attempt_decide_before_the_open_subject()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        Guid key = Guid.Parse("ffffffff-ffff-4fff-8fff-ffffffffffff");
+        ReviewCase open = ReviewCase.Open(
+            ReviewCaseId.New(),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "open",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        ReviewCase closed = ReviewCase.Open(
+            ReviewCaseId.New(),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        Assert.True(closed.Dismiss("done", ReviewCaseHandlerTestDoubles.OpenedAt.AddHours(1)).IsSuccess);
+        ReviewCaseOpenAttempt planted = ReviewCaseOpenAttempt.Create(
+            OrganizationId,
+            key,
+            closed.Id,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored");
+        FakeReviewCaseSnapshotLookup lookup = new()
+        {
+            OpenSnapshot = ReviewCaseHandlerTestDoubles.Snapshot(
+                open,
+                ReviewCaseHandlerTestDoubles.CurrentVersion),
+            ById = ReviewCaseHandlerTestDoubles.Snapshot(
+                closed,
+                ReviewCaseHandlerTestDoubles.CurrentVersion),
+        };
+        FakeReviewCaseOpenAttempts attempts = new()
+        {
+            FindScript = find => find == 1 ? null : planted,
+        };
+        ScriptedUnitOfWork unitOfWork = new();
+        OpenReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            unitOfWork: unitOfWork,
+            attempts: attempts);
+
+        Result<OpenReviewCaseResponse> result = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                "stored",
+                key),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.Created);
+        Assert.Equal(closed.Id.Value, result.Value.ReviewCase.ReviewCaseId);
+        Assert.Equal(ReviewCaseStatus.Dismissed.ToString(), result.Value.ReviewCase.Status);
+        Assert.Equal(0, unitOfWork.SaveCount);
+        Assert.Equal(0, attempts.InsertCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_let_a_concurrent_different_payload_win_over_the_open_subject()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        Guid key = Guid.Parse("abababab-abab-4aba-8aba-abababababab");
+        ReviewCase open = ReviewCase.Open(
+            ReviewCaseId.New(),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "open",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        ReviewCaseOpenAttempt planted = ReviewCaseOpenAttempt.Create(
+            OrganizationId,
+            key,
+            ReviewCaseId.New(),
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored");
+        FakeReviewCaseOpenAttempts attempts = new()
+        {
+            FindScript = find => find == 1 ? null : planted,
+        };
+        OpenReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: new FakeReviewCaseSnapshotLookup
+            {
+                OpenSnapshot = ReviewCaseHandlerTestDoubles.Snapshot(
+                    open,
+                    ReviewCaseHandlerTestDoubles.CurrentVersion),
+            },
+            attempts: attempts);
+
+        Result<OpenReviewCaseResponse> result = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                "open",
+                key),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code,
+            result.Error!.Code);
+        Assert.Equal(0, attempts.AddCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_read_a_key_committed_before_open_subject_recovery()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        Guid key = Guid.Parse("cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd");
+        ReviewCase closed = ReviewCase.Open(
+            ReviewCaseId.New(),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        Assert.True(closed.Dismiss("done", ReviewCaseHandlerTestDoubles.OpenedAt.AddHours(1)).IsSuccess);
+        ReviewCaseOpenAttempt planted = ReviewCaseOpenAttempt.Create(
+            OrganizationId,
+            key,
+            closed.Id,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "stored");
+        FakeReviewCaseSnapshotLookup lookup = new();
+        FakeReviewCaseOpenAttempts attempts = new()
+        {
+            FindScript = find =>
+            {
+                if (find == 2)
+                {
+                    lookup.ById = ReviewCaseHandlerTestDoubles.Snapshot(
+                        closed,
+                        ReviewCaseHandlerTestDoubles.CurrentVersion);
+                }
+
+                return find < 3 ? null : planted;
+            },
+        };
+        OpenReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            conflict: new FakeReviewCaseOpenConflict { Conflict = true },
+            unitOfWork: new ScriptedUnitOfWork
+            {
+                Exception = new UniqueConstraintConflictException("open subject"),
+            },
+            attempts: attempts);
+
+        Result<OpenReviewCaseResponse> same = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                "stored",
+                key),
+            CancellationToken.None);
+
+        Assert.True(same.IsSuccess);
+        Assert.False(same.Value.Created);
+        Assert.Equal(closed.Id.Value, same.Value.ReviewCase.ReviewCaseId);
+        Assert.Equal(ReviewCaseStatus.Dismissed.ToString(), same.Value.ReviewCase.Status);
+        Assert.Equal(0, attempts.InsertCount);
+
+        ReviewCaseOpenAttempt different = ReviewCaseOpenAttempt.Create(
+            OrganizationId,
+            key,
+            closed.Id,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "other");
+        FakeReviewCaseOpenAttempts mismatched = new()
+        {
+            FindScript = find => find < 3 ? null : different,
+        };
+        OpenReviewCaseHandler mismatch = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: new FakeReviewCaseSnapshotLookup(),
+            conflict: new FakeReviewCaseOpenConflict { Conflict = true },
+            unitOfWork: new ScriptedUnitOfWork
+            {
+                Exception = new UniqueConstraintConflictException("open subject"),
+            },
+            attempts: mismatched);
+
+        Result<OpenReviewCaseResponse> conflict = await mismatch.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                "stored",
+                key),
+            CancellationToken.None);
+
+        Assert.Equal(
+            ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code,
+            conflict.Error!.Code);
+        Assert.NotEqual(
+            ReconciliationApplicationErrors.ReviewCaseSubjectConflict.Code,
+            conflict.Error.Code);
+    }
+
     private static OpenReviewCaseHandler CreateHandler(
         ICurrentOrganizationContext organization,
         FakeInvoiceRepository invoices,
@@ -552,8 +1039,10 @@ public sealed class OpenReviewCaseHandlerTests
         ScriptedUnitOfWork? unitOfWork = null,
         TimeProvider? time = null,
         ICurrentActorContext? actor = null,
-        RecordingReviewCaseAuditWriter? audit = null)
+        RecordingReviewCaseAuditWriter? audit = null,
+        FakeReviewCaseOpenAttempts? attempts = null)
     {
+        FakeReviewCaseOpenAttempts attemptStore = attempts ?? new FakeReviewCaseOpenAttempts();
         return new OpenReviewCaseHandler(
             organization,
             actor ?? new FixedActorContext(),
@@ -562,6 +1051,9 @@ public sealed class OpenReviewCaseHandlerTests
             reviewCases ?? new FakeReviewCaseRepository(),
             lookup ?? new FakeReviewCaseSnapshotLookup(),
             conflict ?? new FakeReviewCaseOpenConflict(),
+            attemptStore,
+            attemptStore,
+            attemptStore,
             audit ?? new RecordingReviewCaseAuditWriter(),
             unitOfWork ?? new ScriptedUnitOfWork(),
             time ?? new FixedTimeProvider(ReviewCaseHandlerTestDoubles.OpenedAt));

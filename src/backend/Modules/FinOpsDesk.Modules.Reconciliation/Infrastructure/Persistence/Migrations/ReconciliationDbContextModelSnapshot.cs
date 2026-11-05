@@ -642,6 +642,49 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseOpenAttempt", b =>
+                {
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("BankTransactionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("Reason")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ReviewCaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SourceLabel")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.HasKey("OrganizationId", "IdempotencyKey")
+                        .HasName("PK_ReviewCaseOpenAttempts");
+
+                    b.HasIndex("OrganizationId", "ReviewCaseId");
+
+                    b.ToTable("ReviewCaseOpenAttempts", "reconciliation", t =>
+                        {
+                            t.HasCheckConstraint("CK_ReviewCaseOpenAttempts_IdempotencyKey", "[IdempotencyKey] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_ReviewCaseOpenAttempts_ReasonShape", "([Reason] IN (1, 2)) AND (([Reason] = 1 AND [InvoiceId] IS NOT NULL AND [BankTransactionId] IS NOT NULL) OR ([Reason] = 2 AND (([InvoiceId] IS NOT NULL AND [BankTransactionId] IS NULL) OR ([InvoiceId] IS NULL AND [BankTransactionId] IS NOT NULL))))");
+
+                            t.HasCheckConstraint("CK_ReviewCaseOpenAttempts_SourceLabel", "([SourceLabel] IS NULL OR [SourceLabel] COLLATE Latin1_General_100_BIN2 IN (N'manual', N'exact-1', N'smart-1'))");
+                        });
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.Allocation", b =>
                 {
                     b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", null)
@@ -780,6 +823,17 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseOpenAttempt", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ReviewCaseId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_ReviewCaseOpenAttempts_ReviewCases_OrganizationId_ReviewCaseId");
                 });
 #pragma warning restore 612, 618
         }

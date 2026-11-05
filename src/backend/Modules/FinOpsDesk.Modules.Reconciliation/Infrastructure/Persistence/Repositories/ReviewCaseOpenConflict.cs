@@ -27,6 +27,28 @@ internal sealed class ReviewCaseOpenConflict : IReviewCaseOpenConflict
     }
 }
 
+internal sealed class ReviewCaseOpenAttemptConflict : IReviewCaseOpenAttemptConflict
+{
+    public bool IsPrimaryKeyConflict(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqlException sqlException
+                && sqlException.Number == 2627
+                && sqlException.Message.Contains(
+                    ReviewCaseOpenAttemptConfiguration.PrimaryKeyName,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
 internal sealed class ReviewCaseAuditConflict : IReviewCaseAuditConflict
 {
     public bool IsAuditUniquenessConflict(Exception exception)

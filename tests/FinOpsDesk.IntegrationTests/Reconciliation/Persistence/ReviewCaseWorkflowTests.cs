@@ -767,6 +767,9 @@ public sealed class ReviewCaseWorkflowTests
             services.GetRequiredService<IReviewCaseRepository>(),
             services.GetRequiredService<IReviewCaseSnapshotLookup>(),
             services.GetRequiredService<IReviewCaseOpenConflict>(),
+            services.GetRequiredService<IReviewCaseOpenAttemptLookup>(),
+            services.GetRequiredService<IReviewCaseOpenAttemptWriter>(),
+            services.GetRequiredService<IReviewCaseOpenAttemptConflict>(),
             services.GetRequiredService<IReviewCaseAuditWriter>(),
             unitOfWork ?? services.GetRequiredService<IUnitOfWork>(),
             time ?? new FixedTimeProvider(OpenedAt));

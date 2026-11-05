@@ -219,6 +219,21 @@ public static class ReconciliationApplicationErrors
             "reconciliation.review_case.subject_conflict",
             "An open review case for this subject could not be recovered after a concurrent create.");
 
+    public static Error ReviewCaseIdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.review_case.idempotency_key_invalid",
+            "Idempotency-Key must be one non-empty UUID in D format with no surrounding whitespace.");
+
+    public static Error ReviewCaseIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.review_case.idempotency_payload_conflict",
+            "This idempotency key was already used for a different review case open request.");
+
+    public static Error ReviewCaseOpenRequestConflict { get; } =
+        new(
+            "reconciliation.review_case.open_request_conflict",
+            "An open review case for this subject already stores a different request.");
+
     public static Error ReviewCaseInconsistentLinkedMoney { get; } =
         new(
             "reconciliation.review_case.inconsistent_linked_money",

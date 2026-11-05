@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-27
-- Follow-up: [ADR 0025](0025-review-case-audit.md) records a server actor and one append-only review-case audit entry for a newly executed open, resolve, or dismiss. The lifecycle, subject uniqueness, terminal replay, and `rowversion` decisions below stay in place. Historical cases are not backfilled.
+- Follow-up: [ADR 0025](0025-review-case-audit.md) records a server actor and one append-only review-case audit entry for a newly executed open, resolve, or dismiss. [ADR 0027](0027-review-case-open-idempotency.md) adds an optional `Idempotency-Key` for `POST /api/review-cases`. A request without that header still follows the open-subject rule below. The lifecycle, subject uniqueness, terminal replay, and `rowversion` decisions stay in place. Historical cases are not backfilled.
 
 ## Context
 

@@ -303,6 +303,9 @@ public sealed class ReviewCaseLinkedFinancialTests
             scope.ServiceProvider.GetRequiredService<IReviewCaseRepository>(),
             scope.ServiceProvider.GetRequiredService<IReviewCaseSnapshotLookup>(),
             scope.ServiceProvider.GetRequiredService<IReviewCaseOpenConflict>(),
+            scope.ServiceProvider.GetRequiredService<IReviewCaseOpenAttemptLookup>(),
+            scope.ServiceProvider.GetRequiredService<IReviewCaseOpenAttemptWriter>(),
+            scope.ServiceProvider.GetRequiredService<IReviewCaseOpenAttemptConflict>(),
             scope.ServiceProvider.GetRequiredService<IReviewCaseAuditWriter>(),
             scope.ServiceProvider.GetRequiredService<IUnitOfWork>(),
             new FixedTimeProvider(OpenedAt));

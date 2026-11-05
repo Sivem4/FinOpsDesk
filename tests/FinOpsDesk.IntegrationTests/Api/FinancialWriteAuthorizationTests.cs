@@ -504,7 +504,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.DoesNotContain("importBatchId", await imported.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         HttpResponseMessage bankImported = await host.Client.SendAsync(BankImport(host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, bankImported.StatusCode);
-        HttpResponseMessage opened = await host.SendAsync(OpenReview(first));
+        HttpResponseMessage opened = await host.SendAsync(OpenReview(first, csrf: null, idempotencyKey: Guid.NewGuid()));
         Assert.Equal(HttpStatusCode.Forbidden, opened.StatusCode);
         string openedBody = await opened.Content.ReadAsStringAsync();
         Assert.DoesNotContain("reviewCaseId", openedBody, StringComparison.Ordinal);
@@ -532,6 +532,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Resolved));
         Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Dismissed));
         Assert.Equal(0, await host.CountReviewCaseAuditEntriesAsync(first.OrganizationId));
+        Assert.Equal(0, await host.CountReviewCaseOpenAttemptsAsync(first.OrganizationId));
     }
 
     [Fact]
@@ -1118,6 +1119,11 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
 
     private static HttpRequestMessage OpenReview(Pair pair, string? csrf)
     {
+        return OpenReview(pair, csrf, idempotencyKey: null);
+    }
+
+    private static HttpRequestMessage OpenReview(Pair pair, string? csrf, Guid? idempotencyKey)
+    {
         HttpRequestMessage request = new(HttpMethod.Post, "/api/review-cases")
         {
             Content = new StringContent(
@@ -1128,6 +1134,11 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         if (csrf is not null)
         {
             request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
+        }
+
+        if (idempotencyKey is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey.Value.ToString("D"));
         }
 
         return request;
@@ -1713,6 +1724,13 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             await using ReconciliationDbContext context = _test._fixture.CreateContext();
             return await context.ReviewCaseAuditEntries.CountAsync(entry =>
                 entry.OrganizationId == new OrganizationId(organizationId));
+        }
+
+        public async Task<int> CountReviewCaseOpenAttemptsAsync(Guid organizationId)
+        {
+            await using ReconciliationDbContext context = _test._fixture.CreateContext();
+            return await context.ReviewCaseOpenAttempts.CountAsync(attempt =>
+                attempt.OrganizationId == new OrganizationId(organizationId));
         }
 
         public async Task<int> CountAuditEntriesAsync(Guid organizationId)
