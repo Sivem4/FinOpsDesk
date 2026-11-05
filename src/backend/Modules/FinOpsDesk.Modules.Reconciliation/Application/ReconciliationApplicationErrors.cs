@@ -179,6 +179,16 @@ public static class ReconciliationApplicationErrors
             "reconciliation.review_case.not_found",
             "Review case was not found.");
 
+    public static Error ReviewCaseAuditInvalidRequest { get; } =
+        new(
+            "reconciliation.review_case_audit.invalid_request",
+            "The review case audit request has a malformed review case id or an unsupported query parameter.");
+
+    public static Error ReviewCaseAuditInvalidPagination { get; } =
+        new(
+            "reconciliation.review_case_audit.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
     public static Error ReviewCaseInvalidRequest { get; } =
         new(
             "reconciliation.review_case.invalid_request",

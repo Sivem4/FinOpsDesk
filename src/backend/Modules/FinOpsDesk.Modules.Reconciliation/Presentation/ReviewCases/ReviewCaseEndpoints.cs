@@ -52,6 +52,8 @@ internal static class ReviewCaseEndpoints
     private static readonly string[] ListQueryNames =
         ["status", "invoiceId", "bankTransactionId", "page", "pageSize"];
 
+    private static readonly string[] AuditQueryNames = ["page", "pageSize"];
+
     public static RouteGroupBuilder MapReviewCaseEndpoints(this RouteGroupBuilder group)
     {
         ArgumentNullException.ThrowIfNull(group);
@@ -103,6 +105,28 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status500InternalServerError)
             .AddOpenApiOperationTransformer(DocumentGetOperation)
             .WithMetadata(FinancialEndpointClassification.Read("review-cases.read"));
+
+        group.MapGet("/review-cases/{id}/audit", GetAuditAsync)
+            .WithName("GetReviewCaseAudit")
+            .WithSummary("List persisted audit entries for one review case.")
+            .WithDescription(
+                TenantDescription
+                + " DevelopmentJwt allows any TenantMember to read ActorId. "
+                + "ProductionCookie read authorization, when enabled, requires audit.read. "
+                + "review-cases.read does not authorize this history. "
+                + "A missing actor id is allowed on this read. "
+                + "Results are ordered by RecordedAt ascending, then action ascending, then audit entry id ascending. "
+                + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. "
+                + "An existing case with no audit rows returns an empty page. "
+                + "A historical case may contain only a terminal entry. "
+                + "The response does not reconstruct a missing Opened entry and does not copy current case fields, balances, or the concurrency token. "
+                + "The existence check, the count, and the page are separate statements and are not one snapshot. "
+                + "This read does not change the case or its audit rows.")
+            .Produces<ReviewCaseAuditListResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .AddOpenApiOperationTransformer(DocumentAuditOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("audit.read"));
 
         group.MapPost("/review-cases/{id}/resolve", ResolveAsync)
             .WithName("ResolveReviewCase")
@@ -226,6 +250,33 @@ internal static class ReviewCaseEndpoints
 
         Result<ReviewCaseDetailResponse> result = await handler.Handle(
             new GetReviewCaseQuery(new ReviewCaseId(reviewCaseId)),
+            cancellationToken);
+        if (result.IsFailure)
+        {
+            return Problem(result.Error);
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
+    private static async Task<Results<Ok<ReviewCaseAuditListResponse>, ProblemHttpResult>> GetAuditAsync(
+        string id,
+        HttpRequest httpRequest,
+        GetReviewCaseAuditHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadAuditRouteId(id, out Guid reviewCaseId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (!TryBindAuditQuery(httpRequest, out int page, out int pageSize, out ProblemHttpResult? queryProblem))
+        {
+            return queryProblem!;
+        }
+
+        Result<ReviewCaseAuditListResponse> result = await handler.Handle(
+            new GetReviewCaseAuditQuery(new ReviewCaseId(reviewCaseId), page, pageSize),
             cancellationToken);
         if (result.IsFailure)
         {
@@ -471,6 +522,93 @@ internal static class ReviewCaseEndpoints
         }
 
         problem = null;
+        return true;
+    }
+
+    private static bool TryReadAuditRouteId(string id, out Guid reviewCaseId, out ProblemHttpResult? problem)
+    {
+        if (!Guid.TryParse(id, out reviewCaseId) || reviewCaseId == Guid.Empty)
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseAuditInvalidRequest);
+            return false;
+        }
+
+        problem = null;
+        return true;
+    }
+
+    private static bool TryBindAuditQuery(
+        HttpRequest httpRequest,
+        out int page,
+        out int pageSize,
+        out ProblemHttpResult? problem)
+    {
+        page = ReviewCaseAuditListPagination.DefaultPage;
+        pageSize = ReviewCaseAuditListPagination.DefaultPageSize;
+        problem = RejectUnexpectedAuditQuery(httpRequest);
+        if (problem is not null)
+        {
+            return false;
+        }
+
+        if (!TryReadAuditPage(
+                httpRequest,
+                "page",
+                ReviewCaseAuditListPagination.DefaultPage,
+                out page,
+                out problem)
+            || !TryReadAuditPage(
+                httpRequest,
+                "pageSize",
+                ReviewCaseAuditListPagination.DefaultPageSize,
+                out pageSize,
+                out problem))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ProblemHttpResult? RejectUnexpectedAuditQuery(HttpRequest httpRequest)
+    {
+        foreach (string key in httpRequest.Query.Keys)
+        {
+            if (!AuditQueryNames.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseAuditInvalidRequest);
+            }
+
+            if (httpRequest.Query[key].Count != 1)
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadAuditPage(
+        HttpRequest httpRequest,
+        string name,
+        int defaultValue,
+        out int page,
+        out ProblemHttpResult? problem)
+    {
+        page = defaultValue;
+        problem = null;
+        if (!httpRequest.Query.TryGetValue(name, out StringValues values))
+        {
+            return true;
+        }
+
+        if (values.Count != 1
+            || !int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out page))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination);
+            return false;
+        }
+
         return true;
     }
 
@@ -868,6 +1006,38 @@ internal static class ReviewCaseEndpoints
         return Task.CompletedTask;
     }
 
+    private static Task DocumentAuditOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        DescribeRouteId(operation);
+        operation.Parameters ??= [];
+        operation.Parameters.Add(QueryParameter(
+            "page",
+            "Page number. Defaults to 1. The zero-based offset must fit in a 32-bit integer.",
+            new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(ReviewCaseAuditListPagination.DefaultPage),
+                Minimum = "1",
+            }));
+        operation.Parameters.Add(QueryParameter(
+            "pageSize",
+            "Page size. Defaults to 50. Maximum is 100.",
+            new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(ReviewCaseAuditListPagination.DefaultPageSize),
+                Minimum = "1",
+                Maximum = "100",
+            }));
+        return Task.CompletedTask;
+    }
+
     private static Task DocumentResolveOperation(
         OpenApiOperation operation,
         OpenApiOperationTransformerContext context,
@@ -1179,6 +1349,8 @@ internal static class ReviewCaseEndpoints
     private static int StatusCodeFor(Error error)
     {
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidConcurrencyToken.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidPagination.Code
             || error.Code == ReconciliationErrors.ReviewCaseAllocationRequired.Code
@@ -1243,9 +1415,15 @@ internal static class ReviewCaseEndpoints
             return "Concurrency token is invalid.";
         }
 
-        if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidPagination.Code)
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidPagination.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination.Code)
         {
             return "Invalid pagination.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidRequest.Code)
+        {
+            return "Review case audit request is invalid.";
         }
 
         if (error.Code == ReconciliationErrors.ReviewCaseAllocationRequired.Code)

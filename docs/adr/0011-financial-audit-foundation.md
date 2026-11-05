@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-28
-- Follow-up: [ADR 0012](0012-allocation-reversal.md) adds the reversal action and its read mapping. The confirmation-audit decision below remains the foundation. [ADR 0025](0025-review-case-audit.md) adds a separate review-case audit entry. It does not extend `FinancialAuditEntry`.
+- Follow-up: [ADR 0012](0012-allocation-reversal.md) adds the reversal action and its read mapping. The confirmation-audit decision below remains the foundation. [ADR 0025](0025-review-case-audit.md) adds a separate review-case audit entry. It does not extend `FinancialAuditEntry`. [ADR 0026](0026-review-case-audit-read.md) reads that review entry. It does not change this allocation audit.
 
 ## Context
 

@@ -27,6 +27,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/allocations/context", "get", "allocations.read"),
         ("/api/allocations", "get", "allocations.read"),
         ("/api/allocations/{allocationId}/audit", "get", "audit.read"),
+        ("/api/review-cases/{id}/audit", "get", "audit.read"),
         ("/api/allocations/{allocationId}/reversal-context", "get", "allocations.read"),
         ("/api/review-cases", "get", "review-cases.read"),
         ("/api/review-cases/{id}", "get", "review-cases.read"),
@@ -112,6 +113,8 @@ public sealed class OpenApiAuthenticationDocumentTests
                 Assert.DoesNotContain("reconciliation.actor.required", StatusDescription(operation, "403"), StringComparison.Ordinal);
             }
         }
+
+        AssertReviewCaseAuditDocument(root);
 
         JsonElement reverse = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         Assert.True(Parameter(reverse, "Idempotency-Key").GetProperty("required").GetBoolean());
@@ -219,6 +222,8 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.DoesNotContain("reconciliation.actor.required", StatusDescription(operation, "403"), StringComparison.Ordinal);
             Assert.DoesNotContain("Financial authorization could not be completed", StatusDescription(operation, "401"), StringComparison.Ordinal);
         }
+
+        AssertReviewCaseAuditDocument(root);
 
         foreach ((string path, string method, string permission) in AllowlistedWrites)
         {
@@ -401,6 +406,71 @@ public sealed class OpenApiAuthenticationDocumentTests
     private static bool RequiredFlag(JsonElement element)
     {
         return element.TryGetProperty("required", out JsonElement required) && required.GetBoolean();
+    }
+
+    private static void AssertReviewCaseAuditDocument(JsonElement root)
+    {
+        JsonElement operation = root.GetProperty("paths")
+            .GetProperty("/api/review-cases/{id}/audit")
+            .GetProperty("get");
+        string description = Description(operation);
+        Assert.Equal("GetReviewCaseAudit", operation.GetProperty("operationId").GetString());
+        Assert.Contains("audit.read", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("reconciliation.actor.required", description, StringComparison.Ordinal);
+        Assert.False(HasParameter(operation, CsrfHeader));
+        JsonElement page = Parameter(operation, "page");
+        JsonElement pageSize = Parameter(operation, "pageSize");
+        Assert.Equal(1, page.GetProperty("schema").GetProperty("default").GetInt32());
+        Assert.Equal(50, pageSize.GetProperty("schema").GetProperty("default").GetInt32());
+        Assert.Equal(100, pageSize.GetProperty("schema").GetProperty("maximum").GetInt32());
+        JsonElement schema = ResolveSchema(
+            root,
+            operation.GetProperty("responses")
+                .GetProperty("200")
+                .GetProperty("content")
+                .GetProperty("application/json")
+                .GetProperty("schema"));
+        foreach (string name in new[] { "items", "page", "pageSize", "totalCount" })
+        {
+            Assert.True(schema.GetProperty("properties").TryGetProperty(name, out _), name);
+        }
+
+        JsonElement itemSchema = ResolveSchema(root, schema.GetProperty("properties").GetProperty("items").GetProperty("items"));
+        foreach (string name in new[]
+        {
+            "id",
+            "action",
+            "actorId",
+            "recordedAt",
+            "reason",
+            "invoiceId",
+            "bankTransactionId",
+            "sourceLabel",
+            "note",
+            "outcome",
+            "allocationId",
+            "resolutionNote",
+        })
+        {
+            Assert.True(itemSchema.GetProperty("properties").TryGetProperty(name, out _), name);
+        }
+
+        Assert.False(itemSchema.GetProperty("properties").TryGetProperty("organizationId", out _));
+        Assert.False(itemSchema.GetProperty("properties").TryGetProperty("reviewCaseId", out _));
+        Assert.False(itemSchema.GetProperty("properties").TryGetProperty("concurrencyToken", out _));
+    }
+
+    private static JsonElement ResolveSchema(JsonElement root, JsonElement schema)
+    {
+        if (!schema.TryGetProperty("$ref", out JsonElement reference))
+        {
+            return schema;
+        }
+
+        string name = reference.GetString() ?? string.Empty;
+        int slash = name.LastIndexOf('/');
+        string schemaName = slash < 0 ? name : name[(slash + 1)..];
+        return root.GetProperty("components").GetProperty("schemas").GetProperty(schemaName);
     }
 
     private static string Description(JsonElement operation)

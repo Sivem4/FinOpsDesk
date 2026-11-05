@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-02
+- Follow-up: [ADR 0026](0026-review-case-audit-read.md) classifies `GET /api/review-cases/{id}/audit` as `audit.read`. The permission map and the read flag below stay in place.
 
 ## Context
 
@@ -27,7 +28,7 @@ Reads:
 - `bank-transactions.read`: `GET /api/bank-transactions`
 - `reconciliation.read`: `GET /api/matches`, `GET /api/matches/smart`, `GET /api/matches/batch/preview`
 - `allocations.read`: `GET /api/allocations`, `GET /api/allocations/context`, `GET /api/allocations/{allocationId}/reversal-context`
-- `audit.read`: `GET /api/allocations/{allocationId}/audit`
+- `audit.read`: `GET /api/allocations/{allocationId}/audit`, `GET /api/review-cases/{id}/audit`
 - `review-cases.read`: `GET /api/review-cases`, `GET /api/review-cases/{id}`
 
 Every current financial POST is classified as a write. A write classification has no permission that a cookie can satisfy. `DevelopmentJwt` still accepts a consistent write classification together with `org_id`.

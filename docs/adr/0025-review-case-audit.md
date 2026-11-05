@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-05
+- Follow-up: [ADR 0026](0026-review-case-audit-read.md) adds `GET /api/review-cases/{id}/audit`. The write-side entry, the missing backfill, and the cookie write exclusion below stay in place.
 
 ## Context
 
@@ -25,14 +26,14 @@ An identical replay still returns the stored result and does not append an entry
 
 The table is append-only. Trigger `TR_ReviewCaseAuditEntries_RejectMutation` rejects `UPDATE` and `DELETE` with error 50002. The model uses `HasTrigger` and `UseSqlOutputClause(false)`. Migration `AddReviewCaseAuditEntries` creates the table, keys, checks, indexes, and trigger. Its `Down` drops that history. `Down` is not an automatic procedure for reversing a production deployment.
 
-There is no endpoint and no UI that reads this audit. List and detail responses do not add the actor. ProductionCookie still cannot execute these three writes. The deployed financial flags, the allowlist, and `FinancialCommitGuard` stay as they are.
+ADR 0026 adds the read endpoint. There is still no UI that reads this audit. List and detail responses do not add the actor. ProductionCookie still cannot execute these three writes. The deployed financial flags, the allowlist, and `FinancialCommitGuard` stay as they are.
 
 ## Consequences
 
 - A new review mutation and its audit entry commit or roll back together.
 - Replay stays idempotent and keeps the original attribution.
 - Historical rows stay without a synthesized `Opened` entry.
-- Durability of this audit is visible in SQL Server and in tests. Operators cannot read it through the API yet.
+- Durability of this audit is visible in SQL Server and in tests. ADR 0026 lets a caller with `audit.read` read the stored rows. The list and detail responses still omit the actor.
 - The three review routes remain outside the cookie write allowlist.
 - Phase 8 stays planned. This decision is the write-side audit foundation, not the dispute workflow or the dashboard.
 
