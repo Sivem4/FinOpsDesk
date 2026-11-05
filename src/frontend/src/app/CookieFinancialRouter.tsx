@@ -6,6 +6,7 @@ import { ReadOnlyAllocationHistoryPage } from '../features/allocations/ReadOnlyA
 import { BankTransactionRegisterPage } from '../features/bank-transactions/BankTransactionRegisterPage';
 import { InvoiceRegisterPage } from '../features/invoices/InvoiceRegisterPage';
 import { ReadOnlyReconciliationPage } from '../features/reconciliation/ReadOnlyReconciliationPage';
+import { ReviewCasePage } from '../features/review-cases/ReviewCasePage';
 import { firstCookieRoute } from '../shared/auth/cookie-navigation';
 import { useSession } from '../shared/auth/session';
 
@@ -57,6 +58,14 @@ export function CookieFinancialRouter() {
         element={(
           <CapabilityRoute capability="allocations.read">
             <ReadOnlyAllocationHistoryPage />
+          </CapabilityRoute>
+        )}
+      />
+      <Route
+        path="/review-cases"
+        element={(
+          <CapabilityRoute capability="review-cases.read">
+            <ReviewCasePage />
           </CapabilityRoute>
         )}
       />

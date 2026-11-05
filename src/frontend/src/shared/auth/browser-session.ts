@@ -31,6 +31,7 @@ export const screenCapabilities = [
   'bank-transactions.read',
   'reconciliation.read',
   'allocations.read',
+  'review-cases.read',
 ] as const;
 
 export const sessionContractHeader = 'X-FinOpsDesk-Session-Contract';

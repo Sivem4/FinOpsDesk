@@ -19,6 +19,7 @@ export function AppShell({
     { to: '/imports', label: 'Imports' },
     { to: '/reconciliation', label: 'Reconciliation' },
     { to: '/allocations', label: 'Allocation history' },
+    { to: '/review-cases', label: 'Review cases' },
   ];
 
   return (

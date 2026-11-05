@@ -83,6 +83,8 @@ describe('cookie session gate', () => {
     expect(screen.queryByRole('button', { name: 'Imports' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reconciliation' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Allocation history' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Review cases' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review cases' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
   });
 

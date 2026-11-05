@@ -334,7 +334,7 @@ describe('authorization transitions', () => {
   it('shows no-available-view when financial access has no implemented screen', async () => {
     let invoiceCalls = 0;
     server.use(
-      http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['review-cases.read'], [northOrg()]))),
+      http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['audit.read'], [northOrg()]))),
       http.get('/api/invoices', () => {
         invoiceCalls += 1;
         return HttpResponse.json(invoiceList('INV-BLIND'));
@@ -347,7 +347,125 @@ describe('authorization transitions', () => {
     await flush();
     expect(invoiceCalls).toBe(0);
     expect(screen.queryByRole('link', { name: 'Invoices' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Review cases' })).not.toBeInTheDocument();
     expect(screen.queryByText('INV-BLIND')).not.toBeInTheDocument();
+  });
+
+  it('mounts review cases for review-cases.read and does not post', async () => {
+    let reviewGets = 0;
+    let posts = 0;
+    server.use(
+      http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['review-cases.read'], [northOrg()]))),
+      http.get('/api/review-cases', () => {
+        reviewGets += 1;
+        return HttpResponse.json({ items: [], page: 1, pageSize: 50, totalCount: 0 });
+      }),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/resolve', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/dismiss', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+    );
+
+    renderGate('/review-cases');
+
+    expect(await screen.findByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+    expect(await screen.findByText('No review cases are in this organization yet.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review cases' })).toHaveAttribute('href', '/review-cases');
+    await flush();
+    expect(reviewGets).toBeGreaterThan(0);
+    expect(posts).toBe(0);
+  });
+
+  it('does not fetch review cases for a deep link without review-cases.read', async () => {
+    let reviewGets = 0;
+    server.use(
+      http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['invoices.read'], [northOrg()]))),
+      http.get('/api/review-cases', () => {
+        reviewGets += 1;
+        return HttpResponse.json({ items: [], page: 1, pageSize: 50, totalCount: 0 });
+      }),
+      http.get('/api/invoices', () => HttpResponse.json(invoiceList('INV-HOME'))),
+    );
+
+    renderGate('/review-cases');
+
+    expect(await screen.findByText('That page is not available.')).toBeInTheDocument();
+    await flush();
+    expect(reviewGets).toBe(0);
+    expect(screen.queryByRole('heading', { name: 'Review cases' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the verified cookie session when a review case read stays forbidden', async () => {
+    const user = userEvent.setup();
+    let sessionCalls = 0;
+    let reviewCalls = 0;
+    let logoutPosts = 0;
+    let signedOut = false;
+    server.use(
+      http.get('/api/session', () => {
+        sessionCalls += 1;
+        return HttpResponse.json(signedOut
+          ? anonymousBody()
+          : workspaceBody(northId, 'North Ledger', viewerPermissions, [northOrg()]));
+      }),
+      http.get('/api/review-cases', () => {
+        reviewCalls += 1;
+        return HttpResponse.json({ code: 'auth.permission.denied', title: 'Forbidden' }, { status: 403 });
+      }),
+      http.post('/logout', ({ request }) => {
+        logoutPosts += 1;
+        expect(request.headers.get('authorization')).toBeNull();
+        expect(request.headers.get('x-csrf-token')).toBe('csrf-session');
+        signedOut = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderGate('/review-cases');
+
+    expect(await screen.findByText('Review cases are not available for this organization.')).toBeInTheDocument();
+    await vi.waitFor(() => {
+      expect(sessionCalls).toBe(2);
+      expect(reviewCalls).toBe(2);
+    });
+    await flush();
+    expect(sessionCalls).toBe(2);
+    expect(reviewCalls).toBe(2);
+    expect(screen.getByText('Signed in as Ada Operator')).toBeInTheDocument();
+    expect(screen.getByText('Active organization: North Ledger')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update access' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(sessionStore.getSnapshot().authenticated).toBe(true);
+    expect(sessionStore.getSnapshot().authorization).toBe('verified');
+    expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
+    expect(sessionStore.getSnapshot().issuer).toBe('https://issuer.example');
+    expect(sessionStore.getSnapshot().subject).toBe('oidc-operator');
+    expect(sessionStore.getSnapshot().activeOrganization?.organizationId).toBe(northId);
+    expect(sessionStore.getSnapshot().capabilities).toContain('review-cases.read');
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await vi.waitFor(() => expect(reviewCalls).toBe(3));
+    await flush();
+    expect(sessionCalls).toBe(2);
+    expect(sessionStore.getSnapshot().authenticated).toBe(true);
+    expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
+    expect(screen.getByText('Review cases are not available for this organization.')).toBeInTheDocument();
+    expect(screen.getByText('Signed in as Ada Operator')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(logoutPosts).toBe(1);
+    expect(sessionStore.getSnapshot().authenticated).toBe(false);
+    expect(screen.queryByText('Review cases are not available for this organization.')).not.toBeInTheDocument();
   });
 
   it('revalidates a financial 403 once and does not retry forever', async () => {
