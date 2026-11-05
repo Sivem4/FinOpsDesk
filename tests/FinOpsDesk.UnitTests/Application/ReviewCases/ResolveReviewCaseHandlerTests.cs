@@ -479,19 +479,112 @@ public sealed class ResolveReviewCaseHandlerTests
         Assert.Equal(1, unitOfWork.SaveCount);
     }
 
+    [Fact]
+    public async Task Handle_should_append_one_resolved_entry_and_skip_an_identical_replay()
+    {
+        ReviewCase reviewCase = OpenInvoiceCase(OrganizationId);
+        FakeReviewCaseRepository reviewCases = new();
+        reviewCases.Seed(reviewCase, ReviewCaseHandlerTestDoubles.CurrentVersion);
+        FixedTimeProvider time = new(ReviewCaseHandlerTestDoubles.OpenedAt.AddMinutes(5));
+        RecordingReviewCaseAuditWriter audit = new();
+        ScriptedUnitOfWork unitOfWork = new();
+        ResolveReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            reviewCases,
+            unitOfWork: unitOfWork,
+            time: time,
+            audit: audit);
+
+        Result<ReviewCaseResponse> applied = await handler.Handle(
+            Command(
+                reviewCase.Id,
+                ReviewCaseOutcome.NoActionRequired,
+                null,
+                " done ",
+                Token(ReviewCaseHandlerTestDoubles.CurrentVersion)),
+            CancellationToken.None);
+
+        Assert.True(applied.IsSuccess);
+        ReviewCaseAuditEntry entry = Assert.Single(audit.Entries);
+        Assert.Equal(ReviewCaseAuditAction.Resolved, entry.Action);
+        Assert.Equal("operator-a", entry.ActorId);
+        Assert.Equal(reviewCase.ClosedAt, entry.RecordedAt);
+        Assert.Equal("done", entry.ResolutionNote);
+        Assert.Null(entry.Reason);
+        Assert.Equal(1, time.ReadCount);
+        Assert.Equal(1, unitOfWork.SaveCount);
+
+        ResolveReviewCaseHandler replay = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            reviewCases,
+            unitOfWork: unitOfWork,
+            time: time,
+            actor: new FixedActorContext("operator-b"),
+            audit: audit);
+        Result<ReviewCaseResponse> repeated = await replay.Handle(
+            Command(
+                reviewCase.Id,
+                ReviewCaseOutcome.NoActionRequired,
+                null,
+                "done",
+                Token(ReviewCaseHandlerTestDoubles.OtherVersion)),
+            CancellationToken.None);
+
+        Assert.True(repeated.IsSuccess);
+        Assert.Single(audit.Entries);
+        Assert.Equal("operator-a", audit.Entries[0].ActorId);
+        Assert.Equal(reviewCase.ClosedAt, audit.Entries[0].RecordedAt);
+        Assert.Equal(1, unitOfWork.SaveCount);
+    }
+
+    [Fact]
+    public async Task Handle_should_reject_a_missing_actor_before_loading_the_case()
+    {
+        FakeReviewCaseRepository reviewCases = new();
+        reviewCases.Seed(OpenInvoiceCase(OrganizationId), ReviewCaseHandlerTestDoubles.CurrentVersion);
+        RecordingReviewCaseAuditWriter audit = new();
+        ScriptedUnitOfWork unitOfWork = new();
+        ResolveReviewCaseHandler handler = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            reviewCases,
+            unitOfWork: unitOfWork,
+            actor: new FixedActorContext("  operator"),
+            audit: audit);
+
+        Result<ReviewCaseResponse> result = await handler.Handle(
+            Command(
+                ReviewCaseId.New(),
+                ReviewCaseOutcome.NoActionRequired,
+                null,
+                null,
+                Token(ReviewCaseHandlerTestDoubles.CurrentVersion)),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired.Code, result.Error.Code);
+        Assert.Equal(0, reviewCases.GetCount);
+        Assert.Equal(0, unitOfWork.SaveCount);
+        Assert.Empty(audit.Entries);
+    }
+
     private static ResolveReviewCaseHandler CreateHandler(
         ICurrentOrganizationContext organization,
         FakeReviewCaseRepository reviewCases,
         FakeAllocationLinkLookup? allocations = null,
         FakeReviewCaseSnapshotLookup? lookup = null,
         ScriptedUnitOfWork? unitOfWork = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ICurrentActorContext? actor = null,
+        RecordingReviewCaseAuditWriter? audit = null)
     {
         return new ResolveReviewCaseHandler(
             organization,
+            actor ?? new FixedActorContext(),
             reviewCases,
             lookup ?? new FakeReviewCaseSnapshotLookup(),
             allocations ?? new FakeAllocationLinkLookup(),
+            audit ?? new RecordingReviewCaseAuditWriter(),
+            new NoReviewCaseAuditConflict(),
             unitOfWork ?? new ScriptedUnitOfWork(),
             time ?? new FixedTimeProvider(ReviewCaseHandlerTestDoubles.OpenedAt));
     }

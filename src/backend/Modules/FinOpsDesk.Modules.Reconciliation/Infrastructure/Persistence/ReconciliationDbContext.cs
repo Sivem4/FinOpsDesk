@@ -43,6 +43,8 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
 
     public DbSet<ReviewCase> ReviewCases => Set<ReviewCase>();
 
+    public DbSet<ReviewCaseAuditEntry> ReviewCaseAuditEntries => Set<ReviewCaseAuditEntry>();
+
     public DbSet<BatchExecution> BatchExecutions => Set<BatchExecution>();
 
     public DbSet<FinancialAuditEntry> FinancialAuditEntries => Set<FinancialAuditEntry>();
@@ -112,6 +114,7 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new AllocationConfiguration());
         modelBuilder.ApplyConfiguration(new ImportBatchConfiguration());
         modelBuilder.ApplyConfiguration(new ReviewCaseConfiguration());
+        modelBuilder.ApplyConfiguration(new ReviewCaseAuditEntryConfiguration());
         modelBuilder.ApplyConfiguration(new BatchExecutionConfiguration());
         modelBuilder.ApplyConfiguration(new FinancialAuditEntryConfiguration());
     }

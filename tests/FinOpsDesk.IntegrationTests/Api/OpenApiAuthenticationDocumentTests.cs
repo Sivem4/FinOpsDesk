@@ -102,10 +102,12 @@ public sealed class OpenApiAuthenticationDocumentTests
                 StringComparison.Ordinal);
             if (HasHandlerActorForbidden(path, method))
             {
+                Assert.Contains("reconciliation.actor.required", description, StringComparison.Ordinal);
                 AssertHandlerActorForbidden(operation);
             }
             else
             {
+                Assert.DoesNotContain("reconciliation.actor.required", description, StringComparison.Ordinal);
                 AssertEmptyStatus(operation, "403");
                 Assert.DoesNotContain("reconciliation.actor.required", StatusDescription(operation, "403"), StringComparison.Ordinal);
             }
@@ -227,6 +229,7 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.Contains("allowlist", description, StringComparison.Ordinal);
             Assert.Contains("FinancialWriteAuthorization", description, StringComparison.Ordinal);
             Assert.Contains("unset", description, StringComparison.Ordinal);
+            Assert.Contains("reconciliation.actor.required", description, StringComparison.Ordinal);
             Assert.True(RequiredFlag(Parameter(operation, CsrfHeader)));
             Assert.Contains("auth.csrf.invalid", operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString(), StringComparison.Ordinal);
             AssertHandlerActorForbidden(operation);
@@ -262,6 +265,7 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.Contains(permission, description, StringComparison.Ordinal);
             Assert.Contains("before CSRF", description, StringComparison.Ordinal);
             Assert.Contains("allowlist", description, StringComparison.Ordinal);
+            Assert.DoesNotContain("reconciliation.actor.required", description, StringComparison.Ordinal);
             Assert.False(HasParameter(operation, CsrfHeader));
             Assert.DoesNotContain(
                 "Financial authorization could not be completed",
@@ -332,7 +336,10 @@ public sealed class OpenApiAuthenticationDocumentTests
             && path is "/api/matches/confirm"
                 or "/api/allocations"
                 or "/api/allocations/{allocationId}/reverse"
-                or "/api/matches/batch/execute";
+                or "/api/matches/batch/execute"
+                or "/api/review-cases"
+                or "/api/review-cases/{id}/resolve"
+                or "/api/review-cases/{id}/dismiss";
     }
 
     private static void AssertHandlerActorForbidden(JsonElement operation)

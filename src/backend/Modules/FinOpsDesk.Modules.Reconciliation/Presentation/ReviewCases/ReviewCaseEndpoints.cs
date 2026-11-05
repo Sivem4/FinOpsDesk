@@ -30,6 +30,12 @@ internal static class ReviewCaseEndpoints
         "Opaque Base64 encoding of the 8-byte SQL Server rowversion. "
         + "Submit the token read with the case. Do not replace it with a newer token after a conflict.";
 
+    private const string ActorDescription =
+        "The actor is taken from the authenticated server context. "
+        + "The body, query, and headers do not supply an actor. "
+        + "A newly executed action appends one review-case audit entry in the same save. "
+        + "Replay does not append an entry and does not change the original actor, time, decision, or concurrency token.";
+
     private const string TenantDescription =
         "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. "
         + "A client organization id in the body, query, or header is not accepted as the tenant.";
@@ -57,10 +63,12 @@ internal static class ReviewCaseEndpoints
                 TenantDescription
                 + " A new case returns 201 and a Location header for GET /api/review-cases/{id}. "
                 + "An existing open case for the same subject returns 200 and does not change the stored note, source, or concurrency token. "
-                + "This operation does not allocate money and does not run exact-1 or smart-1.")
+                + "This operation does not allocate money and does not run exact-1 or smart-1. "
+                + ActorDescription)
             .Produces<ReviewCaseResponse>(StatusCodes.Status201Created, "application/json")
             .Produces<ReviewCaseResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
@@ -104,9 +112,11 @@ internal static class ReviewCaseEndpoints
                 + " AllocationRecorded requires an existing confirmed allocation. "
                 + "NoActionRequired and HandledOutside reject an allocation id. "
                 + "An identical terminal replay returns 200 and preserves ClosedAt and the concurrency token. "
-                + "This operation does not confirm an allocation.")
+                + "This operation does not confirm an allocation. "
+                + ActorDescription)
             .Produces<ReviewCaseResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
@@ -123,9 +133,11 @@ internal static class ReviewCaseEndpoints
                 TenantDescription
                 + " Outcome and allocationId are not accepted. "
                 + "An identical dismissal replay returns 200 and preserves ClosedAt and the concurrency token. "
-                + "Dismissal does not change invoice, bank transaction, or allocation rows.")
+                + "Dismissal does not change invoice, bank transaction, or allocation rows. "
+                + ActorDescription)
             .Produces<ReviewCaseResponse>(StatusCodes.Status200OK, "application/json")
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
@@ -1205,12 +1217,22 @@ internal static class ReviewCaseEndpoints
             return StatusCodes.Status413PayloadTooLarge;
         }
 
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return StatusCodes.Status403Forbidden;
+        }
+
         throw new InvalidOperationException(
             $"Unexpected review case failure '{error.Code}'.");
     }
 
     private static string TitleFor(Error error)
     {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return "A valid authenticated actor is required.";
+        }
+
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidRequest.Code)
         {
             return "Review case request is invalid.";

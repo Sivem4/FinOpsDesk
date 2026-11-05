@@ -91,6 +91,137 @@ public sealed class ReviewCaseEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("overlong")]
+    public async Task Missing_or_invalid_actor_rejects_open_resolve_and_dismiss(string? subject)
+    {
+        if (subject == "overlong")
+        {
+            subject = new string('x', 257);
+        }
+
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 40m);
+        await SeedInvoiceAsync(invoice);
+        using HttpClient client = _factory.CreateApiClient(
+            TestAccessTokens.CreateForActor(organizationId.Value, subject));
+
+        HttpResponseMessage opened = await PostJsonAsync(
+            client,
+            "/api/review-cases",
+            new
+            {
+                reason = "NeedsInvestigation",
+                invoiceId = invoice.Id.Value,
+            });
+        await AssertProblemAsync(
+            opened,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ActorRequired.Code);
+        HttpResponseMessage resolved = await PostJsonAsync(
+            client,
+            "/api/review-cases/" + Guid.NewGuid().ToString("D") + "/resolve",
+            new
+            {
+                outcome = "NoActionRequired",
+                concurrencyToken = "AAAAAAAAAAA=",
+            });
+        await AssertProblemAsync(
+            resolved,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ActorRequired.Code);
+        HttpResponseMessage dismissed = await PostJsonAsync(
+            client,
+            "/api/review-cases/" + Guid.NewGuid().ToString("D") + "/dismiss",
+            new
+            {
+                concurrencyToken = "AAAAAAAAAAA=",
+            });
+        await AssertProblemAsync(
+            dismissed,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ActorRequired.Code);
+
+        Assert.Equal(0, await CaseCountAsync(organizationId));
+        Assert.Equal(0, await AuditCountAsync(organizationId));
+    }
+
+    [Fact]
+    public async Task Identical_replay_without_an_actor_is_forbidden_and_keeps_the_original_entry()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 40m);
+        await SeedInvoiceAsync(invoice);
+        using HttpClient actor = Client(organizationId);
+        Guid reviewCaseId = await OpenAsync(actor, "NeedsInvestigation", invoice.Id.Value, null, "manual", "kept");
+        string token = await TokenAsync(reviewCaseId);
+        using HttpClient anonymousActor = _factory.CreateApiClient(
+            TestAccessTokens.CreateForActor(organizationId.Value, null));
+
+        HttpResponseMessage replayed = await PostJsonAsync(
+            anonymousActor,
+            "/api/review-cases",
+            new
+            {
+                reason = "NeedsInvestigation",
+                invoiceId = invoice.Id.Value,
+                sourceLabel = "manual",
+                note = "kept",
+            });
+        await AssertProblemAsync(
+            replayed,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ActorRequired.Code);
+        HttpResponseMessage dismissed = await PostJsonAsync(
+            actor,
+            "/api/review-cases/" + reviewCaseId.ToString("D") + "/dismiss",
+            new { resolutionNote = "closed", concurrencyToken = token });
+        Assert.Equal(HttpStatusCode.OK, dismissed.StatusCode);
+        string closedToken = await TokenAsync(reviewCaseId);
+        HttpResponseMessage dismissedAgain = await PostJsonAsync(
+            anonymousActor,
+            "/api/review-cases/" + reviewCaseId.ToString("D") + "/dismiss",
+            new { resolutionNote = "closed", concurrencyToken = closedToken });
+        await AssertProblemAsync(
+            dismissedAgain,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ActorRequired.Code);
+
+        Assert.Equal(1, await CaseCountAsync(organizationId));
+        Assert.Equal(2, await AuditCountAsync(organizationId));
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        ReviewCaseAuditEntry[] entries = await context.ReviewCaseAuditEntries
+            .Where(entry => entry.OrganizationId == organizationId)
+            .OrderBy(entry => entry.Action)
+            .ToArrayAsync();
+        Assert.Equal(new[] { ReviewCaseAuditAction.Opened, ReviewCaseAuditAction.Dismissed }, entries.Select(entry => entry.Action).ToArray());
+        Assert.All(entries, entry => Assert.Equal("test-user", entry.ActorId));
+        ReviewCase reviewCase = await context.ReviewCases.SingleAsync(candidate =>
+            candidate.Id == new ReviewCaseId(reviewCaseId));
+        Assert.Equal(ReviewCaseStatus.Dismissed, reviewCase.Status);
+        Assert.Equal(closedToken, ReviewCaseConcurrencyToken.Encode(
+            context.Entry(reviewCase).Property<byte[]>("RowVersion").CurrentValue!));
+    }
+
+    [Fact]
+    public async Task Invalid_open_json_stays_400_when_the_actor_is_missing()
+    {
+        OrganizationId organizationId = OrganizationId.New();
+        using HttpClient client = _factory.CreateApiClient(
+            TestAccessTokens.CreateForActor(organizationId.Value, null));
+
+        HttpResponseMessage response = await PostRawAsync(client, "/api/review-cases", "{");
+
+        await AssertProblemAsync(
+            response,
+            HttpStatusCode.BadRequest,
+            ReconciliationApplicationErrors.ReviewCaseInvalidRequest.Code);
+        Assert.Equal(0, await AuditCountAsync(organizationId));
+    }
+
     [Fact]
     public async Task Tenant_member_can_list_review_cases()
     {
@@ -1287,6 +1418,20 @@ public sealed class ReviewCaseEndpointTests : IDisposable
     {
         await using ReconciliationDbContext context = _fixture.CreateContext();
         return await context.ReviewCases.CountAsync(reviewCase => reviewCase.OrganizationId == organizationId);
+    }
+
+    private async Task<int> AuditCountAsync(OrganizationId organizationId)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        return await context.ReviewCaseAuditEntries.CountAsync(entry =>
+            entry.OrganizationId == organizationId);
+    }
+
+    private async Task SeedInvoiceAsync(Invoice invoice)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        context.Invoices.Add(invoice);
+        await context.SaveChangesAsync();
     }
 
     private async Task<string> TokenAsync(Guid reviewCaseId)

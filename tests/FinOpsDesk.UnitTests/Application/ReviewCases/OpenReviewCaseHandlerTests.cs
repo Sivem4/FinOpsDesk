@@ -437,6 +437,111 @@ public sealed class OpenReviewCaseHandlerTests
         }
     }
 
+    [Fact]
+    public async Task Handle_should_reject_a_missing_actor_before_reading_the_organization()
+    {
+        RecordingOrganizationContext organization = new(OrganizationId);
+        ScriptedUnitOfWork unitOfWork = new();
+        RecordingReviewCaseAuditWriter audit = new();
+        OpenReviewCaseHandler handler = CreateHandler(
+            organization,
+            new FakeInvoiceRepository(),
+            unitOfWork: unitOfWork,
+            actor: new FixedActorContext(null),
+            audit: audit);
+
+        Result<OpenReviewCaseResponse> result = await handler.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                InvoiceId.New(),
+                null,
+                "manual",
+                "note"),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(ReconciliationApplicationErrors.ActorRequired.Code, result.Error.Code);
+        Assert.Equal(0, organization.ReadCount);
+        Assert.Equal(0, unitOfWork.SaveCount);
+        Assert.Empty(audit.Entries);
+    }
+
+    [Fact]
+    public async Task Handle_should_append_one_opened_entry_for_a_new_case_and_none_for_replay()
+    {
+        Invoice invoice = ReviewCaseHandlerTestDoubles.CreateInvoice(OrganizationId);
+        FakeInvoiceRepository invoices = new();
+        invoices.Add(invoice);
+        FixedTimeProvider time = new(ReviewCaseHandlerTestDoubles.OpenedAt);
+        RecordingReviewCaseAuditWriter audit = new();
+        ScriptedUnitOfWork unitOfWork = new();
+        OpenReviewCaseHandler created = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            unitOfWork: unitOfWork,
+            time: time,
+            audit: audit);
+
+        Result<OpenReviewCaseResponse> first = await created.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "manual",
+                " kept "),
+            CancellationToken.None);
+
+        Assert.True(first.IsSuccess);
+        Assert.True(first.Value.Created);
+        ReviewCaseAuditEntry entry = Assert.Single(audit.Entries);
+        Assert.Equal(ReviewCaseAuditAction.Opened, entry.Action);
+        Assert.Equal("operator-a", entry.ActorId);
+        Assert.Equal(ReviewCaseHandlerTestDoubles.OpenedAt, entry.RecordedAt);
+        Assert.Equal("kept", entry.Note);
+        Assert.Equal(ReviewCaseSource.Manual, entry.SourceLabel);
+        Assert.Equal(1, time.ReadCount);
+        Assert.Equal(1, unitOfWork.SaveCount);
+
+        ReviewCase stored = ReviewCase.Open(
+            new ReviewCaseId(first.Value.ReviewCase.ReviewCaseId),
+            OrganizationId,
+            ReviewCaseReason.NeedsInvestigation,
+            invoice.Id,
+            null,
+            ReviewCaseSource.Manual,
+            "kept",
+            ReviewCaseHandlerTestDoubles.OpenedAt);
+        FakeReviewCaseSnapshotLookup lookup = new()
+        {
+            OpenSnapshot = ReviewCaseHandlerTestDoubles.Snapshot(
+                stored,
+                ReviewCaseHandlerTestDoubles.CurrentVersion),
+        };
+        OpenReviewCaseHandler replay = CreateHandler(
+            new RecordingOrganizationContext(OrganizationId),
+            invoices,
+            lookup: lookup,
+            unitOfWork: unitOfWork,
+            time: time,
+            actor: new FixedActorContext("operator-b"),
+            audit: audit);
+
+        Result<OpenReviewCaseResponse> second = await replay.Handle(
+            new OpenReviewCaseCommand(
+                ReviewCaseReason.NeedsInvestigation,
+                invoice.Id,
+                null,
+                "smart-1",
+                "other"),
+            CancellationToken.None);
+
+        Assert.True(second.IsSuccess);
+        Assert.False(second.Value.Created);
+        Assert.Single(audit.Entries);
+        Assert.Equal("operator-a", audit.Entries[0].ActorId);
+        Assert.Equal(1, unitOfWork.SaveCount);
+    }
+
     private static OpenReviewCaseHandler CreateHandler(
         ICurrentOrganizationContext organization,
         FakeInvoiceRepository invoices,
@@ -445,15 +550,19 @@ public sealed class OpenReviewCaseHandlerTests
         FakeReviewCaseSnapshotLookup? lookup = null,
         FakeReviewCaseOpenConflict? conflict = null,
         ScriptedUnitOfWork? unitOfWork = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        ICurrentActorContext? actor = null,
+        RecordingReviewCaseAuditWriter? audit = null)
     {
         return new OpenReviewCaseHandler(
             organization,
+            actor ?? new FixedActorContext(),
             invoices,
             bankTransactions ?? new FakeBankTransactionRepository(),
             reviewCases ?? new FakeReviewCaseRepository(),
             lookup ?? new FakeReviewCaseSnapshotLookup(),
             conflict ?? new FakeReviewCaseOpenConflict(),
+            audit ?? new RecordingReviewCaseAuditWriter(),
             unitOfWork ?? new ScriptedUnitOfWork(),
             time ?? new FixedTimeProvider(ReviewCaseHandlerTestDoubles.OpenedAt));
     }

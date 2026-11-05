@@ -506,11 +506,21 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, bankImported.StatusCode);
         HttpResponseMessage opened = await host.SendAsync(OpenReview(first));
         Assert.Equal(HttpStatusCode.Forbidden, opened.StatusCode);
-        Assert.DoesNotContain("reviewCaseId", await opened.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        string openedBody = await opened.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("reviewCaseId", openedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("reconciliation.actor.required", openedBody, StringComparison.Ordinal);
         HttpResponseMessage resolved = await host.SendAsync(ResolveReview(Guid.NewGuid(), "AAAA", host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, resolved.StatusCode);
+        Assert.DoesNotContain(
+            "reconciliation.actor.required",
+            await resolved.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
         HttpResponseMessage dismissed = await host.SendAsync(DismissReview(Guid.NewGuid(), "AAAA", host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, dismissed.StatusCode);
+        Assert.DoesNotContain(
+            "reconciliation.actor.required",
+            await dismissed.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
 
         Assert.Equal(allocations, await host.CountAllocationsAsync(first.OrganizationId));
         Assert.Equal(invoices, await host.CountInvoicesAsync(first.OrganizationId));
@@ -521,6 +531,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Open));
         Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Resolved));
         Assert.Equal(0, await host.CountReviewCasesAsync(first.OrganizationId, ReviewCaseStatus.Dismissed));
+        Assert.Equal(0, await host.CountReviewCaseAuditEntriesAsync(first.OrganizationId));
     }
 
     [Fact]
@@ -684,6 +695,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Equal(0, await host.CountRunningBatchesAsync(confirmPair.OrganizationId));
         Assert.Equal(0, await host.CountCompletedBatchesAsync(confirmPair.OrganizationId));
         Assert.Equal(0, await host.CountReviewCasesAsync(confirmPair.OrganizationId, ReviewCaseStatus.Open));
+        Assert.Equal(0, await host.CountReviewCaseAuditEntriesAsync(confirmPair.OrganizationId));
     }
 
     public void Dispose()
@@ -1694,6 +1706,13 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             return await context.ReviewCases.CountAsync(reviewCase =>
                 reviewCase.OrganizationId == new OrganizationId(organizationId)
                 && reviewCase.Status == status);
+        }
+
+        public async Task<int> CountReviewCaseAuditEntriesAsync(Guid organizationId)
+        {
+            await using ReconciliationDbContext context = _test._fixture.CreateContext();
+            return await context.ReviewCaseAuditEntries.CountAsync(entry =>
+                entry.OrganizationId == new OrganizationId(organizationId));
         }
 
         public async Task<int> CountAuditEntriesAsync(Guid organizationId)

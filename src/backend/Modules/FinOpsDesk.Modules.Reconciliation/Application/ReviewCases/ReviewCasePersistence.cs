@@ -39,6 +39,11 @@ public interface IReviewCaseOpenConflict
     bool IsOpenSubjectConflict(Exception exception);
 }
 
+public interface IReviewCaseAuditConflict
+{
+    bool IsAuditUniquenessConflict(Exception exception);
+}
+
 public interface IAllocationLinkLookup
 {
     Task<AllocationLink?> FindAsync(
