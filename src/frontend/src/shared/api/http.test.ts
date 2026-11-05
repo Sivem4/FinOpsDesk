@@ -57,8 +57,30 @@ describe('review case reads', () => {
 
     await expect(apiGet('/api/review-cases?page=1&pageSize=50', new AbortController().signal)).rejects.toMatchObject({ status: 403 });
     await expect(apiGet(`/api/review-cases/${caseId}`, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+    await expect(apiGet(`/api/review-cases/${caseId}/audit?page=1&pageSize=50`, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
     await expect(apiGet(`/api/review-cases/${caseId}/resolve`, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
 
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('maps a review case audit read to audit.read and still rejects the write', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await apiGet(`/api/review-cases/${caseId}/audit?page=1&pageSize=50`, new AbortController().signal);
+    await expect(apiGet(`/api/review-cases/${caseId}/dismiss`, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(`/api/review-cases/${caseId}/audit?page=1&pageSize=50`);
+  });
+
+  it('does not fetch review case audit for a cookie session that can only read cases', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await expect(apiGet(`/api/review-cases/${caseId}/audit`, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

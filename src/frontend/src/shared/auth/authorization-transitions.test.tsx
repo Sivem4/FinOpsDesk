@@ -468,6 +468,96 @@ describe('authorization transitions', () => {
     expect(screen.queryByText('Review cases are not available for this organization.')).not.toBeInTheDocument();
   });
 
+  it('keeps the verified cookie session when stored review history stays forbidden', async () => {
+    const user = userEvent.setup();
+    let sessionCalls = 0;
+    let auditCalls = 0;
+    let posts = 0;
+    server.use(
+      http.get('/api/session', () => {
+        sessionCalls += 1;
+        return HttpResponse.json(workspaceBody(northId, 'North Ledger', operatorPermissions, [northOrg()]));
+      }),
+      http.get('/api/review-cases', () => HttpResponse.text(reviewCaseList())),
+      http.get('/api/review-cases/:id/audit', () => {
+        auditCalls += 1;
+        return HttpResponse.json({ code: 'auth.permission.denied', title: 'Forbidden' }, { status: 403 });
+      }),
+      http.get('/api/review-cases/:id', () => HttpResponse.text(reviewCaseDetail())),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/resolve', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/dismiss', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+    );
+
+    renderGate(`/review-cases?selected=${invoiceId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+    await vi.waitFor(() => expect(auditCalls).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(sessionCalls).toBeGreaterThanOrEqual(2));
+    await flush();
+
+    expect(auditCalls).toBeGreaterThan(0);
+    expect(posts).toBe(0);
+    expect(screen.getByText('Signed in as Ada Operator')).toBeInTheDocument();
+    expect(screen.getByText('Active organization: North Ledger')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update access' })).not.toBeInTheDocument();
+    expect(sessionStore.getSnapshot().authenticated).toBe(true);
+    expect(sessionStore.getSnapshot().authorization).toBe('verified');
+    expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
+    expect(sessionStore.getSnapshot().capabilities).toContain('audit.read');
+    expect(screen.getByText(`Case ${invoiceId}`)).toBeInTheDocument();
+  });
+
+  it('drops review history when the organization no longer has audit.read', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    let auditCalls = 0;
+    const lateAudit = deferred<void>();
+    server.use(
+      http.get('/api/session', () => HttpResponse.json(posts === 0
+        ? workspaceBody(northId, 'North Ledger', operatorPermissions, [northOrg(), southOrg()])
+        : workspaceBody(southId, 'South Ledger', viewerPermissions, [northOrg(), southOrg()]))),
+      http.post('/api/session/organization', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get('/api/review-cases', () => HttpResponse.text(reviewCaseList())),
+      http.get('/api/review-cases/:id/audit', async () => {
+        auditCalls += 1;
+        await lateAudit.promise;
+        return HttpResponse.text(reviewAuditDocument('actor-north'));
+      }),
+      http.get('/api/review-cases/:id', () => HttpResponse.text(reviewCaseDetail())),
+    );
+
+    renderGate(`/review-cases?selected=${invoiceId}`);
+    await user.click(await screen.findByRole('button', { name: 'View audit' }));
+    expect(await screen.findByText('Loading stored history')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Switch to South Ledger' }));
+    expect(await screen.findByText('Active organization: South Ledger')).toBeInTheDocument();
+    lateAudit.resolve();
+    await flush();
+
+    expect(await screen.findByText(`Case ${invoiceId}`)).toBeInTheDocument();
+    expect(screen.queryByText('Actor actor-north')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View audit' })).not.toBeInTheDocument();
+    expect(screen.getByText('Invoice outstanding 0.00 PLN')).toBeInTheDocument();
+    const callsAfterSwitch = auditCalls;
+    await flush();
+    expect(auditCalls).toBe(callsAfterSwitch);
+    expect(posts).toBe(1);
+  });
+
   it('revalidates a financial 403 once and does not retry forever', async () => {
     let sessionCalls = 0;
     let invoiceCalls = 0;
@@ -483,15 +573,16 @@ describe('authorization transitions', () => {
     );
 
     renderGate();
-    await vi.waitFor(() => {
-      expect(sessionCalls).toBe(2);
-      expect(invoiceCalls).toBe(2);
-    });
-    expect(screen.getByText(/have access to this workspace/)).toBeInTheDocument();
+    expect(await screen.findByText('You don’t have access to this workspace. Check your access details.')).toBeInTheDocument();
+    expect(screen.queryByText('Loading invoices')).not.toBeInTheDocument();
+    expect(sessionCalls).toBe(2);
+    expect(invoiceCalls).toBe(2);
     await flush();
 
     expect(sessionCalls).toBe(2);
     expect(invoiceCalls).toBe(2);
+    expect(screen.getByText('You don’t have access to this workspace. Check your access details.')).toBeInTheDocument();
+    expect(screen.queryByText('Loading invoices')).not.toBeInTheDocument();
   });
 
   it('does not revalidate permissions after a financial 404', async () => {
@@ -624,6 +715,54 @@ function restrictedOrganization(
     organizations,
     activeOrganization: { organizationId, displayName },
   };
+}
+
+function reviewAuditDocument(actorId: string): string {
+  return JSON.stringify({
+    items: [{
+      id: auditId,
+      action: 'Opened',
+      actorId,
+      recordedAt: '2026-11-05T08:00:00Z',
+      reason: 'CompetingMatch',
+      invoiceId,
+      bankTransactionId: bankId,
+      sourceLabel: 'manual',
+      note: 'watch the zero balance',
+      outcome: null,
+      allocationId: null,
+      resolutionNote: null,
+    }],
+    page: 1,
+    pageSize: 50,
+    totalCount: 1,
+  });
+}
+
+function reviewCaseList(): string {
+  return `{"items":[${reviewCaseItem()}],"page":1,"pageSize":50,"totalCount":1}`;
+}
+
+function reviewCaseDetail(): string {
+  return `{"reviewCase":${reviewCaseItem()},"linkedFinancials":{"invoiceFound":true,"invoiceOutstanding":{"amount":0,"currency":"PLN"},"bankTransactionFound":true,"bankTransactionUnapplied":{"amount":0.0001,"currency":"EUR"}}}`;
+}
+
+function reviewCaseItem(): string {
+  return JSON.stringify({
+    reviewCaseId: invoiceId,
+    reason: 'CompetingMatch',
+    status: 'Open',
+    invoiceId,
+    bankTransactionId: bankId,
+    sourceLabel: 'manual',
+    note: 'watch the zero balance',
+    outcome: null,
+    resolutionNote: null,
+    allocationId: null,
+    openedAt: '2026-11-05T08:00:00Z',
+    closedAt: null,
+    concurrencyToken: 'hidden-token',
+  });
 }
 
 function invoiceList(invoiceNumber: string) {

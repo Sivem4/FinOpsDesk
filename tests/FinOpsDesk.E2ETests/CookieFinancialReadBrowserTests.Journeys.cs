@@ -128,6 +128,52 @@ public sealed partial class CookieFinancialReadBrowserTests
 
         IPage page = await journey.OpenPageAsync();
         int reviewPosts = 0;
+        int auditGets = 0;
+        page.Request += (_, request) =>
+        {
+            if (string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                && request.Url.Contains("/api/review-cases", StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref reviewPosts);
+            }
+
+            if (string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase)
+                && request.Url.Contains("/audit", StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref auditGets);
+            }
+        };
+
+        await SignInAndOpenNorthAsync(page, journey.BrowserOrigin);
+        await page.GetByRole(AriaRole.Link, new() { Name = "Review cases" }).ClickAsync();
+        await page.GetByText("watch the zero balance").WaitForAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Show review case", Exact = false }).ClickAsync();
+        await page.GetByText("Invoice outstanding 0.00 PLN").WaitForAsync();
+        await page.GetByText("Bank transaction unapplied 10.0001 PLN").WaitForAsync();
+        await page.GetByText("not one atomic snapshot").WaitForAsync();
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "View audit" }).CountAsync());
+        Assert.Equal(0, reviewPosts);
+        Assert.Equal(0, auditGets);
+    }
+
+    [Fact]
+    public async Task Operator_reads_a_seeded_review_case_audit_without_posting()
+    {
+        await using FinanceJourney journey = await FinanceJourney.StartAsync();
+        await SeedOrganizationAsync(
+            journey.Database.ConnectionString,
+            journey.Issuer,
+            OrganizationId,
+            "North Ledger",
+            OrganizationRole.Operator,
+            invoiceNumber: null);
+        await SeedZeroBalanceReviewCaseAsync(
+            journey.Database.ConnectionString,
+            OrganizationId,
+            "e2e-review-audit-actor");
+
+        IPage page = await journey.OpenPageAsync();
+        int reviewPosts = 0;
         page.Request += (_, request) =>
         {
             if (string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
@@ -142,8 +188,17 @@ public sealed partial class CookieFinancialReadBrowserTests
         await page.GetByText("watch the zero balance").WaitForAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Show review case", Exact = false }).ClickAsync();
         await page.GetByText("Invoice outstanding 0.00 PLN").WaitForAsync();
-        await page.GetByText("Bank transaction unapplied 10.0001 PLN").WaitForAsync();
-        await page.GetByText("not one atomic snapshot").WaitForAsync();
+        Assert.Equal(0, reviewPosts);
+
+        await page.GetByRole(AriaRole.Button, new() { Name = "View audit" }).ClickAsync();
+        ILocator history = page.GetByRole(AriaRole.Region, new() { Name = "Stored history" });
+        await history.GetByText("Opened").WaitForAsync();
+        await history.GetByText("Actor e2e-review-audit-actor").WaitForAsync();
+        await history.GetByText("Reason CompetingMatch").WaitForAsync();
+        await history.GetByText("Note watch the zero balance").WaitForAsync();
+        await history.GetByText("Stored history is separate from the current case and from the balances above.").WaitForAsync();
+        Assert.Equal(0, await history.GetByText("OIDC Operator").CountAsync());
+        Assert.Equal(0, await history.GetByText("The opening entry is not in the stored history.").CountAsync());
         Assert.Equal(0, reviewPosts);
     }
 
@@ -248,7 +303,15 @@ public sealed partial class CookieFinancialReadBrowserTests
         await reconciliation.SaveChangesAsync();
     }
 
-    private static async Task SeedZeroBalanceReviewCaseAsync(string connectionString, Guid organizationId)
+    private static Task SeedZeroBalanceReviewCaseAsync(string connectionString, Guid organizationId)
+    {
+        return SeedZeroBalanceReviewCaseAsync(connectionString, organizationId, auditActor: null);
+    }
+
+    private static async Task SeedZeroBalanceReviewCaseAsync(
+        string connectionString,
+        Guid organizationId,
+        string? auditActor)
     {
         OrganizationId tenant = new(organizationId);
         CurrencyCode pln = new("PLN");
@@ -280,6 +343,16 @@ public sealed partial class CookieFinancialReadBrowserTests
         reconciliation.BankTransactions.Add(bank);
         await reconciliation.SaveChangesAsync();
         reconciliation.ReviewCases.Add(reviewCase);
+        await reconciliation.SaveChangesAsync();
+        if (auditActor is null)
+        {
+            return;
+        }
+
+        reconciliation.ReviewCaseAuditEntries.Add(ReviewCaseAuditEntry.ForOpened(
+            ReviewCaseAuditEntryId.New(),
+            reviewCase,
+            auditActor));
         await reconciliation.SaveChangesAsync();
     }
 
