@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-05
+- Follow-up: `DevelopmentJwt` opens a case from `/review-cases` and keeps one tab-local attempt in `finopsdesk.review-case-open-attempt`. The descriptor stores the organization id from `org_id`, the idempotency key, the exact body, and the normalized fields. It does not store a bearer token. The record is schema version 1 and is not bound to an issuer or subject, so two operators of the same organization can see it in the same tab. `ProductionCookie` does not mount the form or that recovery panel, and the client refuses the POST before fetch. Phase 8 stays planned.
 
 ## Context
 
