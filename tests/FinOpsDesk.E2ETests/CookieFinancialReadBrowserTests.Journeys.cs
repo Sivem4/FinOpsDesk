@@ -2,8 +2,11 @@ using FinOpsDesk.IntegrationTests.Api;
 using FinOpsDesk.Modules.Access.Domain;
 using FinOpsDesk.Modules.Access.Infrastructure.Persistence;
 using FinOpsDesk.Modules.Reconciliation.Domain;
+using FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions;
 using FinOpsDesk.Modules.Reconciliation.Domain.Invoices;
+using FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.EntityFrameworkCore;
@@ -110,6 +113,40 @@ public sealed partial class CookieFinancialReadBrowserTests
         Assert.Equal(cookieBefore, await ReadSessionCookieAsync(journey.Context, journey.BrowserOrigin));
     }
 
+    [Fact]
+    public async Task Viewer_reads_a_seeded_review_case_without_posting()
+    {
+        await using FinanceJourney journey = await FinanceJourney.StartAsync();
+        await SeedOrganizationAsync(
+            journey.Database.ConnectionString,
+            journey.Issuer,
+            OrganizationId,
+            "North Ledger",
+            OrganizationRole.Viewer,
+            invoiceNumber: null);
+        await SeedZeroBalanceReviewCaseAsync(journey.Database.ConnectionString, OrganizationId);
+
+        IPage page = await journey.OpenPageAsync();
+        int reviewPosts = 0;
+        page.Request += (_, request) =>
+        {
+            if (string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
+                && request.Url.Contains("/api/review-cases", StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref reviewPosts);
+            }
+        };
+
+        await SignInAndOpenNorthAsync(page, journey.BrowserOrigin);
+        await page.GetByRole(AriaRole.Link, new() { Name = "Review cases" }).ClickAsync();
+        await page.GetByText("watch the zero balance").WaitForAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Show review case", Exact = false }).ClickAsync();
+        await page.GetByText("Invoice outstanding 0.00 PLN").WaitForAsync();
+        await page.GetByText("Bank transaction unapplied 10.0001 PLN").WaitForAsync();
+        await page.GetByText("not one atomic snapshot").WaitForAsync();
+        Assert.Equal(0, reviewPosts);
+    }
+
     private static async Task SignInAndOpenNorthAsync(IPage page, string browserOrigin)
     {
         await page.GotoAsync(browserOrigin);
@@ -208,6 +245,41 @@ public sealed partial class CookieFinancialReadBrowserTests
             new OrganizationId(organizationId),
             invoiceNumber,
             new Money(12.50m, new CurrencyCode("PLN"))));
+        await reconciliation.SaveChangesAsync();
+    }
+
+    private static async Task SeedZeroBalanceReviewCaseAsync(string connectionString, Guid organizationId)
+    {
+        OrganizationId tenant = new(organizationId);
+        CurrencyCode pln = new("PLN");
+        Invoice invoice = new(InvoiceId.New(), tenant, "COOKIE-REVIEW-INV", new Money(10m, pln));
+        Result allocated = invoice.Allocate(new Money(10m, pln));
+        if (allocated.IsFailure)
+        {
+            throw new InvalidOperationException("The review-case fixture could not allocate the invoice.");
+        }
+
+        BankTransaction bank = new(
+            BankTransactionId.New(),
+            tenant,
+            new Money(10.0001m, pln),
+            new DateOnly(2026, 11, 5),
+            "COOKIE-REVIEW-BANK");
+        ReviewCase reviewCase = ReviewCase.Open(
+            ReviewCaseId.New(),
+            tenant,
+            ReviewCaseReason.CompetingMatch,
+            invoice.Id,
+            bank.Id,
+            ReviewCaseSource.Manual,
+            "watch the zero balance",
+            DateTimeOffset.Parse("2026-11-05T08:00:00Z"));
+
+        await using ReconciliationDbContext reconciliation = E2EDatabase.CreateContext(connectionString);
+        reconciliation.Invoices.Add(invoice);
+        reconciliation.BankTransactions.Add(bank);
+        await reconciliation.SaveChangesAsync();
+        reconciliation.ReviewCases.Add(reviewCase);
         await reconciliation.SaveChangesAsync();
     }
 
