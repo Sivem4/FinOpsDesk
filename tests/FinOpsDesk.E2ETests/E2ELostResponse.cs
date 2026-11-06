@@ -51,6 +51,7 @@ internal sealed class E2ELossSession : IAsyncDisposable
     private readonly TaskCompletionSource<E2ECapturedRequest> _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Func<E2ECapturedRequest, IAPIResponse, Task> _prove;
     private readonly Func<Task<bool>> _sqlShowsCommit;
+    private readonly bool _requireIdempotencyKey;
     private int _posts;
     private int _unexpected;
     private int _settled;
@@ -63,13 +64,15 @@ internal sealed class E2ELossSession : IAsyncDisposable
         Regex url,
         Func<IRoute, Task> handler,
         Func<E2ECapturedRequest, IAPIResponse, Task> prove,
-        Func<Task<bool>> sqlShowsCommit)
+        Func<Task<bool>> sqlShowsCommit,
+        bool requireIdempotencyKey)
     {
         _page = page;
         _url = url;
         _handler = handler;
         _prove = prove;
         _sqlShowsCommit = sqlShowsCommit;
+        _requireIdempotencyKey = requireIdempotencyKey;
     }
 
     public int PostCount => Volatile.Read(ref _posts);
@@ -80,11 +83,12 @@ internal sealed class E2ELossSession : IAsyncDisposable
         IPage page,
         Regex url,
         Func<Task<bool>> sqlShowsCommit,
-        Func<E2ECapturedRequest, IAPIResponse, Task> prove)
+        Func<E2ECapturedRequest, IAPIResponse, Task> prove,
+        bool requireIdempotencyKey = true)
     {
         E2ELossSession? session = null;
         Func<IRoute, Task> handler = route => session!.HandleAsync(route);
-        session = new E2ELossSession(page, url, handler, prove, sqlShowsCommit);
+        session = new E2ELossSession(page, url, handler, prove, sqlShowsCommit, requireIdempotencyKey);
         await page.RouteAsync(url, handler);
         return session;
     }
@@ -141,7 +145,7 @@ internal sealed class E2ELossSession : IAsyncDisposable
 
     private async Task HandleFirstAsync(IRoute route)
     {
-        E2ECapturedRequest captured = E2ELostResponse.Capture(route);
+        E2ECapturedRequest captured = E2ELostResponse.Capture(route, _requireIdempotencyKey);
         if (Interlocked.Exchange(ref _fetching, 1) == 1)
         {
             throw new E2ECommitUnprovenException(
@@ -303,7 +307,8 @@ internal static class E2ELostResponse
         Regex url,
         E2ECapturedRequest original,
         Func<Task> send,
-        Func<IAPIResponse, Task> verify)
+        Func<IAPIResponse, Task> verify,
+        bool requireIdempotencyKey = true)
     {
         TaskCompletionSource<E2ECapturedRequest> completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         int posts = 0;
@@ -325,7 +330,7 @@ internal static class E2ELostResponse
                     return;
                 }
 
-                E2ECapturedRequest captured = Capture(route);
+                E2ECapturedRequest captured = Capture(route, requireIdempotencyKey);
                 if (!captured.SameIdentity(original))
                 {
                     await route.AbortAsync("failed");
@@ -494,7 +499,7 @@ internal static class E2ELostResponse
         return string.Equals(route.Request.Method, "POST", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static E2ECapturedRequest Capture(IRoute route)
+    internal static E2ECapturedRequest Capture(IRoute route, bool requireIdempotencyKey = true)
     {
         if (!Uri.TryCreate(route.Request.Url, UriKind.Absolute, out Uri? uri))
         {
@@ -511,7 +516,7 @@ internal static class E2ELostResponse
         {
             Method = route.Request.Method,
             Path = uri.AbsolutePath,
-            IdempotencyKey = RequireIdempotencyKey(route.Request.Headers),
+            IdempotencyKey = ReadIdempotencyKey(route.Request.Headers, requireIdempotencyKey),
             Body = body.ToArray(),
         };
     }
@@ -531,17 +536,34 @@ internal static class E2ELostResponse
         return "B. The " + operation + " response did not prove a first commit and SQL does not show one. HTTP " + statusCode.ToString(CultureInfo.InvariantCulture) + ".";
     }
 
-    private static string RequireIdempotencyKey(IDictionary<string, string> headers)
+    private static string ReadIdempotencyKey(IDictionary<string, string> headers, bool requireIdempotencyKey)
     {
+        string? found = null;
         foreach ((string key, string value) in headers)
         {
             if (key.Equals("idempotency-key", StringComparison.OrdinalIgnoreCase))
             {
-                return value;
+                found = value;
+                break;
             }
         }
 
-        throw new E2ECommitUnprovenException("The financial POST did not include an Idempotency-Key.");
+        if (requireIdempotencyKey)
+        {
+            if (found is null)
+            {
+                throw new E2ECommitUnprovenException("The financial POST did not include an Idempotency-Key.");
+            }
+
+            return found;
+        }
+
+        if (found is not null)
+        {
+            throw new E2ECommitUnprovenException("The review-case decision POST included an Idempotency-Key.");
+        }
+
+        return string.Empty;
     }
 
     private static decimal ReadDecimal(JsonElement element)

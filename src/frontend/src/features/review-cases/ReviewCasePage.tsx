@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { UNSAFE_DataRouterContext, useNavigate, useSearchParams } from 'react-router';
@@ -37,6 +37,7 @@ import {
   type ReviewCaseStatusName,
 } from './review-case-api';
 import { reviewCaseFilterSchema, type ReviewCaseFilterValues } from './review-case-filters';
+import { ReviewCaseDecisionPanel } from './ReviewCaseDecisionPanel';
 import { ReviewCaseOpenPanel } from './ReviewCaseOpenPanel';
 
 const defaultPage = 1;
@@ -48,6 +49,7 @@ const emptyGuid = '00000000-0000-0000-0000-000000000000';
 
 export function ReviewCasePage() {
   const session = useSession();
+  const queryClient = useQueryClient();
   const cookie = browserAuthMode() === 'cookie';
   const [searchParams, setSearchParams] = useSearchParams();
   const dataRouter = useContext(UNSAFE_DataRouterContext);
@@ -102,11 +104,12 @@ export function ReviewCasePage() {
       ? ['review-cases', 'detail', session.epoch, session.readiness, selectedId ?? '']
       : ['review-cases', 'detail', session.epoch, selectedId ?? ''],
     enabled: readable && paginationValid && filtersValid && selectedValid && selectedId !== null,
-    queryFn: ({ signal }) => getReviewCase(selectedId ?? '', signal),
+    queryFn: ({ signal }) => getReviewCase(selectedId ?? '', session.epoch, signal),
   });
 
   const list = readable && paginationValid && filtersValid && listQuery.isSuccess ? listQuery.data : null;
-  const detail = readable && selectedId !== null && detailQuery.isSuccess ? detailQuery.data : null;
+  const detailRead = readable && selectedId !== null && detailQuery.isSuccess ? detailQuery.data : null;
+  const detail = detailRead?.detail ?? null;
   const filtered = statusFilter !== null || invoiceId !== null || bankTransactionId !== null;
   const emptyOrganization = list !== null && list.totalCount === 0 && !filtered;
   const emptyFilter = list !== null && list.totalCount === 0 && filtered;
@@ -173,6 +176,22 @@ export function ReviewCasePage() {
       {readable && !cookie ? (
         <ReviewCaseOpenPanel
           onSelect={selectOpenedCase}
+        />
+      ) : null}
+      {readable && !cookie ? (
+        <ReviewCaseDecisionPanel
+          selectedCaseId={selectedId}
+          caseStatus={detail?.reviewCase.status ?? null}
+          command={detailRead?.command ?? null}
+          onReadAgain={async () => {
+            if (selectedId === null) {
+              return;
+            }
+
+            const queryKey = ['review-cases', 'detail', session.epoch, selectedId];
+            await queryClient.cancelQueries({ queryKey });
+            await queryClient.invalidateQueries({ queryKey }, { throwOnError: true });
+          }}
         />
       ) : null}
       {!readable ? <Alert severity="warning">Review cases are not available for this session.</Alert> : null}
