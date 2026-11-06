@@ -14,6 +14,7 @@ internal static class FinancialReadPermissionCatalog
         [AccessPermission.AllocationsRead.Value] = AccessPermission.AllocationsRead,
         [AccessPermission.AuditRead.Value] = AccessPermission.AuditRead,
         [AccessPermission.ReviewCasesRead.Value] = AccessPermission.ReviewCasesRead,
+        [AccessPermission.ReviewCasesAssignmentRead.Value] = AccessPermission.ReviewCasesAssignmentRead,
     };
 
     public static bool TryGet(string? permission, out AccessPermission resolved)

@@ -374,11 +374,13 @@ Phase 8J appends an immutable `ReviewCaseComment` through `POST /api/review-case
 
 Phase 8K shows those comments on the existing `/review-cases` screen. `View comments` opens the panel and `Hide comments` closes it. The list, filters, list paging, and opening the detail do not request comments. The panel uses page size 50, keeps the API order, and shows the stored text, actor id, and time. `totalCount` stays a decimal `int64`. `ProductionCookie` shows the action only when authorization is verified and `audit.read` is present. `DevelopmentJwt` can add a comment to an open, resolved, or dismissed case. The browser stores one `finopsdesk.review-case-comment-attempt` record before the POST and retries that same key and body only after an explicit click. The record is bound to the organization id. Two people using that organization in the same tab can see one stored comment. `ProductionCookie` does not mount the form or that recovery panel. A comment does not refresh the summary, balances, or decision history. Deployed financial flags stay unset. The cookie write allowlist is unchanged. Phase 8 stays Planned. See ADR 0029.
 
+Phase 8L lets an operator claim an unassigned open review case and release only that operator's own assignment. `POST /api/review-cases/{id}/assignment` and `POST /api/review-cases/{id}/assignment/release` require `review-cases.assign`. `GET /api/review-cases/{id}/assignment` requires `review-cases.assignment.read`. Both permissions belong only to `Operator`. The identity is the server pair of actor source and actor id. `DevelopmentJwt` uses `sub`. `ProductionCookie` uses `ApplicationUser.Id`. The same text from those sources is not the same person. A new key cannot take or replace an assignment. Resolve and dismiss do not depend on the assignment and do not clear it. The POST response does not include the resulting concurrency token. Contract v2 does not advertise the new read. Cookie POST stays outside the allowlist. There is no assignment screen, no my-cases filter, and no dashboard. `DevelopmentJwt` still does not distinguish roles. Deployed financial flags stay unset. Phase 8 stays Planned. See ADR 0030.
+
 Add:
 
 - Disputes module;
 - case lifecycle;
-- assignment;
+- assignment screen and delegation;
 - comments;
 - resolution;
 - audit history screen;

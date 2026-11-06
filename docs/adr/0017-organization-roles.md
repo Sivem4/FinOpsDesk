@@ -39,6 +39,8 @@ Basic cookie validation resolves the application user, `SessionStamp`, `BrowserS
 
 `datetimeoffset` compares at 100-nanosecond precision. If the revocation clock is equal to `GrantedAt`, the stored `RevokedAt` is one tick later so the check constraint can hold. An earlier clock value is rejected.
 
+Follow-up: later increments add Operator permissions that are not in the historical list above. [ADR 0030](0030-review-case-assignment.md) adds `review-cases.assign` and `review-cases.assignment.read` to `Operator` only. That list is not rewritten here.
+
 ## Consequences
 
 - Different organizations can assign different roles to the same person.

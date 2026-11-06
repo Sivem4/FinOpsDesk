@@ -279,6 +279,51 @@ public static class ReconciliationApplicationErrors
             "reconciliation.review_case_comment.invalid_pagination",
             "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
 
+    public static Error ReviewCaseAssignmentInvalidRequest { get; } =
+        new(
+            "reconciliation.review_case_assignment.invalid_request",
+            "The review case assignment request has an invalid review case id, concurrency token, or unsupported parameter.");
+
+    public static Error ReviewCaseAssignmentIdempotencyKeyRequired { get; } =
+        new(
+            "reconciliation.review_case_assignment.idempotency_key_required",
+            "An Idempotency-Key header with one UUID in D format is required.");
+
+    public static Error ReviewCaseAssignmentIdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.review_case_assignment.idempotency_key_invalid",
+            "Idempotency-Key must be one non-empty UUID in D format with no surrounding whitespace.");
+
+    public static Error ReviewCaseAssignmentTerminal { get; } =
+        new(
+            "reconciliation.review_case_assignment.terminal",
+            "A resolved or dismissed review case cannot be claimed or released.");
+
+    public static Error ReviewCaseAssignmentAlreadyAssigned { get; } =
+        new(
+            "reconciliation.review_case_assignment.already_assigned",
+            "The review case already has an assignment.");
+
+    public static Error ReviewCaseAssignmentNotAssigned { get; } =
+        new(
+            "reconciliation.review_case_assignment.not_assigned",
+            "The review case has no assignment.");
+
+    public static Error ReviewCaseAssignmentNotAssignee { get; } =
+        new(
+            "reconciliation.review_case_assignment.not_assignee",
+            "The review case assignment belongs to a different actor.");
+
+    public static Error ReviewCaseAssignmentIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.review_case_assignment.idempotency_payload_conflict",
+            "This idempotency key was already used for a different review case assignment.");
+
+    public static Error ReviewCaseAssignmentConcurrencyConflict { get; } =
+        new(
+            "reconciliation.review_case_assignment.concurrency_conflict",
+            "The review case assignment could not be recovered after a concurrent change.");
+
     public static Error BatchInvalidRequest { get; } =
         new(
             "reconciliation.batch.invalid_request",

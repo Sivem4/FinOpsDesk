@@ -33,6 +33,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases", "get", "review-cases.read"),
         ("/api/review-cases/summary", "get", "review-cases.read"),
         ("/api/review-cases/{id}", "get", "review-cases.read"),
+        ("/api/review-cases/{id}/assignment", "get", "review-cases.assignment.read"),
     ];
 
     private static readonly (string Path, string Method, string Permission)[] AllowlistedWrites =
@@ -51,6 +52,8 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/{id}/resolve", "post", "review-cases.resolve"),
         ("/api/review-cases/{id}/dismiss", "post", "review-cases.resolve"),
         ("/api/review-cases/{id}/comments", "post", "review-cases.comment"),
+        ("/api/review-cases/{id}/assignment", "post", "review-cases.assign"),
+        ("/api/review-cases/{id}/assignment/release", "post", "review-cases.assign"),
     ];
 
     private readonly SqlServerFixture _fixture;
@@ -124,6 +127,8 @@ public sealed class OpenApiAuthenticationDocumentTests
         Assert.True(Parameter(reverse, "Idempotency-Key").GetProperty("required").GetBoolean());
         JsonElement comment = paths.GetProperty("/api/review-cases/{id}/comments").GetProperty("post");
         Assert.True(Parameter(comment, "Idempotency-Key").GetProperty("required").GetBoolean());
+        Assert.True(Parameter(paths.GetProperty("/api/review-cases/{id}/assignment").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
+        Assert.True(Parameter(paths.GetProperty("/api/review-cases/{id}/assignment/release").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         AssertCommentTextSchema(comment);
         Assert.Equal(
             JsonValueKind.False,
@@ -259,7 +264,15 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.True(operation.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _));
         }
 
-        foreach (string idempotentPath in new[] { "/api/allocations", "/api/allocations/{allocationId}/reverse", "/api/matches/batch/execute", "/api/review-cases/{id}/comments" })
+        foreach (string idempotentPath in new[]
+        {
+            "/api/allocations",
+            "/api/allocations/{allocationId}/reverse",
+            "/api/matches/batch/execute",
+            "/api/review-cases/{id}/comments",
+            "/api/review-cases/{id}/assignment",
+            "/api/review-cases/{id}/assignment/release",
+        })
         {
             Assert.True(Parameter(paths.GetProperty(idempotentPath).GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         }
@@ -355,7 +368,9 @@ public sealed class OpenApiAuthenticationDocumentTests
                 or "/api/review-cases"
                 or "/api/review-cases/{id}/resolve"
                 or "/api/review-cases/{id}/dismiss"
-                or "/api/review-cases/{id}/comments";
+                or "/api/review-cases/{id}/comments"
+                or "/api/review-cases/{id}/assignment"
+                or "/api/review-cases/{id}/assignment/release";
     }
 
     private static void AssertHandlerActorForbidden(JsonElement operation)

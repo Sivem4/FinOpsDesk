@@ -28,6 +28,8 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
         ["POST /api/review-cases/{id}/resolve"] = FinancialWriteOperation.ResolveReviewCase,
         ["POST /api/review-cases/{id}/dismiss"] = FinancialWriteOperation.DismissReviewCase,
         ["POST /api/review-cases/{id}/comments"] = FinancialWriteOperation.CommentReviewCase,
+        ["POST /api/review-cases/{id}/assignment"] = FinancialWriteOperation.ClaimReviewCase,
+        ["POST /api/review-cases/{id}/assignment/release"] = FinancialWriteOperation.ReleaseReviewCase,
     };
 
     private readonly FinOpsDeskApiFactory _factory;
@@ -66,6 +68,9 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["POST /api/review-cases/{id}/resolve"] = AccessPermission.ReviewCasesResolve.Value,
             ["POST /api/review-cases/{id}/dismiss"] = AccessPermission.ReviewCasesResolve.Value,
             ["POST /api/review-cases/{id}/comments"] = AccessPermission.ReviewCasesComment.Value,
+            ["POST /api/review-cases/{id}/assignment"] = AccessPermission.ReviewCasesAssign.Value,
+            ["POST /api/review-cases/{id}/assignment/release"] = AccessPermission.ReviewCasesAssign.Value,
+            ["GET /api/review-cases/{id}/assignment"] = AccessPermission.ReviewCasesAssignmentRead.Value,
         };
 
         Assert.Equal(

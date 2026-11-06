@@ -66,6 +66,10 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.Operator));
 
         await AssertReadsAsync(client, north, south, allowAudit: false);
+        await AssertStatusAsync(
+            client,
+            "/api/review-cases/" + north.ReviewCaseId.ToString("D") + "/assignment",
+            HttpStatusCode.Forbidden);
         using JsonDocument session = await ReadSessionAsync(client);
         Assert.False(session.RootElement.GetProperty("financialAccess").GetBoolean());
         Assert.False(session.RootElement.TryGetProperty("permissions", out _));
@@ -73,6 +77,15 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
         Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, south.OrganizationId)).StatusCode);
         await AssertReadsAsync(client, south, north, allowAudit: true);
+        HttpResponseMessage assignment = await client.GetAsync(
+            "/api/review-cases/" + south.ReviewCaseId.ToString("D") + "/assignment");
+        string assignmentBody = await assignment.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, assignment.StatusCode);
+        using (JsonDocument assignmentDocument = JsonDocument.Parse(assignmentBody))
+        {
+            Assert.Equal(JsonValueKind.Null, assignmentDocument.RootElement.GetProperty("assignee").ValueKind);
+            Assert.False(string.IsNullOrWhiteSpace(assignmentDocument.RootElement.GetProperty("concurrencyToken").GetString()));
+        }
         HttpResponseMessage foreignAudit = await client.GetAsync("/api/allocations/" + north.AllocationId.ToString("D") + "/audit");
         string foreignAuditBody = await foreignAudit.Content.ReadAsStringAsync();
         Assert.Equal(HttpStatusCode.NotFound, foreignAudit.StatusCode);
@@ -111,11 +124,19 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         await AssertStatusAsync(client, "/api/allocations/" + south.AllocationId.ToString("D") + "/audit", HttpStatusCode.Forbidden);
         await AssertReviewAuditHiddenAsync(client, south, HttpStatusCode.Forbidden);
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.ReversalApprover));
+        await AssertStatusAsync(
+            client,
+            "/api/review-cases/" + south.ReviewCaseId.ToString("D") + "/assignment",
+            HttpStatusCode.Forbidden);
         await AssertStatusAsync(client, "/api/allocations/" + south.AllocationId.ToString("D") + "/audit", HttpStatusCode.OK);
         await AssertReviewAuditVisibleAsync(client, south, north);
 
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(southMembership, OrganizationRole.ReversalApprover));
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.OrganizationAdmin));
+        await AssertStatusAsync(
+            client,
+            "/api/review-cases/" + south.ReviewCaseId.ToString("D") + "/assignment",
+            HttpStatusCode.Forbidden);
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
         await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
         await AssertReviewAuditHiddenAsync(client, south, HttpStatusCode.Forbidden);

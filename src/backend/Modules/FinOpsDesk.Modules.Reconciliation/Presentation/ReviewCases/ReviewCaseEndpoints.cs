@@ -58,6 +58,8 @@ internal static class ReviewCaseEndpoints
 
     private static readonly string[] CommentPropertyNames = ["text"];
 
+    private static readonly string[] AssignmentPropertyNames = ["concurrencyToken"];
+
     public static RouteGroupBuilder MapReviewCaseEndpoints(this RouteGroupBuilder group)
     {
         ArgumentNullException.ThrowIfNull(group);
@@ -202,6 +204,71 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .AddOpenApiOperationTransformer(DocumentCommentsOperation)
             .WithMetadata(FinancialEndpointClassification.Read("audit.read"));
+
+        group.MapPost("/review-cases/{id}/assignment", ClaimAssignmentAsync)
+            .WithName("ClaimReviewCaseAssignment")
+            .WithSummary("Claim an unassigned open review case for the current actor.")
+            .WithDescription(
+                TenantDescription
+                + " The body contains only concurrencyToken. "
+                + "Idempotency-Key is required and must be one non-empty UUID in D format with no surrounding whitespace. "
+                + "A new claim returns HTTP 201 and no Location header. "
+                + "The same key and the same operation, case, actor source, actor id, and canonical token return HTTP 200 with the historical result. "
+                + "The response does not include the resulting concurrency token. "
+                + "The actor and organization come from the server. A missing or invalid actor is rejected before the key is read. "
+                + "Resolve and dismiss do not require or clear an assignment.")
+            .Produces<ReviewCaseAssignmentResponse>(StatusCodes.Status201Created, "application/json")
+            .Produces<ReviewCaseAssignmentResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .AddOpenApiOperationTransformer(DocumentAssignmentOperation)
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "review-cases.assign",
+                FinancialWriteOperation.ClaimReviewCase));
+
+        group.MapPost("/review-cases/{id}/assignment/release", ReleaseAssignmentAsync)
+            .WithName("ReleaseReviewCaseAssignment")
+            .WithSummary("Release the current actor's assignment of an open review case.")
+            .WithDescription(
+                TenantDescription
+                + " Only the actor who holds the assignment can release it. "
+                + "The body contains only concurrencyToken. "
+                + "Idempotency-Key is required and shares the claim key namespace. "
+                + "A new release returns HTTP 201 and no Location header. "
+                + "A matching historical release returns HTTP 200 and does not restore a later assignment. "
+                + "The response does not name another assignee.")
+            .Produces<ReviewCaseAssignmentResponse>(StatusCodes.Status201Created, "application/json")
+            .Produces<ReviewCaseAssignmentResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .AddOpenApiOperationTransformer(DocumentAssignmentOperation)
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "review-cases.assign",
+                FinancialWriteOperation.ReleaseReviewCase));
+
+        group.MapGet("/review-cases/{id}/assignment", GetAssignmentAsync)
+            .WithName("GetReviewCaseAssignment")
+            .WithSummary("Read the current assignment of one review case.")
+            .WithDescription(
+                TenantDescription
+                + " Requires review-cases.assignment.read. review-cases.read does not authorize this route and does not reveal the assignee. "
+                + "DevelopmentJwt does not distinguish organization roles. "
+                + "An unassigned case returns assignee null and the current concurrency token. "
+                + "Unknown and foreign cases share HTTP 404 reconciliation.review_case.not_found. "
+                + "This read does not change the case. Contract v2 does not advertise this permission.")
+            .Produces<ReviewCaseAssignmentStateResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .AddOpenApiOperationTransformer(DocumentAssignmentReadOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("review-cases.assignment.read"));
 
         group.MapPost("/review-cases/{id}/resolve", ResolveAsync)
             .WithName("ResolveReviewCase")
@@ -468,6 +535,120 @@ internal static class ReviewCaseEndpoints
         return TypedResults.Ok(result.Value);
     }
 
+    private static async Task<Results<JsonHttpResult<ReviewCaseAssignmentResponse>, Ok<ReviewCaseAssignmentResponse>, ProblemHttpResult>> ClaimAssignmentAsync(
+        string id,
+        HttpRequest httpRequest,
+        ClaimReviewCaseHandler handler,
+        CancellationToken cancellationToken)
+    {
+        return await ChangeAssignmentAsync(
+            id,
+            httpRequest,
+            async (reviewCaseId, rowVersion, canonicalToken, idempotencyKey, token) =>
+                await handler.Handle(
+                    new ClaimReviewCaseCommand(new ReviewCaseId(reviewCaseId), rowVersion, canonicalToken, idempotencyKey),
+                    token),
+            cancellationToken);
+    }
+
+    private static async Task<Results<JsonHttpResult<ReviewCaseAssignmentResponse>, Ok<ReviewCaseAssignmentResponse>, ProblemHttpResult>> ReleaseAssignmentAsync(
+        string id,
+        HttpRequest httpRequest,
+        ReleaseReviewCaseHandler handler,
+        CancellationToken cancellationToken)
+    {
+        return await ChangeAssignmentAsync(
+            id,
+            httpRequest,
+            async (reviewCaseId, rowVersion, canonicalToken, idempotencyKey, token) =>
+                await handler.Handle(
+                    new ReleaseReviewCaseCommand(new ReviewCaseId(reviewCaseId), rowVersion, canonicalToken, idempotencyKey),
+                    token),
+            cancellationToken);
+    }
+
+    private static async Task<Results<JsonHttpResult<ReviewCaseAssignmentResponse>, Ok<ReviewCaseAssignmentResponse>, ProblemHttpResult>> ChangeAssignmentAsync(
+        string id,
+        HttpRequest httpRequest,
+        Func<Guid, byte[], string, Guid, CancellationToken, Task<Result<ChangeReviewCaseAssignmentResponse>>> execute,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadAssignmentRouteId(id, out Guid reviewCaseId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (RejectUnexpectedAssignmentQuery(httpRequest) is ProblemHttpResult queryProblem)
+        {
+            return queryProblem;
+        }
+
+        if (!TryReadRequiredAssignmentIdempotencyKey(httpRequest, out Guid idempotencyKey, out ProblemHttpResult? keyProblem))
+        {
+            return keyProblem!;
+        }
+
+        JsonRead read = await TryReadJsonObjectAsync(
+            httpRequest,
+            AssignmentPropertyNames,
+            cancellationToken,
+            ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
+        if (read.Problem is not null)
+        {
+            return read.Problem;
+        }
+
+        using (read.Document)
+        {
+            if (!TryReadAssignmentToken(read.Properties!, out byte[]? rowVersion, out string? canonicalToken))
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
+            }
+
+            Result<ChangeReviewCaseAssignmentResponse> result = await execute(
+                reviewCaseId,
+                rowVersion!,
+                canonicalToken!,
+                idempotencyKey,
+                cancellationToken);
+            if (result.IsFailure)
+            {
+                return Problem(result.Error);
+            }
+
+            return result.Value.Created
+                ? TypedResults.Json(result.Value.Assignment, statusCode: StatusCodes.Status201Created)
+                : TypedResults.Ok(result.Value.Assignment);
+        }
+    }
+
+    private static async Task<Results<Ok<ReviewCaseAssignmentStateResponse>, ProblemHttpResult>> GetAssignmentAsync(
+        string id,
+        HttpRequest httpRequest,
+        GetReviewCaseAssignmentHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadAssignmentRouteId(id, out Guid reviewCaseId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (RejectUnexpectedAssignmentQuery(httpRequest) is ProblemHttpResult queryProblem)
+        {
+            return queryProblem;
+        }
+
+        Result<ReviewCaseAssignmentStateResponse> result = await handler.Handle(
+            new GetReviewCaseAssignmentQuery(new ReviewCaseId(reviewCaseId)),
+            cancellationToken);
+        if (result.IsFailure)
+        {
+            return Problem(result.Error);
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
     private static async Task<Results<Ok<ReviewCaseResponse>, ProblemHttpResult>> ResolveAsync(
         string id,
         HttpRequest httpRequest,
@@ -601,6 +782,69 @@ internal static class ReviewCaseEndpoints
         }
 
         return true;
+    }
+
+    private static bool TryReadRequiredAssignmentIdempotencyKey(
+        HttpRequest httpRequest,
+        out Guid idempotencyKey,
+        out ProblemHttpResult? problem)
+    {
+        idempotencyKey = Guid.Empty;
+        problem = null;
+        if (!httpRequest.Headers.TryGetValue("Idempotency-Key", out StringValues values))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyKeyRequired);
+            return false;
+        }
+
+        if (values.Count != 1 || !IsExactIdempotencyKey(values[0], out idempotencyKey))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyKeyInvalid);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadAssignmentRouteId(string id, out Guid reviewCaseId, out ProblemHttpResult? problem)
+    {
+        if (!Guid.TryParse(id, out reviewCaseId) || reviewCaseId == Guid.Empty)
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
+            return false;
+        }
+
+        problem = null;
+        return true;
+    }
+
+    private static ProblemHttpResult? RejectUnexpectedAssignmentQuery(HttpRequest httpRequest)
+    {
+        if (httpRequest.Query.Count == 0)
+        {
+            return null;
+        }
+
+        return Problem(ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
+    }
+
+    private static bool TryReadAssignmentToken(
+        Dictionary<string, JsonElement> properties,
+        out byte[]? rowVersion,
+        out string? canonicalToken)
+    {
+        rowVersion = null;
+        canonicalToken = null;
+        if (!properties.TryGetValue("concurrencyToken", out JsonElement element)
+            || element.ValueKind != JsonValueKind.String
+            || !ReviewCaseConcurrencyToken.TryDecode(element.GetString(), out byte[] decoded))
+        {
+            return false;
+        }
+
+        rowVersion = decoded;
+        canonicalToken = ReviewCaseConcurrencyToken.Encode(decoded);
+        return canonicalToken.Length == ReviewCaseAssignmentEntry.CanonicalTokenLength;
     }
 
     private static bool TryReadCommentText(Dictionary<string, JsonElement> properties, out string? text)
@@ -1796,6 +2040,57 @@ internal static class ReviewCaseEndpoints
         };
     }
 
+    private static Task DocumentAssignmentOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        operation.RequestBody = JsonBody(
+            "concurrencyToken is the Base64 rowversion read with the case. Equivalent Base64 whitespace is the same token. The response does not return the resulting token.",
+            new OpenApiSchema
+            {
+                Type = JsonSchemaType.Object,
+                AdditionalPropertiesAllowed = false,
+                Required = new HashSet<string> { "concurrencyToken" },
+                Properties = new Dictionary<string, IOpenApiSchema>
+                {
+                    ["concurrencyToken"] = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.String,
+                        Description = ConcurrencyTokenDescription,
+                    },
+                },
+            });
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "Idempotency-Key",
+            In = ParameterLocation.Header,
+            Required = true,
+            Description = "Required. One non-empty UUID in D format with no surrounding whitespace. Claim and release share this key.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
+            },
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task DocumentAssignmentReadOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
     private static OpenApiSchema StringEnum(string? description, params string[] values)
     {
         return new OpenApiSchema
@@ -1841,7 +2136,10 @@ internal static class ReviewCaseEndpoints
             || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyRequired.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyInvalid.Code
-            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidPagination.Code)
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidPagination.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyKeyRequired.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyKeyInvalid.Code)
         {
             return StatusCodes.Status400BadRequest;
         }
@@ -1860,7 +2158,13 @@ internal static class ReviewCaseEndpoints
             || error.Code == ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseOpenRequestConflict.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyPayloadConflict.Code
-            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentConcurrencyConflict.Code)
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentConcurrencyConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentTerminal.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentAlreadyAssigned.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssigned.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssignee.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyPayloadConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict.Code)
         {
             return StatusCodes.Status409Conflict;
         }
@@ -1946,6 +2250,51 @@ internal static class ReviewCaseEndpoints
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseCommentConcurrencyConflict.Code)
         {
             return "The review case comment could not be recovered.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest.Code)
+        {
+            return "Review case assignment request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyKeyRequired.Code)
+        {
+            return "Idempotency-Key is required.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyKeyInvalid.Code)
+        {
+            return "Idempotency-Key is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentTerminal.Code)
+        {
+            return "The review case is closed.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentAlreadyAssigned.Code)
+        {
+            return "The review case is already assigned.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssigned.Code)
+        {
+            return "The review case is not assigned.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssignee.Code)
+        {
+            return "The assignment belongs to a different actor.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyPayloadConflict.Code)
+        {
+            return "This idempotency key was already used for a different assignment.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict.Code)
+        {
+            return "The review case assignment could not be recovered.";
         }
 
         if (error.Code == ReconciliationErrors.ReviewCaseAllocationRequired.Code)

@@ -18,6 +18,7 @@ builder.Services.AddFinOpsDeskAuthorization();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentOrganizationContext, HttpContextCurrentOrganizationContext>();
 builder.Services.AddScoped<ICurrentActorContext, HttpContextCurrentActorContext>();
+builder.Services.AddScoped<ICurrentActorAttribution, HttpContextCurrentActorAttribution>();
 
 string? connectionString = builder.Configuration.GetConnectionString("FinOpsDesk");
 if (string.IsNullOrWhiteSpace(connectionString))

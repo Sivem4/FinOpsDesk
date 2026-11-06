@@ -16,6 +16,8 @@ public enum FinancialWriteOperation
     DismissReviewCase = 9,
     UnlistedProbe = 10,
     CommentReviewCase = 11,
+    ClaimReviewCase = 12,
+    ReleaseReviewCase = 13,
 }
 
 // Endpoint metadata read by the host authorization policy. It is not itself
