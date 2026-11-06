@@ -87,4 +87,8 @@ public interface IReviewCaseQueries
         OrganizationId organizationId,
         ReviewCaseId reviewCaseId,
         CancellationToken cancellationToken);
+
+    Task<ReviewCaseSummaryResponse> SummarizeAsync(
+        OrganizationId organizationId,
+        CancellationToken cancellationToken);
 }

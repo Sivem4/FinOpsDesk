@@ -71,6 +71,14 @@ public sealed record ReviewCaseListResponse(
     int PageSize,
     int TotalCount);
 
+public sealed record ReviewCaseSummaryResponse(
+    long TotalCount,
+    long OpenCount,
+    long ResolvedCount,
+    long DismissedCount,
+    long OpenCompetingMatchCount,
+    long OpenNeedsInvestigationCount);
+
 public sealed record AllocationLink(
     AllocationId AllocationId,
     InvoiceId InvoiceId,

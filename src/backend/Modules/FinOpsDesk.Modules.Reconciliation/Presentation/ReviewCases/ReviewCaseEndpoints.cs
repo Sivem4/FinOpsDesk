@@ -93,6 +93,27 @@ internal static class ReviewCaseEndpoints
             .AddOpenApiOperationTransformer(DocumentListOperation)
             .WithMetadata(FinancialEndpointClassification.Read("review-cases.read"));
 
+        group.MapGet("/review-cases/summary", SummaryAsync)
+            .WithName("GetReviewCaseSummary")
+            .WithSummary("Count persisted review cases for the authenticated organization.")
+            .WithDescription(
+                TenantDescription
+                + " The six counters cover every persisted case in that organization. "
+                + "They do not follow the list page or its filters. "
+                + "A later case for a subject whose earlier case is closed counts separately. "
+                + "totalCount is openCount plus resolvedCount plus dismissedCount. "
+                + "openCount is openCompetingMatchCount plus openNeedsInvestigationCount. "
+                + "An empty organization returns six zeros. "
+                + "The counters are one SQL aggregation and can be stale after the read returns. "
+                + "This route does not set an isolation level or a database option and does not guarantee a point-in-time snapshot. "
+                + "The response has no actors, notes, document ids, or amounts. "
+                + "Any query parameter is rejected. "
+                + "This read does not change cases, audit rows, or rowversion.")
+            .Produces<ReviewCaseSummaryResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .AddOpenApiOperationTransformer(DocumentSummaryOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("review-cases.read"));
+
         group.MapGet("/review-cases/{id}", GetAsync)
             .WithName("GetReviewCase")
             .WithSummary("Get one review case and its current linked balances.")
@@ -234,6 +255,25 @@ internal static class ReviewCaseEndpoints
         }
 
         Result<ReviewCaseListResponse> result = await handler.Handle(query!, cancellationToken);
+        if (result.IsFailure)
+        {
+            return Problem(result.Error);
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
+    private static async Task<Results<Ok<ReviewCaseSummaryResponse>, ProblemHttpResult>> SummaryAsync(
+        HttpRequest httpRequest,
+        GetReviewCaseSummaryHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (RejectUnexpectedQuery(httpRequest, []) is ProblemHttpResult queryProblem)
+        {
+            return queryProblem;
+        }
+
+        Result<ReviewCaseSummaryResponse> result = await handler.Handle(cancellationToken);
         if (result.IsFailure)
         {
             return Problem(result.Error);
@@ -1054,6 +1094,23 @@ internal static class ReviewCaseEndpoints
         return Task.CompletedTask;
     }
 
+    private static Task DocumentSummaryOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (context.Document?.Components?.Schemas is not null
+            && context.Document.Components.Schemas.TryGetValue(nameof(ReviewCaseSummaryResponse), out IOpenApiSchema? schema))
+        {
+            AnnotateSummarySchema(schema);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static Task DocumentGetOperation(
         OpenApiOperation operation,
         OpenApiOperationTransformerContext context,
@@ -1208,6 +1265,36 @@ internal static class ReviewCaseEndpoints
         if (context.Document.Components.Schemas.TryGetValue(nameof(ReviewCaseResponse), out IOpenApiSchema? schema))
         {
             AnnotateCaseSchema(schema);
+        }
+    }
+
+    private static void AnnotateSummarySchema(IOpenApiSchema schema)
+    {
+        if (schema is not OpenApiSchema target)
+        {
+            return;
+        }
+
+        string[] names =
+        [
+            "totalCount",
+            "openCount",
+            "resolvedCount",
+            "dismissedCount",
+            "openCompetingMatchCount",
+            "openNeedsInvestigationCount",
+        ];
+        target.Required = new HashSet<string>(names, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            if (!TryGetProperty(target, name, out OpenApiSchema? property))
+            {
+                continue;
+            }
+
+            property.Type = JsonSchemaType.Integer;
+            property.Format = "int64";
+            property.Minimum = "0";
         }
     }
 

@@ -81,3 +81,29 @@ public sealed class GetReviewCaseHandler
             cancellationToken);
     }
 }
+
+public sealed class GetReviewCaseSummaryHandler
+{
+    private readonly ICurrentOrganizationContext _currentOrganizationContext;
+    private readonly IReviewCaseQueries _reviewCaseQueries;
+
+    public GetReviewCaseSummaryHandler(
+        ICurrentOrganizationContext currentOrganizationContext,
+        IReviewCaseQueries reviewCaseQueries)
+    {
+        ArgumentNullException.ThrowIfNull(currentOrganizationContext);
+        ArgumentNullException.ThrowIfNull(reviewCaseQueries);
+
+        _currentOrganizationContext = currentOrganizationContext;
+        _reviewCaseQueries = reviewCaseQueries;
+    }
+
+    public async Task<Result<ReviewCaseSummaryResponse>> Handle(CancellationToken cancellationToken)
+    {
+        OrganizationId organizationId = _currentOrganizationContext.OrganizationId;
+        ReviewCaseSummaryResponse response = await _reviewCaseQueries.SummarizeAsync(
+            organizationId,
+            cancellationToken);
+        return Result<ReviewCaseSummaryResponse>.Success(response);
+    }
+}

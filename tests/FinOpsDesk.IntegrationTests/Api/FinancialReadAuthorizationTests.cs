@@ -60,6 +60,7 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
         Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, north.OrganizationId)).StatusCode);
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
 
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(northMembership, OrganizationRole.Viewer));
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.Operator));
@@ -106,6 +107,7 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.DoesNotContain(north.InvoiceNumber, spoofedBody, StringComparison.Ordinal);
 
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(southMembership, OrganizationRole.Operator));
+        await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
         await AssertStatusAsync(client, "/api/allocations/" + south.AllocationId.ToString("D") + "/audit", HttpStatusCode.Forbidden);
         await AssertReviewAuditHiddenAsync(client, south, HttpStatusCode.Forbidden);
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.ReversalApprover));
@@ -115,6 +117,7 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(southMembership, OrganizationRole.ReversalApprover));
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(southMembership, OrganizationRole.OrganizationAdmin));
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
         await AssertReviewAuditHiddenAsync(client, south, HttpStatusCode.Forbidden);
     }
 
@@ -127,19 +130,23 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Guid organizationId = await CreateOrganizationAsync();
         string csrf = await ReadCsrfAsync(client);
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
 
         Assert.Equal(DeploymentCommandStatus.MembershipGranted, await GrantMembershipAsync(user, organizationId));
         Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, organizationId)).StatusCode);
         HttpResponseMessage roleless = await client.GetAsync("/api/invoices");
         Assert.Equal(HttpStatusCode.Forbidden, roleless.StatusCode);
+        await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
         Assert.DoesNotContain("auth.authorization.unavailable", await roleless.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         AssertHeaderContains(roleless, "Cache-Control", "no-store");
 
         Guid membershipId = await MembershipIdAsync(user.Id, organizationId);
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Viewer));
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.OK);
+        await AssertSummaryCountsAsync(client, total: 0, open: 0, resolved: 0, dismissed: 0, openCompeting: 0, openNeeds: 0);
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(membershipId, OrganizationRole.Viewer));
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+        await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
 
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Viewer));
         await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.OK);
@@ -147,6 +154,7 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         try
         {
             await AssertStatusAsync(client, "/api/invoices", HttpStatusCode.Forbidden);
+            await AssertStatusAsync(client, "/api/review-cases/summary", HttpStatusCode.Forbidden);
         }
         finally
         {
@@ -167,6 +175,8 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
         HttpResponseMessage revoked = await client.GetAsync("/api/invoices");
         Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
+        HttpResponseMessage revokedSummary = await client.GetAsync("/api/review-cases/summary");
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedSummary.StatusCode);
         Assert.True(ClearsSessionCookie(revoked));
 
         await SignInAsync(client);
@@ -361,6 +371,10 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             "/api/review-cases/" + reviewCase.Id.Value.ToString("D") + "/audit");
         string closedAuditBody = await closedAudit.Content.ReadAsStringAsync();
         Assert.Equal(HttpStatusCode.Forbidden, closedAudit.StatusCode);
+        HttpResponseMessage closedSummary = await client.GetAsync("/api/review-cases/summary");
+        string closedSummaryBody = await closedSummary.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, closedSummary.StatusCode);
+        Assert.DoesNotContain("closed-flag-note", closedSummaryBody, StringComparison.Ordinal);
         Assert.DoesNotContain("closed-flag-actor", closedAuditBody, StringComparison.Ordinal);
         Assert.DoesNotContain("closed-flag-note", closedAuditBody, StringComparison.Ordinal);
         Assert.DoesNotContain(ReconciliationApplicationErrors.ReviewCaseNotFound.Code, closedAuditBody, StringComparison.Ordinal);
@@ -657,6 +671,17 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.Contains(pair.ReviewNote, reviewBody, StringComparison.Ordinal);
         Assert.DoesNotContain(hidden.ReviewNote, reviewBody, StringComparison.Ordinal);
         await AssertStatusAsync(client, "/api/review-cases/" + pair.ReviewCaseId.ToString("D"), HttpStatusCode.OK);
+        await AssertSummaryCountsAsync(
+            client,
+            total: 1,
+            open: 1,
+            resolved: 0,
+            dismissed: 0,
+            openCompeting: 0,
+            openNeeds: 1,
+            hidden.ReviewNote,
+            hidden.ReviewCaseId.ToString("D"),
+            hidden.OrganizationId.ToString("D"));
         HttpResponseMessage hiddenReview = await client.GetAsync("/api/review-cases/" + hidden.ReviewCaseId.ToString("D"));
         string hiddenReviewBody = await hiddenReview.Content.ReadAsStringAsync();
         Assert.Equal(HttpStatusCode.NotFound, hiddenReview.StatusCode);
@@ -762,6 +787,35 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.DoesNotContain(pair.AuditActor, body, StringComparison.Ordinal);
         Assert.DoesNotContain(pair.ReviewNote, body, StringComparison.Ordinal);
         Assert.DoesNotContain(pair.ReviewCaseId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task AssertSummaryCountsAsync(
+        HttpClient client,
+        long total,
+        long open,
+        long resolved,
+        long dismissed,
+        long openCompeting,
+        long openNeeds,
+        params string[] absent)
+    {
+        HttpResponseMessage response = await client.GetAsync("/api/review-cases/summary");
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using JsonDocument document = JsonDocument.Parse(body);
+        JsonElement root = document.RootElement;
+        Assert.Equal(total, root.GetProperty("totalCount").GetInt64());
+        Assert.Equal(open, root.GetProperty("openCount").GetInt64());
+        Assert.Equal(resolved, root.GetProperty("resolvedCount").GetInt64());
+        Assert.Equal(dismissed, root.GetProperty("dismissedCount").GetInt64());
+        Assert.Equal(openCompeting, root.GetProperty("openCompetingMatchCount").GetInt64());
+        Assert.Equal(openNeeds, root.GetProperty("openNeedsInvestigationCount").GetInt64());
+        Assert.Equal(total, open + resolved + dismissed);
+        Assert.Equal(open, openCompeting + openNeeds);
+        foreach (string value in absent)
+        {
+            Assert.DoesNotContain(value, body, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static string ReviewAuditPath(Guid reviewCaseId)

@@ -136,4 +136,26 @@ public sealed class ReviewCaseQueryHandlerTests
         Assert.False(result.Value.LinkedFinancials.BankTransactionFound);
         Assert.Equal(OrganizationId, queries.OrganizationId);
     }
+
+    [Fact]
+    public async Task Summary_should_query_only_the_current_organization()
+    {
+        RecordingOrganizationContext organization = new(OrganizationId);
+        ReviewCaseSummaryResponse response = new(4, 3, 1, 0, 2, 1);
+        FakeReviewCaseQueries queries = new(summary: response);
+        GetReviewCaseSummaryHandler handler = new(organization, queries);
+        using CancellationTokenSource cancellation = new();
+
+        Result<ReviewCaseSummaryResponse> result = await handler.Handle(cancellation.Token);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(4, result.Value.TotalCount);
+        Assert.Equal(3, result.Value.OpenCount);
+        Assert.Equal(1, organization.ReadCount);
+        Assert.Equal(OrganizationId, queries.OrganizationId);
+        Assert.Equal(cancellation.Token, queries.CancellationToken);
+        Assert.Equal(1, queries.SummarizeCount);
+        Assert.Equal(0, queries.ListCount);
+        Assert.Equal(0, queries.GetCount);
+    }
 }
