@@ -38,6 +38,12 @@ import {
 } from './review-case-api';
 import { reviewCaseFilterSchema, type ReviewCaseFilterValues } from './review-case-filters';
 import { ReviewCaseDecisionPanel } from './ReviewCaseDecisionPanel';
+import {
+  ReviewCaseCommentComposer,
+  ReviewCaseCommentRecovery,
+  ReviewCaseCommentsHost,
+} from './ReviewCaseCommentPanel';
+import { developmentActorId, developmentOrganizationId } from './review-case-open-request';
 import { ReviewCaseOpenPanel } from './ReviewCaseOpenPanel';
 import { ReviewCaseSummaryPanel } from './ReviewCaseSummaryPanel';
 
@@ -179,6 +185,7 @@ export function ReviewCasePage() {
           onSelect={selectOpenedCase}
         />
       ) : null}
+      {readable && !cookie ? <ReviewCaseCommentRecovery key={session.epoch} /> : null}
       {readable && !cookie ? (
         <ReviewCaseDecisionPanel
           selectedCaseId={selectedId}
@@ -417,9 +424,15 @@ function SelectedReviewCase({
   const canReadAudit = cookie
     ? session.authorization === 'verified' && session.capabilities.includes('audit.read')
     : session.token !== null;
+  const canReadComments = canReadAudit;
+  const canComposeComment = !cookie
+    && session.token !== null
+    && developmentOrganizationId(session.token) !== null
+    && developmentActorId(session.token) !== null;
   const auditKey = cookie
     ? `${session.epoch}:${session.readiness}:${item.reviewCaseId}`
     : `${session.epoch}:${item.reviewCaseId}`;
+  const commentsKey = `comments:${auditKey}`;
   return (
     <Paper component="section" aria-label="Selected review case" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
@@ -444,6 +457,10 @@ function SelectedReviewCase({
       <Observation label="Invoice" named={item.invoiceId !== null} observation={detail.invoice} kind="outstanding" />
       <Observation label="Bank transaction" named={item.bankTransactionId !== null} observation={detail.bankTransaction} kind="unapplied" />
       {canReadAudit ? <ReviewCaseAuditHost key={auditKey} reviewCaseId={item.reviewCaseId} /> : null}
+      {canReadComments ? <ReviewCaseCommentsHost key={commentsKey} reviewCaseId={item.reviewCaseId} /> : null}
+      {canComposeComment ? (
+        <ReviewCaseCommentComposer key={`comment-form:${session.epoch}:${item.reviewCaseId}`} reviewCaseId={item.reviewCaseId} />
+      ) : null}
     </Paper>
   );
 }

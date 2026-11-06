@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-06
-- Follow-up: A comment is an immutable Reconciliation entry. It is not a dispute, a reopen, or a `ReviewCaseAuditAction`. Phase 8 stays planned. There is no comment screen in this increment.
+- Follow-up: A comment is an immutable Reconciliation entry. It is not a dispute, a reopen, or a `ReviewCaseAuditAction`. Phase 8 stays planned. Phase 8K adds the `/review-cases` comment section and `finopsdesk.review-case-comment-attempt`. That screen is [ADR 0029](0029-review-case-comments-ui.md). It does not change this contract.
 
 ## Context
 

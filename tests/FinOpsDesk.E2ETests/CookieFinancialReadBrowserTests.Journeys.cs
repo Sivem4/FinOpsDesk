@@ -129,6 +129,7 @@ public sealed partial class CookieFinancialReadBrowserTests
         IPage page = await journey.OpenPageAsync();
         int reviewPosts = 0;
         int auditGets = 0;
+        int commentGets = 0;
         page.Request += (_, request) =>
         {
             if (string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
@@ -141,6 +142,12 @@ public sealed partial class CookieFinancialReadBrowserTests
                 && request.Url.Contains("/audit", StringComparison.OrdinalIgnoreCase))
             {
                 Interlocked.Increment(ref auditGets);
+            }
+
+            if (string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase)
+                && request.Url.Contains("/comments", StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref commentGets);
             }
         };
 
@@ -161,6 +168,8 @@ public sealed partial class CookieFinancialReadBrowserTests
         await summary.GetByText("Open investigations 0", new() { Exact = true }).WaitForAsync();
         await summary.GetByText("These counts cover every persisted review case in this organization.").WaitForAsync();
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "View audit" }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "View comments" }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Add comment" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Open review case" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same opening again" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Resolve", Exact = true }).CountAsync());
@@ -168,6 +177,7 @@ public sealed partial class CookieFinancialReadBrowserTests
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same decision again" }).CountAsync());
         Assert.Equal(0, reviewPosts);
         Assert.Equal(0, auditGets);
+        Assert.Equal(0, commentGets);
     }
 
     [Fact]
@@ -184,16 +194,25 @@ public sealed partial class CookieFinancialReadBrowserTests
         await SeedZeroBalanceReviewCaseAsync(
             journey.Database.ConnectionString,
             OrganizationId,
-            "e2e-review-audit-actor");
+            "e2e-review-audit-actor",
+            "seeded desk comment",
+            "e2e-review-comment-actor");
 
         IPage page = await journey.OpenPageAsync();
         int reviewPosts = 0;
+        int commentGets = 0;
         page.Request += (_, request) =>
         {
             if (string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
                 && request.Url.Contains("/api/review-cases", StringComparison.OrdinalIgnoreCase))
             {
                 Interlocked.Increment(ref reviewPosts);
+            }
+
+            if (string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase)
+                && request.Url.Contains("/comments", StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref commentGets);
             }
         };
 
@@ -226,6 +245,14 @@ public sealed partial class CookieFinancialReadBrowserTests
         await history.GetByText("Stored history is separate from the current case and from the balances above.").WaitForAsync();
         Assert.Equal(0, await history.GetByText("OIDC Operator").CountAsync());
         Assert.Equal(0, await history.GetByText("The opening entry is not in the stored history.").CountAsync());
+        Assert.Equal(0, commentGets);
+        Assert.Equal(0, await page.GetByText("seeded desk comment").CountAsync());
+        await page.GetByRole(AriaRole.Button, new() { Name = "View comments" }).ClickAsync();
+        ILocator comments = page.GetByRole(AriaRole.Region, new() { Name = "Review case comments" });
+        await comments.GetByText("seeded desk comment").WaitForAsync();
+        await comments.GetByText("Actor e2e-review-comment-actor").WaitForAsync();
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Add comment" }).CountAsync());
+        Assert.True(commentGets > 0);
         Assert.Equal(0, reviewPosts);
     }
 
@@ -338,7 +365,9 @@ public sealed partial class CookieFinancialReadBrowserTests
     private static async Task SeedZeroBalanceReviewCaseAsync(
         string connectionString,
         Guid organizationId,
-        string? auditActor)
+        string? auditActor,
+        string? commentText = null,
+        string? commentActor = null)
     {
         OrganizationId tenant = new(organizationId);
         CurrencyCode pln = new("PLN");
@@ -371,15 +400,28 @@ public sealed partial class CookieFinancialReadBrowserTests
         await reconciliation.SaveChangesAsync();
         reconciliation.ReviewCases.Add(reviewCase);
         await reconciliation.SaveChangesAsync();
-        if (auditActor is null)
+        if (auditActor is not null)
+        {
+            reconciliation.ReviewCaseAuditEntries.Add(ReviewCaseAuditEntry.ForOpened(
+                ReviewCaseAuditEntryId.New(),
+                reviewCase,
+                auditActor));
+            await reconciliation.SaveChangesAsync();
+        }
+
+        if (commentText is null)
         {
             return;
         }
 
-        reconciliation.ReviewCaseAuditEntries.Add(ReviewCaseAuditEntry.ForOpened(
-            ReviewCaseAuditEntryId.New(),
-            reviewCase,
-            auditActor));
+        reconciliation.ReviewCaseComments.Add(ReviewCaseComment.Create(
+            ReviewCaseCommentId.New(),
+            tenant,
+            reviewCase.Id,
+            commentText,
+            commentActor ?? "e2e-review-comment-actor",
+            DateTimeOffset.Parse("2026-11-06T12:00:00Z"),
+            Guid.NewGuid()));
         await reconciliation.SaveChangesAsync();
     }
 
