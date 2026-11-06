@@ -34,4 +34,5 @@ The composite foreign key to `ReviewCase` is `Restrict`. Checks cover the assign
 - A lost claim or release is retried with the same key and the same canonical token. A later release, claim, or close does not change that historical response.
 - The next command must read the case token again. The POST does not return it.
 - Cookie operators cannot claim or release until a later activation decision. This record does not enable the flags or add a screen.
+- ADR 0031 adds the DevelopmentJwt assignment panel on the existing review-case screen. It does not change this API, the cookie allowlist, the flags, or contract v2.
 - Phase 8 stays planned.

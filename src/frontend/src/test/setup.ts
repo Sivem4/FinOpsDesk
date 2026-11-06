@@ -3,6 +3,8 @@ import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { resetReversalAttemptStateForTests } from '../features/allocations/reversal-attempt';
+import { resetReviewCaseAssignmentAttemptStateForTests } from '../features/review-cases/review-case-assignment-attempt';
+import { resetReviewCaseAssignmentReadsForTests } from '../features/review-cases/review-case-assignment-api';
 import { resetReviewCaseCommentAttemptStateForTests } from '../features/review-cases/review-case-comment-attempt';
 import { resetAllocationAttemptStateForTests } from '../features/reconciliation/allocation-attempt';
 import { resetFinancialStatusForTests } from '../shared/api/financial-status';
@@ -33,6 +35,8 @@ afterEach(() => {
   resetAllocationAttemptStateForTests();
   resetReversalAttemptStateForTests();
   resetReviewCaseCommentAttemptStateForTests();
+  resetReviewCaseAssignmentAttemptStateForTests();
+  resetReviewCaseAssignmentReadsForTests();
 });
 
 afterAll(() => {
