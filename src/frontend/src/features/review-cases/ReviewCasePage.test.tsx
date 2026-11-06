@@ -9,6 +9,11 @@ import { queryClient } from '../../shared/api/query-client';
 import { sessionStore, type CookieSessionFields } from '../../shared/api/session-store';
 import { server } from '../../test/server';
 import { fakeJwt } from '../../test/jwt';
+import { resetReviewCaseDetailReadsForTests } from './review-case-api';
+import {
+  resetReviewCaseDecisionAttemptStateForTests,
+  reviewCaseDecisionAttemptStorageKey,
+} from './review-case-decision-attempt';
 import { ReviewCasePage } from './ReviewCasePage';
 import { reviewCaseOpenAttemptStorageKey } from './review-case-open-attempt';
 
@@ -21,6 +26,9 @@ const secretToken = 'concurrency-token-must-stay-hidden';
 afterEach(() => {
   vi.unstubAllEnvs();
   sessionStorage.removeItem(reviewCaseOpenAttemptStorageKey);
+  sessionStorage.removeItem(reviewCaseDecisionAttemptStorageKey);
+  resetReviewCaseDecisionAttemptStateForTests();
+  resetReviewCaseDetailReadsForTests();
 });
 
 describe('review case page', () => {
@@ -48,10 +56,19 @@ describe('review case page', () => {
   it('does not show opening or recovery in a cookie session', async () => {
     vi.stubEnv('VITE_AUTH_MODE', 'cookie');
     sessionStorage.setItem(reviewCaseOpenAttemptStorageKey, '{"schemaVersion":1}');
+    sessionStorage.setItem(reviewCaseDecisionAttemptStorageKey, '{"schemaVersion":1,"operation":"ReviewCaseResolve"}');
     let posts = 0;
     server.use(
       http.get('/api/review-cases', () => text(listDocument())),
       http.post('/api/review-cases', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/resolve', () => {
+        posts += 1;
+        return new HttpResponse(null, { status: 500 });
+      }),
+      http.post('/api/review-cases/:id/dismiss', () => {
         posts += 1;
         return new HttpResponse(null, { status: 500 });
       }),
@@ -62,8 +79,12 @@ describe('review case page', () => {
     expect(await screen.findByText(/This screen only reads them/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open review case' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Send the same opening again' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resolve' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send the same decision again' })).not.toBeInTheDocument();
     expect(posts).toBe(0);
     expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBe('{"schemaVersion":1}');
+    expect(sessionStorage.getItem(reviewCaseDecisionAttemptStorageKey)).toBe('{"schemaVersion":1,"operation":"ReviewCaseResolve"}');
   });
 
   it('keeps the confirmation when the later read fails and retries only that read', async () => {
@@ -999,6 +1020,221 @@ describe('review case page', () => {
     expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
   });
 });
+
+describe('review case decision page', () => {
+  const commandToken = 'AQIDBAUGBwg=';
+
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+  const refreshedToken = 'AAAAAAAAB+M=';
+  const organizationId = '11111111-1111-1111-1111-111111111111';
+
+  it('keeps the draft token when the selected case is refreshed', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    const bodies: string[] = [];
+    let reads = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => {
+        reads += 1;
+        return text(detailFrom(caseDocument({ concurrencyToken: reads === 1 ? commandToken : refreshedToken })));
+      }),
+      http.post(`/api/review-cases/${caseId}/resolve`, async ({ request }) => {
+        bodies.push(await request.text());
+        return HttpResponse.json(decisionResponse('Resolved', 'NoActionRequired', null));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+
+    await user.click(await screen.findByRole('button', { name: 'Resolve' }));
+    await user.type(screen.getByLabelText('Decision resolution note'), 'kept');
+    await user.click(screen.getByRole('button', { name: 'Refresh selected case' }));
+    expect(await screen.findByText('Invoice outstanding 0.00 PLN')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Resolve review case' }));
+
+    await screen.findByText('The review case matches this decision.');
+    expect(JSON.parse(bodies[0] ?? '{}')).toMatchObject({
+      outcome: 'NoActionRequired',
+      concurrencyToken: commandToken,
+      resolutionNote: 'kept',
+    });
+    expect(bodies[0]).not.toContain(refreshedToken);
+    expect(window.location.search).not.toContain('selected=');
+  });
+
+  it('drops an unsent draft when another case is selected and does not rewrite a stored decision', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    const otherToken = 'AQIDBAUGBwg=';
+    const stored = JSON.stringify({
+      schemaVersion: 1,
+      operation: 'ReviewCaseDismiss',
+      organizationId,
+      caseId,
+      outcome: null,
+      allocationId: null,
+      resolutionNote: 'stored',
+      concurrencyToken: commandToken,
+      requestBody: JSON.stringify({ resolutionNote: 'stored', concurrencyToken: commandToken }),
+      lifecycle: 'uncertain',
+      uncertaintyLocked: true,
+    });
+    sessionStorage.setItem(reviewCaseDecisionAttemptStorageKey, stored);
+    server.use(
+      http.get('/api/review-cases', () => text(`{"items":[${caseDocument({ concurrencyToken: commandToken })},${caseDocument({ reviewCaseId: otherCaseId, concurrencyToken: otherToken })}],"page":1,"pageSize":50,"totalCount":2}`)),
+      http.get('/api/review-cases/:id', ({ params }) => text(detailFrom(caseDocument({
+        reviewCaseId: String(params.id),
+        concurrencyToken: params.id === otherCaseId ? otherToken : commandToken,
+      })))),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+
+    expect(await screen.findByText('This decision has no verified result. Sending it again uses the same request.')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: `Show review case ${otherCaseId}` }));
+    expect(await screen.findByText(`Case ${otherCaseId}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resolve review case' })).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseDecisionAttemptStorageKey)).toBe(stored);
+  });
+
+  it('drops an unsent draft when the session epoch changes', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailFrom(caseDocument({ concurrencyToken: commandToken })))),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'Resolve' }));
+    expect(screen.getByRole('button', { name: 'Resolve review case' })).toBeInTheDocument();
+
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+
+    expect(await screen.findByRole('button', { name: 'Resolve' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resolve review case' })).not.toBeInTheDocument();
+  });
+
+  it('does not unlock a decision from a read that started before local tracking was removed', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    const pending: Array<(value: Response) => void> = [];
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => new Promise((resolve) => {
+        pending.push(resolve);
+      })),
+    );
+    sessionStorage.setItem(reviewCaseDecisionAttemptStorageKey, JSON.stringify({
+      schemaVersion: 1,
+      operation: 'ReviewCaseResolve',
+      organizationId,
+      caseId,
+      outcome: 'NoActionRequired',
+      allocationId: null,
+      resolutionNote: null,
+      concurrencyToken: commandToken,
+      requestBody: JSON.stringify({ outcome: 'NoActionRequired', concurrencyToken: commandToken }),
+      lifecycle: 'sending',
+      uncertaintyLocked: false,
+    }));
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    expect(await screen.findByRole('button', { name: 'Remove local tracking' })).toBeInTheDocument();
+    expect(pending).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'Remove local tracking' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm removal of local tracking' }));
+    await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(2));
+    pending[0]?.(text(detailFrom(caseDocument({ concurrencyToken: commandToken }))));
+    await flush();
+    expect(screen.queryByRole('button', { name: 'Resolve' })).not.toBeInTheDocument();
+
+    pending[1]?.(text(detailFrom(caseDocument({ concurrencyToken: refreshedToken }))));
+    expect(await screen.findByRole('button', { name: 'Resolve' })).toBeInTheDocument();
+  });
+
+  it('keeps a confirmed decision when the refresh fails and retries only reads', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    let posts = 0;
+    let detailReads = 0;
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => {
+        detailReads += 1;
+        if (detailReads > 1) {
+          return new HttpResponse(null, { status: 500 });
+        }
+        return text(detailFrom(caseDocument({ concurrencyToken: commandToken })));
+      }),
+      http.post(`/api/review-cases/${caseId}/dismiss`, () => {
+        posts += 1;
+        return HttpResponse.json(decisionResponse('Dismissed', null, null));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await user.click(screen.getByRole('button', { name: 'Dismiss review case' }));
+
+    expect(await screen.findByText('The review case matches this decision.')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
+    const readsAfterFailure = detailReads;
+    await user.click(screen.getByRole('button', { name: 'Refresh displayed data' }));
+    await waitFor(() => expect(detailReads).toBeGreaterThan(readsAfterFailure));
+    expect(posts).toBe(1);
+    expect(screen.getByText('The review case matches this decision.')).toBeInTheDocument();
+  });
+
+  it('does not apply a late decision to a page the operator has left', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    const gate = deferred<void>();
+    server.use(
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailFrom(caseDocument({ concurrencyToken: commandToken })))),
+      http.post(`/api/review-cases/${caseId}/dismiss`, async () => {
+        await gate.promise;
+        return HttpResponse.json(decisionResponse('Dismissed', null, null));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderBrowserWorkspace();
+    await user.click(await screen.findByRole('button', { name: `Show review case ${caseId}` }));
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await user.click(screen.getByRole('button', { name: 'Dismiss review case' }));
+    await user.click(screen.getByRole('link', { name: 'Invoices' }));
+    expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+
+    gate.resolve();
+    await flush();
+    expect(screen.getByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+    expect(screen.queryByText('The review case matches this decision.')).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseDecisionAttemptStorageKey)).toBeNull();
+  });
+});
+
+function decisionResponse(status: string, outcome: string | null, allocation: string | null) {
+  return {
+    reviewCaseId: caseId,
+    reason: 'CompetingMatch',
+    status,
+    invoiceId,
+    bankTransactionId: bankId,
+    sourceLabel: 'manual',
+    note: 'watch the zero balance',
+    outcome,
+    resolutionNote: status === 'Dismissed' ? null : 'kept',
+    allocationId: allocation,
+    openedAt: '2026-11-05T08:00:00Z',
+    closedAt: '2026-11-05T09:00:00Z',
+    concurrencyToken: 'AAAAAAAAB+M=',
+  };
+}
 
 function renderPage(path: string) {
   return render(

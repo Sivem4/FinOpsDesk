@@ -47,6 +47,41 @@ export interface ReviewCaseDetail {
   bankTransaction: ReviewCaseObservation;
 }
 
+export interface ReviewCaseCommandContext {
+  caseId: string;
+  epoch: number;
+  concurrencyToken: string;
+  readSequence: number;
+}
+
+export interface ReviewCaseDetailRead {
+  detail: ReviewCaseDetail;
+  command: ReviewCaseCommandContext | null;
+}
+
+let startedDetailReads = 0;
+
+export function startedReviewCaseDetailReadCount(): number {
+  return startedDetailReads;
+}
+
+export function resetReviewCaseDetailReadsForTests(): void {
+  startedDetailReads = 0;
+}
+
+export function readReviewCaseConcurrencyToken(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0 || isDotNetWhiteSpaceToken(value)) {
+    return null;
+  }
+
+  try {
+    const binary = atob(value);
+    return binary.length === 8 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listReviewCases(
   page: number,
   pageSize: number,
@@ -73,13 +108,69 @@ export async function listReviewCases(
   return mapList(body);
 }
 
-export async function getReviewCase(reviewCaseId: string, signal: AbortSignal): Promise<ReviewCaseDetail> {
-  if (!isGuid(reviewCaseId)) {
+export async function getReviewCase(
+  reviewCaseId: string,
+  epoch: number,
+  signal: AbortSignal,
+): Promise<ReviewCaseDetailRead> {
+  const readSequence = assignDetailReadSequence();
+  if (!isGuid(reviewCaseId) || !Number.isSafeInteger(epoch) || epoch < 0) {
     throw new UnexpectedResponseError('The review case response could not be read.');
   }
 
   const body = await apiGet(`/api/review-cases/${reviewCaseId}`, signal);
-  return mapDetail(body);
+  const detail = mapDetail(body);
+  if (detail.reviewCase.reviewCaseId !== reviewCaseId.toLowerCase()) {
+    throw new UnexpectedResponseError('The review case response could not be read.');
+  }
+
+  const concurrencyToken = readDetailConcurrencyToken(body);
+  return {
+    detail,
+    command: concurrencyToken === null
+      ? null
+      : {
+          caseId: detail.reviewCase.reviewCaseId,
+          epoch,
+          concurrencyToken,
+          readSequence,
+        },
+  };
+}
+
+function assignDetailReadSequence(): number {
+  startedDetailReads += 1;
+  return startedDetailReads;
+}
+
+function readDetailConcurrencyToken(body: unknown): string | null {
+  if (!isRecord(body) || !isRecord(body.reviewCase)) {
+    return null;
+  }
+
+  return readReviewCaseConcurrencyToken(body.reviewCase.concurrencyToken);
+}
+
+function isDotNetWhiteSpaceToken(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    const whitespace = code === 0x20
+      || (code >= 0x09 && code <= 0x0d)
+      || code === 0x85
+      || code === 0xa0
+      || code === 0x1680
+      || (code >= 0x2000 && code <= 0x200a)
+      || code === 0x2028
+      || code === 0x2029
+      || code === 0x202f
+      || code === 0x205f
+      || code === 0x3000;
+    if (!whitespace) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function mapList(body: unknown): ReviewCaseList {

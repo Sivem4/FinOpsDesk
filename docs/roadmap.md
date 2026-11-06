@@ -364,6 +364,8 @@ Phase 8E makes `Idempotency-Key` optional on `POST /api/review-cases`. A missing
 
 Phase 8F lets a `DevelopmentJwt` operator open one case from `/review-cases`. The form names documents by GUID. `CompetingMatch` requires both, and `NeedsInvestigation` requires exactly one. The browser stores one `finopsdesk.review-case-open-attempt` record before the POST and retries that same key and body only after an explicit click. A verified `201` names an open case. A verified `200` can name that open case or a terminal resolved or dismissed case. `ProductionCookie` keeps the read-only list, detail, and audit. The cookie write allowlist, flags, and capabilities stay unchanged. Phase 8 stays Planned.
 
+Phase 8G lets that same `DevelopmentJwt` operator resolve or dismiss an open case from the selected detail. The draft copies the concurrency token from the detail read that the operator chose. A later read does not replace it. After the operator removes local tracking, only a detail read that started after that removal can start another draft. The browser stores one `finopsdesk.review-case-decision-attempt` record before the POST and retries that same operation, case id, and body, including the original token. Resolve and dismiss do not send `Idempotency-Key` and do not allocate money. A verified HTTP 200 that matches the stored decision clears the record. The response token may differ from the request token. `ProductionCookie` does not mount the decision forms or that recovery panel. The cookie write allowlist, flags, and capabilities stay unchanged. Phase 8 stays Planned.
+
 Add:
 
 - Disputes module;

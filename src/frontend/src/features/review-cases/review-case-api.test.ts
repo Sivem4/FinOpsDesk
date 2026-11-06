@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StaleSessionError, UnexpectedResponseError } from '../../shared/api/errors';
 import { sessionStore, type CookieSessionFields } from '../../shared/api/session-store';
 import { server } from '../../test/server';
-import { getReviewCase, listReviewCases } from './review-case-api';
+import { getReviewCase, listReviewCases, resetReviewCaseDetailReadsForTests, startedReviewCaseDetailReadCount } from './review-case-api';
 
 const caseId = '11111111-1111-4111-8111-111111111111';
 const invoiceId = '22222222-2222-4222-8222-222222222222';
@@ -14,6 +14,7 @@ const secretToken = 'concurrency-token-must-stay-hidden';
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  resetReviewCaseDetailReadsForTests();
 });
 
 describe('review case API', () => {
@@ -28,12 +29,13 @@ describe('review case API', () => {
     );
 
     const list = await listReviewCases(1, 50, 'Open', invoiceId, null, new AbortController().signal);
-    const detail = await getReviewCase(caseId, new AbortController().signal);
+    const detail = await getReviewCase(caseId, 1, new AbortController().signal);
 
     expect(list.items[0]?.reviewCaseId).toBe(caseId);
     expect(list.items[0]?.status).toBe('Open');
-    expect(detail.invoice).toEqual({ found: true, amount: '0', currency: 'PLN' });
-    expect(detail.bankTransaction).toEqual({ found: true, amount: '0.0001', currency: 'EUR' });
+    expect(detail.detail.invoice).toEqual({ found: true, amount: '0', currency: 'PLN' });
+    expect(detail.detail.bankTransaction).toEqual({ found: true, amount: '0.0001', currency: 'EUR' });
+    expect(detail.command).toBeNull();
     expect(JSON.stringify(detail)).not.toContain(secretToken);
   });
 
@@ -46,11 +48,12 @@ describe('review case API', () => {
     );
 
     const list = await listReviewCases(2, 25, null, null, bankId, new AbortController().signal);
-    const detail = await getReviewCase(caseId, new AbortController().signal);
+    const detail = await getReviewCase(caseId, 1, new AbortController().signal);
 
     expect(list.page).toBe(1);
-    expect(detail.reviewCase.note).toBe('watch the zero balance');
-    expect(detail.invoice.amount).toBe('0');
+    expect(detail.detail.reviewCase.note).toBe('watch the zero balance');
+    expect(detail.detail.invoice.amount).toBe('0');
+    expect(detail.command).toBeNull();
   });
 
   it('does not fetch when the cookie caller lacks review-cases.read', async () => {
@@ -59,7 +62,7 @@ describe('review case API', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
     await expect(listReviewCases(1, 50, null, null, null, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
-    await expect(getReviewCase(caseId, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+    await expect(getReviewCase(caseId, 1, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -67,7 +70,7 @@ describe('review case API', () => {
     sessionStore.rotate('memory-token', 4_000_000_000, null);
     server.use(http.get('/api/review-cases/:id', () => text(detailDocument(false, '{"amount":0,"currency":"PLN"}'))));
 
-    await expect(getReviewCase(caseId, new AbortController().signal)).rejects.toBeInstanceOf(UnexpectedResponseError);
+    await expect(getReviewCase(caseId, 1, new AbortController().signal)).rejects.toBeInstanceOf(UnexpectedResponseError);
   });
 
   it('rejects a cookie detail that finishes after the organization changes', async () => {
@@ -80,7 +83,7 @@ describe('review case API', () => {
       resolveFetch = resolve;
     })));
 
-    const pending = getReviewCase(caseId, new AbortController().signal);
+    const pending = getReviewCase(caseId, 1, new AbortController().signal);
     sessionStore.replaceCookieSession({
       ...cookieSession(['review-cases.read']),
       activeOrganization: {
@@ -102,11 +105,44 @@ describe('review case API', () => {
       resolveFetch = resolve;
     })));
 
-    const pending = getReviewCase(caseId, new AbortController().signal);
+    const pending = getReviewCase(caseId, 1, new AbortController().signal);
     sessionStore.rotate('token-b', 4_000_000_000, null);
     resolveFetch(new Response(detailDocument(), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     await expect(pending).rejects.toBeInstanceOf(StaleSessionError);
+  });
+
+  it('assigns the read sequence before the response and keeps a valid token off the rendered case', async () => {
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    const token = 'AQIDBAUGBwg=';
+    let releaseFetch: (response: Response) => void = () => {
+      throw new Error('The fetch was not started.');
+    };
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    server.use(http.get('/api/review-cases/:id', () => {
+      markStarted();
+      return new Promise((resolve) => {
+        releaseFetch = resolve;
+      });
+    }));
+
+    const before = startedReviewCaseDetailReadCount();
+    const pending = getReviewCase(caseId, 7, new AbortController().signal);
+    expect(startedReviewCaseDetailReadCount()).toBe(before + 1);
+    await started;
+    releaseFetch(text(detailDocument().replace(secretToken, token)));
+    const read = await pending;
+
+    expect(read.command).toEqual({
+      caseId,
+      epoch: 7,
+      concurrencyToken: token,
+      readSequence: before + 1,
+    });
+    expect(JSON.stringify(read.detail)).not.toContain(token);
   });
 });
 

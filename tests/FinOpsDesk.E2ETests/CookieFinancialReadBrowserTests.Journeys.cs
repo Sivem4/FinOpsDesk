@@ -155,6 +155,9 @@ public sealed partial class CookieFinancialReadBrowserTests
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "View audit" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Open review case" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same opening again" }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Resolve", Exact = true }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Dismiss", Exact = true }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same decision again" }).CountAsync());
         Assert.Equal(0, reviewPosts);
         Assert.Equal(0, auditGets);
     }
@@ -194,6 +197,9 @@ public sealed partial class CookieFinancialReadBrowserTests
         await page.GetByText("This screen only reads them.").WaitForAsync();
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Open review case" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same opening again" }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Resolve", Exact = true }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Dismiss", Exact = true }).CountAsync());
+        Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same decision again" }).CountAsync());
         Assert.Equal(0, reviewPosts);
 
         await page.GetByRole(AriaRole.Button, new() { Name = "View audit" }).ClickAsync();
