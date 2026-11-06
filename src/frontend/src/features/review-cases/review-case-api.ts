@@ -60,6 +60,7 @@ export interface ReviewCaseDetailRead {
 }
 
 let startedDetailReads = 0;
+const latestDetailRead = new Map<string, number>();
 
 export function startedReviewCaseDetailReadCount(): number {
   return startedDetailReads;
@@ -67,6 +68,7 @@ export function startedReviewCaseDetailReadCount(): number {
 
 export function resetReviewCaseDetailReadsForTests(): void {
   startedDetailReads = 0;
+  latestDetailRead.clear();
 }
 
 export function readReviewCaseConcurrencyToken(value: unknown): string | null {
@@ -114,17 +116,24 @@ export async function getReviewCase(
   signal: AbortSignal,
 ): Promise<ReviewCaseDetailRead> {
   const readSequence = assignDetailReadSequence();
+  const identity = detailReadIdentity(epoch, reviewCaseId);
+  if (identity !== null) {
+    latestDetailRead.set(identity, readSequence);
+  }
+
   if (!isGuid(reviewCaseId) || !Number.isSafeInteger(epoch) || epoch < 0) {
     throw new UnexpectedResponseError('The review case response could not be read.');
   }
 
   const body = await apiGet(`/api/review-cases/${reviewCaseId}`, signal);
+  assertCurrentDetailRead(identity, readSequence);
   const detail = mapDetail(body);
   if (detail.reviewCase.reviewCaseId !== reviewCaseId.toLowerCase()) {
     throw new UnexpectedResponseError('The review case response could not be read.');
   }
 
   const concurrencyToken = readDetailConcurrencyToken(body);
+  assertCurrentDetailRead(identity, readSequence);
   return {
     detail,
     command: concurrencyToken === null
@@ -141,6 +150,20 @@ export async function getReviewCase(
 function assignDetailReadSequence(): number {
   startedDetailReads += 1;
   return startedDetailReads;
+}
+
+function detailReadIdentity(epoch: number, reviewCaseId: string): string | null {
+  if (!isGuid(reviewCaseId) || !Number.isSafeInteger(epoch) || epoch < 0) {
+    return null;
+  }
+
+  return `${epoch}:${reviewCaseId.toLowerCase()}`;
+}
+
+function assertCurrentDetailRead(identity: string | null, readSequence: number): void {
+  if (identity !== null && latestDetailRead.get(identity) !== readSequence) {
+    throw new DOMException('The review case read was superseded.', 'AbortError');
+  }
 }
 
 function readDetailConcurrencyToken(body: unknown): string | null {

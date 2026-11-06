@@ -168,6 +168,10 @@ function readTimestamp(value: unknown): string {
   return value;
 }
 
+export function isReviewCaseTimestamp(value: unknown): value is string {
+  return isCommentTimestamp(value);
+}
+
 function isCommentTimestamp(value: unknown): value is string {
   if (typeof value !== 'string') {
     return false;

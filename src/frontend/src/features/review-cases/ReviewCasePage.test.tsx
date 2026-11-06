@@ -94,6 +94,9 @@ describe('review case page', () => {
     expect(screen.queryByRole('button', { name: 'Resolve' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Send the same decision again' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send the same claim again' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Review case assignment recovery' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Review case assignment' })).not.toBeInTheDocument();
     expect(posts).toBe(0);
     expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBe('{"schemaVersion":1}');
     expect(sessionStorage.getItem(reviewCaseDecisionAttemptStorageKey)).toBe('{"schemaVersion":1,"operation":"ReviewCaseResolve"}');

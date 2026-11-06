@@ -16,7 +16,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { UNSAFE_DataRouterContext, useNavigate, useSearchParams } from 'react-router';
 
@@ -31,12 +31,19 @@ import {
 import {
   getReviewCase,
   listReviewCases,
+  type ReviewCaseCommandContext,
   type ReviewCaseDetail,
   type ReviewCaseList,
   type ReviewCaseObservation,
   type ReviewCaseStatusName,
 } from './review-case-api';
 import { reviewCaseFilterSchema, type ReviewCaseFilterValues } from './review-case-filters';
+import { getReviewCaseAssignment } from './review-case-assignment-api';
+import {
+  ReviewCaseAssignmentRecovery,
+  ReviewCaseAssignmentSection,
+  type AssignmentResultPublisher,
+} from './ReviewCaseAssignmentPanel';
 import { ReviewCaseDecisionPanel } from './ReviewCaseDecisionPanel';
 import {
   ReviewCaseCommentComposer,
@@ -90,6 +97,23 @@ export function ReviewCasePage() {
   const bankTransactionId = bankFilter === 'absent' || bankFilter === 'invalid' ? null : bankFilter;
   const statusFilter = status === 'absent' || status === 'invalid' ? null : status;
   const selectedId = selected === 'absent' || selected === 'invalid' ? null : selected;
+  const [selectionGeneration, setSelectionGeneration] = useState(0);
+  const [trackedSelection, setTrackedSelection] = useState(selectedId);
+  if (trackedSelection !== selectedId) {
+    setTrackedSelection(selectedId);
+    setSelectionGeneration(selectionGeneration + 1);
+  }
+
+  const selectionGenerationRef = useRef(selectionGeneration);
+  useLayoutEffect(() => {
+    selectionGenerationRef.current = selectionGeneration;
+  }, [selectionGeneration]);
+  const readSelectionGeneration = useCallback(() => selectionGenerationRef.current, []);
+  const assignmentPublisher = useRef<AssignmentResultPublisher | null>(null);
+  const registerAssignmentPublisher = useCallback((publish: AssignmentResultPublisher | null) => {
+    assignmentPublisher.current = publish;
+  }, []);
+  const readAssignmentPublisher = useCallback(() => assignmentPublisher.current, []);
 
   const listQuery = useQuery({
     queryKey: cookie
@@ -112,6 +136,12 @@ export function ReviewCasePage() {
       : ['review-cases', 'detail', session.epoch, selectedId ?? ''],
     enabled: readable && paginationValid && filtersValid && selectedValid && selectedId !== null,
     queryFn: ({ signal }) => getReviewCase(selectedId ?? '', session.epoch, signal),
+  });
+
+  const assignmentQuery = useQuery({
+    queryKey: ['review-cases', 'assignment', session.epoch, selectedId ?? ''],
+    enabled: !cookie && session.token !== null && paginationValid && filtersValid && selectedValid && selectedId !== null,
+    queryFn: ({ signal }) => getReviewCaseAssignment(selectedId ?? '', session.epoch, signal),
   });
 
   const list = readable && paginationValid && filtersValid && listQuery.isSuccess ? listQuery.data : null;
@@ -185,7 +215,15 @@ export function ReviewCasePage() {
           onSelect={selectOpenedCase}
         />
       ) : null}
-      {readable && !cookie ? <ReviewCaseCommentRecovery key={session.epoch} /> : null}
+      {readable && !cookie ? <ReviewCaseCommentRecovery key={`comments:${session.epoch}`} /> : null}
+      {readable && !cookie ? (
+        <ReviewCaseAssignmentRecovery
+          key={`assignment:${session.epoch}`}
+          selectedCaseId={selectedId}
+          readSelectionGeneration={readSelectionGeneration}
+          registerPublisher={registerAssignmentPublisher}
+        />
+      ) : null}
       {readable && !cookie ? (
         <ReviewCaseDecisionPanel
           selectedCaseId={selectedId}
@@ -251,7 +289,21 @@ export function ReviewCasePage() {
         <ErrorState error={detailQuery.error} onRetry={() => void detailQuery.refetch()} retrying={detailQuery.isFetching} detail />
       ) : null}
       {detail !== null ? (
-        <SelectedReviewCase detail={detail} onRefresh={() => void detailQuery.refetch()} refreshing={detailQuery.isFetching} />
+        <SelectedReviewCase
+          detail={detail}
+          detailCommand={detailRead?.command ?? null}
+          assignment={assignmentQuery.isSuccess
+            && assignmentQuery.data.epoch === session.epoch
+            && assignmentQuery.data.state.reviewCaseId === detail.reviewCase.reviewCaseId
+            ? assignmentQuery.data
+            : null}
+          assignmentPending={!cookie && assignmentQuery.isPending}
+          assignmentFailed={!cookie && assignmentQuery.isError}
+          readSelectionGeneration={readSelectionGeneration}
+          readAssignmentPublisher={readAssignmentPublisher}
+          onRefresh={() => void detailQuery.refetch()}
+          refreshing={detailQuery.isFetching}
+        />
       ) : null}
     </Stack>
   );
@@ -411,10 +463,22 @@ function ReviewCaseTable({
 
 function SelectedReviewCase({
   detail,
+  detailCommand,
+  assignment,
+  assignmentPending,
+  assignmentFailed,
+  readSelectionGeneration,
+  readAssignmentPublisher,
   onRefresh,
   refreshing,
 }: {
   detail: ReviewCaseDetail;
+  detailCommand: ReviewCaseCommandContext | null;
+  assignment: Awaited<ReturnType<typeof getReviewCaseAssignment>> | null;
+  assignmentPending: boolean;
+  assignmentFailed: boolean;
+  readSelectionGeneration: () => number;
+  readAssignmentPublisher: () => AssignmentResultPublisher | null;
   onRefresh: () => void;
   refreshing: boolean;
 }) {
@@ -457,6 +521,19 @@ function SelectedReviewCase({
       <Observation label="Invoice" named={item.invoiceId !== null} observation={detail.invoice} kind="outstanding" />
       <Observation label="Bank transaction" named={item.bankTransactionId !== null} observation={detail.bankTransaction} kind="unapplied" />
       {canReadAudit ? <ReviewCaseAuditHost key={auditKey} reviewCaseId={item.reviewCaseId} /> : null}
+      {!cookie ? (
+        <ReviewCaseAssignmentSection
+          key={item.reviewCaseId}
+          reviewCaseId={item.reviewCaseId}
+          status={item.status}
+          detailCommand={detailCommand}
+          assignment={assignment}
+          assignmentPending={assignmentPending}
+          assignmentFailed={assignmentFailed}
+          readSelectionGeneration={readSelectionGeneration}
+          readAssignmentPublisher={readAssignmentPublisher}
+        />
+      ) : null}
       {canReadComments ? <ReviewCaseCommentsHost key={commentsKey} reviewCaseId={item.reviewCaseId} /> : null}
       {canComposeComment ? (
         <ReviewCaseCommentComposer key={`comment-form:${session.epoch}:${item.reviewCaseId}`} reviewCaseId={item.reviewCaseId} />
