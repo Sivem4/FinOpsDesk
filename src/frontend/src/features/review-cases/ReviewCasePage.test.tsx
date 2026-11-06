@@ -15,6 +15,12 @@ import {
   resetReviewCaseDecisionAttemptStateForTests,
   reviewCaseDecisionAttemptStorageKey,
 } from './review-case-decision-attempt';
+import { ReviewCaseCommentsPanel } from './ReviewCaseCommentPanel';
+import { reviewCaseCommentLastPage } from './review-case-comment-api';
+import {
+  resetReviewCaseCommentAttemptStateForTests,
+  reviewCaseCommentAttemptStorageKey,
+} from './review-case-comment-attempt';
 import { ReviewCasePage } from './ReviewCasePage';
 import { clearSummaryCountsForAccessDenial } from './review-case-summary-api';
 import { reviewCaseOpenAttemptStorageKey } from './review-case-open-attempt';
@@ -29,7 +35,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
   sessionStorage.removeItem(reviewCaseOpenAttemptStorageKey);
   sessionStorage.removeItem(reviewCaseDecisionAttemptStorageKey);
+  sessionStorage.removeItem(reviewCaseCommentAttemptStorageKey);
   resetReviewCaseDecisionAttemptStateForTests();
+  resetReviewCaseCommentAttemptStateForTests();
   resetReviewCaseDetailReadsForTests();
 });
 
@@ -1830,4 +1838,619 @@ function deferred<T>() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+const commentId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+const otherOrganizationId = '22222222-2222-4222-8222-222222222222';
+
+function jwtForOrganization(organizationId: string): string {
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const encode = (value: object) => btoa(JSON.stringify(value)).replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({
+    exp,
+    sub: 'operator-1',
+    org_id: organizationId,
+  })}.signature`;
+}
+
+describe('review case comments', () => {
+  it('loads comments only after View comments and keeps the returned order', async () => {
+    const user = userEvent.setup();
+    let commentReads = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', ({ request }) => {
+        const page = new URL(request.url).searchParams.get('page') ?? '1';
+        return text(`{"items":[${caseDocument()}],"page":${page},"pageSize":50,"totalCount":60}`);
+      }),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => {
+        commentReads += 1;
+        return text(commentPage([
+          commentItem({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', text: 'second', recordedAt: '2026-11-06T12:01:00Z' }),
+          commentItem({ text: 'first' }),
+        ], '2'));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage('/review-cases');
+
+    expect(await screen.findByRole('button', { name: `Show review case ${caseId}` })).toBeInTheDocument();
+    expect(commentReads).toBe(0);
+    await chooseStatus(user, 'Open');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await user.click(screen.getByRole('button', { name: 'Go to next page' }));
+    await user.click(screen.getByRole('button', { name: `Show review case ${caseId}` }));
+    expect(await screen.findByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(commentReads).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: 'View comments' }));
+    const comments = await screen.findByRole('region', { name: 'Review case comments' });
+    const entries = within(comments).getAllByRole('listitem');
+    expect(entries[0]).toHaveTextContent('second');
+    expect(entries[1]).toHaveTextContent('first');
+    expect(commentReads).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Hide comments' }));
+    expect(screen.queryByRole('region', { name: 'Review case comments' })).not.toBeInTheDocument();
+  });
+
+  it('pages comments without treating a disagreeing count as corruption', async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', ({ request }) => {
+        const page = Number(new URL(request.url).searchParams.get('page'));
+        requested.push(new URL(request.url).search);
+        if (page === 1) {
+          return text(commentPage([commentItem({ text: 'only' })], '0'));
+        }
+
+        return text(commentPage([], '0', page));
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+
+    expect(await screen.findByText('only')).toBeInTheDocument();
+    expect(screen.getByText('Comment count 0')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next comments' })).toBeDisabled();
+    expect(requested).toEqual(['?page=1&pageSize=50']);
+  });
+
+  it('allows one empty page after a full page and stops there', async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', ({ request }) => {
+        const url = new URL(request.url);
+        const page = Number(url.searchParams.get('page'));
+        requested.push(url.search);
+        if (page === 1) {
+          return text(commentPage(commentItems(50), '50'));
+        }
+
+        return text(commentPage([], '50', page));
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+    expect(await screen.findByText('Comment count 50')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next comments' }));
+
+    expect(await screen.findByText('No comments were found for this case.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next comments' })).toBeDisabled();
+    expect(requested).toEqual(['?page=1&pageSize=50', '?page=2&pageSize=50']);
+  });
+
+  it('moves forward when a short page says more comments exist', async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', ({ request }) => {
+        const url = new URL(request.url);
+        requested.push(url.search);
+        const page = Number(url.searchParams.get('page'));
+        return text(commentPage([commentItem({ text: `page ${page}` })], '120', page));
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+    await user.click(await screen.findByRole('button', { name: 'Next comments' }));
+
+    expect(await screen.findByText('page 2')).toBeInTheDocument();
+    expect(requested).toEqual(['?page=1&pageSize=50', '?page=2&pageSize=50']);
+  });
+
+  it('does not request the page past the API offset limit', async () => {
+    const requested: string[] = [];
+    server.use(http.get('/api/review-cases/:id/comments', ({ request }) => {
+      requested.push(new URL(request.url).search);
+      return text(commentPage(commentItems(50), '9223372036854775807', reviewCaseCommentLastPage));
+    }));
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReviewCaseCommentsPanel reviewCaseId={caseId} initialPage={reviewCaseCommentLastPage} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Comment count 9223372036854775807')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next comments' })).toBeDisabled();
+    expect(requested).toEqual([`?page=${reviewCaseCommentLastPage}&pageSize=50`]);
+    expect(requested.join('')).not.toContain('42949674');
+  });
+
+  it('renders comment text as text and keeps a byte-order mark', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => text(commentPage([
+        commentItem({ text: 'line\n<b>bold</b>', actorId: '\uFEFFactor' }),
+      ], '1'))),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+
+    expect(await screen.findByText((_, element) => element?.textContent === 'line\n<b>bold</b>')).toBeInTheDocument();
+    expect(document.querySelector('b')).toBeNull();
+    expect(screen.getByText((_, element) => element?.textContent === 'Actor \uFEFFactor')).toBeInTheDocument();
+    expect(screen.getByText('Recorded 2026-11-06T12:00:00Z')).toBeInTheDocument();
+  });
+
+  it('hides comments from a cookie session that cannot read audit', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    let commentReads = 0;
+    let posts = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => {
+        commentReads += 1;
+        return text(commentPage([commentItem()], '1'));
+      }),
+      http.post('/api/review-cases/:id/comments', () => {
+        posts += 1;
+        return HttpResponse.json(commentItem());
+      }),
+    );
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    renderPage(`/review-cases?selected=${caseId}`);
+
+    expect(await screen.findByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View comments' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add comment' })).not.toBeInTheDocument();
+    expect(commentReads).toBe(0);
+    expect(posts).toBe(0);
+  });
+
+  it('lets a cookie operator read comments without posting', async () => {
+    const user = userEvent.setup();
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    let posts = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => text(commentPage([commentItem({ text: 'seeded' })], '1'))),
+      http.post('/api/review-cases/:id/comments', () => {
+        posts += 1;
+        return HttpResponse.json(commentItem());
+      }),
+    );
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
+    renderPage(`/review-cases?selected=${caseId}`);
+
+    expect(await screen.findByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.queryByText('seeded')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Comment')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'View comments' }));
+    expect(await screen.findByText('seeded')).toBeInTheDocument();
+    expect(posts).toBe(0);
+  });
+
+  it('keeps a cookie session when comments are forbidden', async () => {
+    const user = userEvent.setup();
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => HttpResponse.json({ title: 'Forbidden' }, { status: 403 })),
+    );
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+
+    expect(await screen.findByText('Comments are not available for this organization.')).toBeInTheDocument();
+    expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(sessionStore.getSnapshot().authenticated).toBe(true);
+    expect(sessionStore.getSnapshot().authorization).toBe('verified');
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Comments are not available for this organization.')).toBeInTheDocument();
+    expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
+  });
+
+  it('keeps the development token and detail when comments are forbidden', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => HttpResponse.json({ title: 'Forbidden' }, { status: 403 })),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+
+    expect(await screen.findByText('You do not have access to these comments.')).toBeInTheDocument();
+    expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(sessionStore.getSnapshot().token).toBe('memory-token');
+  });
+
+  it('offers the comment form for an open, resolved, or dismissed case', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument('2', '1', '1', '1', '1', '0'))),
+      http.get('/api/review-cases', () => text(`{"items":[${caseDocument()},${caseDocument({ reviewCaseId: otherCaseId, status: 'Resolved', outcome: 'NoActionRequired', resolutionNote: 'done', closedAt: '2026-11-05T09:30:00Z' })},${caseDocument({ reviewCaseId: dismissedCaseId, status: 'Dismissed', reason: 'NeedsInvestigation', invoiceId: null, resolutionNote: 'closed', closedAt: '2026-11-05T10:00:00Z' })}],"page":1,"pageSize":50,"totalCount":3}`)),
+      http.get('/api/review-cases/:id', ({ params }) => {
+        if (params.id === otherCaseId) {
+          return text(detailFrom(caseDocument({
+            reviewCaseId: otherCaseId,
+            status: 'Resolved',
+            outcome: 'NoActionRequired',
+            resolutionNote: 'done',
+            closedAt: '2026-11-05T09:30:00Z',
+          })));
+        }
+
+        if (params.id === dismissedCaseId) {
+          return text(dismissedDetail());
+        }
+
+        return text(detailDocument());
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage('/review-cases');
+    await user.click(await screen.findByRole('button', { name: `Show review case ${caseId}` }));
+    expect(await screen.findByLabelText('Comment')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Show review case ${otherCaseId}` }));
+    expect(await screen.findByLabelText('Comment')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Show review case ${dismissedCaseId}` }));
+    expect(await screen.findByLabelText('Comment')).toBeInTheDocument();
+  });
+
+  it('keeps a draft on refresh and drops it when the case or session changes', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(`{"items":[${caseDocument()},${caseDocument({ reviewCaseId: otherCaseId, note: 'second case' })}],"page":1,"pageSize":50,"totalCount":2}`)),
+      http.get('/api/review-cases/:id', ({ params }) => text(detailFrom(caseDocument({
+        reviewCaseId: String(params.id),
+        note: params.id === otherCaseId ? 'second case' : 'watch the zero balance',
+      })))),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    const comment = await screen.findByLabelText('Comment');
+    await user.type(comment, 'still typing');
+    await user.click(screen.getByRole('button', { name: 'Refresh selected case' }));
+    expect(screen.getByLabelText('Comment')).toHaveValue('still typing');
+
+    await user.click(screen.getByRole('button', { name: `Show review case ${otherCaseId}` }));
+    expect(await screen.findByLabelText('Comment')).toHaveValue('');
+    await user.type(screen.getByLabelText('Comment'), 'other draft');
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    await waitFor(() => expect(screen.getByLabelText('Comment')).toHaveValue(''));
+  });
+
+  it('confirms a comment when the later read fails and retries only that read', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    let commentReads = 0;
+    let summaryReads = 0;
+    let failComments = false;
+    const bodies: string[] = [];
+    queryClient.clear();
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        return text(summaryDocument());
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => {
+        commentReads += 1;
+        if (failComments) {
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }
+
+        return text(commentPage([], '0'));
+      }),
+      http.post('/api/review-cases/:id/comments', async ({ request }) => {
+        posts += 1;
+        const body = await request.text();
+        bodies.push(body);
+        const textValue = (JSON.parse(body) as { text: string }).text;
+        return HttpResponse.json(commentItem({ text: textValue, actorId: 'original-actor' }), { status: 201 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+    expect(await screen.findByText('No comments were found for this case.')).toBeInTheDocument();
+    const summaryAfterLoad = summaryReads;
+    failComments = true;
+    await user.type(screen.getByLabelText('Comment'), '  saved note  ');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+
+    expect(await screen.findByText('Comment saved.')).toBeInTheDocument();
+    expect(screen.getByText('Stored actor original-actor')).toBeInTheDocument();
+    expect(screen.queryByText('operator-1')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Retry reading comments' })).toBeInTheDocument();
+    expect(posts).toBe(1);
+    expect(bodies).toEqual(['{"text":"saved note"}']);
+    expect(summaryReads).toBe(summaryAfterLoad);
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBeNull();
+    expect(screen.queryByText('saved note', { selector: 'li, li *' })).not.toBeInTheDocument();
+
+    failComments = false;
+    const readsAtFailure = commentReads;
+    await user.click(screen.getByRole('button', { name: 'Retry reading comments' }));
+    await waitFor(() => expect(commentReads).toBeGreaterThan(readsAtFailure));
+    expect(posts).toBe(1);
+    expect(screen.getByText('Comment saved.')).toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBeNull();
+  });
+
+  it('repeats the stored comment without a new key and leaves the other slots', async () => {
+    const user = userEvent.setup();
+    const bodies: string[] = [];
+    const keys: string[] = [];
+    sessionStorage.setItem(reviewCaseOpenAttemptStorageKey, 'open-slot');
+    sessionStorage.setItem(reviewCaseDecisionAttemptStorageKey, 'decision-slot');
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases/:id/comments', async ({ request }) => {
+        bodies.push(await request.text());
+        keys.push(request.headers.get('Idempotency-Key') ?? '');
+        return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.type(await screen.findByLabelText('Comment'), 'same body');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(await screen.findByText(/The comment was not verified/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Send the same comment again' }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+
+    expect(keys[0]).toBe(keys[1]);
+    expect(bodies[0]).toBe(bodies[1]);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBe('open-slot');
+    expect(sessionStorage.getItem(reviewCaseDecisionAttemptStorageKey)).toBe('decision-slot');
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toContain(keys[0]);
+  });
+
+  it('drops a confirmed replay when the organization changes without leaving the page', async () => {
+    const user = userEvent.setup();
+    let replay = false;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => text(commentPage([], '0'))),
+      http.post('/api/review-cases/:id/comments', async ({ request }) => {
+        const body = JSON.parse(await request.text()) as { text: string };
+        if (!replay) {
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }
+
+        return HttpResponse.json(commentItem({ text: body.text, actorId: 'original-actor' }), { status: 200 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.type(await screen.findByLabelText('Comment'), 'desk note');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(await screen.findByText('This comment has no verified result. Sending it again uses the same request.')).toBeInTheDocument();
+    replay = true;
+    await user.click(screen.getByRole('button', { name: 'Send the same comment again' }));
+    expect(await screen.findByText('This comment was already stored.')).toBeInTheDocument();
+    expect(screen.getByText('Stored actor original-actor')).toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBeNull();
+
+    sessionStore.rotate(jwtForOrganization(otherOrganizationId), 4_000_000_000, null);
+    await waitFor(() => expect(screen.queryByText('This comment was already stored.')).not.toBeInTheDocument());
+    expect(screen.queryByText('Stored actor original-actor')).not.toBeInTheDocument();
+    expect(screen.queryByText('Comment saved.')).not.toBeInTheDocument();
+    expect(screen.queryByText('The comment is confirmed. The comment list could not be refreshed.')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBeNull();
+  });
+
+  it('drops a confirmed replay when the epoch changes for the same organization', async () => {
+    const user = userEvent.setup();
+    let replay = false;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', () => text(commentPage([], '0'))),
+      http.post('/api/review-cases/:id/comments', async ({ request }) => {
+        const body = JSON.parse(await request.text()) as { text: string };
+        if (!replay) {
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }
+
+        return HttpResponse.json(commentItem({ text: body.text, actorId: 'original-actor' }), { status: 200 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.type(await screen.findByLabelText('Comment'), 'desk note');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(await screen.findByText('This comment has no verified result. Sending it again uses the same request.')).toBeInTheDocument();
+    replay = true;
+    await user.click(screen.getByRole('button', { name: 'Send the same comment again' }));
+    expect(await screen.findByText('This comment was already stored.')).toBeInTheDocument();
+
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    await waitFor(() => expect(screen.queryByText('This comment was already stored.')).not.toBeInTheDocument());
+    expect(screen.queryByText('Stored actor original-actor')).not.toBeInTheDocument();
+    expect(screen.queryByText('The comment is confirmed. The comment list could not be refreshed.')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+  });
+
+  it('does not restore a confirmed comment when its refresh finishes after the epoch changes', async () => {
+    const user = userEvent.setup();
+    const gate = deferred<void>();
+    let holdReads = false;
+    let replay = false;
+    let heldReads = 0;
+    let finishedHeldReads = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.get('/api/review-cases/:id/comments', async () => {
+        if (holdReads) {
+          heldReads += 1;
+          await gate.promise;
+          finishedHeldReads += 1;
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }
+
+        return text(commentPage([], '0'));
+      }),
+      http.post('/api/review-cases/:id/comments', async ({ request }) => {
+        const body = JSON.parse(await request.text()) as { text: string };
+        if (!replay) {
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }
+
+        return HttpResponse.json(commentItem({ text: body.text, actorId: 'original-actor' }), { status: 200 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'View comments' }));
+    expect(await screen.findByText('No comments were found for this case.')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Comment'), 'desk note');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(await screen.findByText('This comment has no verified result. Sending it again uses the same request.')).toBeInTheDocument();
+    holdReads = true;
+    replay = true;
+    await user.click(screen.getByRole('button', { name: 'Send the same comment again' }));
+    expect(await screen.findByText('This comment was already stored.')).toBeInTheDocument();
+    await waitFor(() => expect(heldReads).toBeGreaterThan(0));
+
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    await waitFor(() => expect(screen.queryByText('This comment was already stored.')).not.toBeInTheDocument());
+    gate.resolve();
+    await waitFor(() => expect(finishedHeldReads).toBe(heldReads));
+    await flush();
+    expect(screen.queryByText('This comment was already stored.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Stored actor original-actor')).not.toBeInTheDocument();
+    expect(screen.queryByText('The comment is confirmed. The comment list could not be refreshed.')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+  });
+
+  it('keeps another organization comment hidden and recoverable after the epoch changes', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases/:id/comments', () => HttpResponse.json({ title: 'Unavailable' }, { status: 500 })),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.type(await screen.findByLabelText('Comment'), 'desk note');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+    expect(await screen.findByText('desk note')).toBeInTheDocument();
+    const stored = sessionStorage.getItem(reviewCaseCommentAttemptStorageKey);
+    expect(stored).toContain('desk note');
+
+    sessionStore.rotate(jwtForOrganization(otherOrganizationId), 4_000_000_000, null);
+    expect(await screen.findByText('A stored comment belongs to another organization in this tab. It was not replaced and it was not sent.')).toBeInTheDocument();
+    expect(screen.queryByText('desk note')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send the same comment again' })).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBe(stored);
+    expect(screen.getByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    expect(await screen.findByRole('button', { name: 'Send the same comment again' })).toBeInTheDocument();
+    expect(screen.getByText('desk note')).toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBe(stored);
+  });
+
+  it('does not apply a late comment after leaving and returning', async () => {
+    const user = userEvent.setup();
+    queryClient.clear();
+    const gate = deferred<void>();
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases/:id/comments', async ({ request }) => {
+        const body = JSON.parse(await request.text()) as { text: string };
+        await gate.promise;
+        return HttpResponse.json(commentItem({ text: body.text }), { status: 201 });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderBrowserWorkspace();
+    await user.click(await screen.findByRole('button', { name: `Show review case ${caseId}` }));
+    await user.type(await screen.findByLabelText('Comment'), 'late');
+    await user.click(screen.getByRole('button', { name: 'Add comment' }));
+    await user.click(screen.getByRole('link', { name: 'Invoices' }));
+    expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+
+    gate.resolve();
+    await waitFor(() => expect(sessionStorage.getItem(reviewCaseCommentAttemptStorageKey)).toBeNull());
+    expect(screen.queryByText('Comment saved.')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: 'Review cases' }));
+    expect(await screen.findByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+    expect(screen.queryByText('Comment saved.')).not.toBeInTheDocument();
+  });
+});
+
+function commentPage(items: Record<string, unknown>[], totalCount: string, page = 1): string {
+  return `{"items":${JSON.stringify(items)},"page":${page},"pageSize":50,"totalCount":${totalCount}}`;
+}
+
+function commentItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: commentId,
+    text: 'kept',
+    actorId: 'original-actor',
+    recordedAt: '2026-11-06T12:00:00Z',
+    ...overrides,
+  };
+}
+
+function commentItems(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, index) => commentItem({
+    id: `bbbbbbbb-bbbb-4bbb-8bbb-${index.toString(16).padStart(12, '0')}`,
+    text: `comment ${index}`,
+  }));
 }

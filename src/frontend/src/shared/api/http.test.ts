@@ -75,6 +75,22 @@ describe('review case reads', () => {
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(`/api/review-cases/${caseId}/audit?page=1&pageSize=50`);
   });
 
+  it('maps review case comments to audit.read and does not fetch them for review-cases.read alone', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await expect(apiGet(`/api/review-cases/${caseId}/comments?page=1&pageSize=50`, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    sessionStore.replaceCookieSession(cookieSession(['audit.read']), true);
+    fetchSpy.mockResolvedValue(new Response('{}', { status: 200 }));
+    await apiGet(`/api/review-cases/${caseId}/comments?page=2&pageSize=50`, new AbortController().signal);
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(`/api/review-cases/${caseId}/comments?page=2&pageSize=50`);
+  });
+
   it('does not fetch review case audit for a cookie session that can only read cases', async () => {
     vi.stubEnv('VITE_AUTH_MODE', 'cookie');
     sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
