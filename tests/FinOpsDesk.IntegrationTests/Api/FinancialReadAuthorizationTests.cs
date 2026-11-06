@@ -304,6 +304,7 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             "/api/review-cases",
             "/api/review-cases/" + reviewCaseId + "/resolve",
             "/api/review-cases/" + reviewCaseId + "/dismiss",
+            "/api/review-cases/" + reviewCaseId + "/comments",
         ];
 
         foreach (string path in paths)
@@ -706,6 +707,8 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             await AssertReviewAuditHiddenAsync(client, pair, HttpStatusCode.Forbidden);
             await AssertReviewAuditHiddenAsync(client, hidden, HttpStatusCode.Forbidden);
         }
+
+        await AssertCommentVisibilityAsync(client, pair, hidden, allowAudit);
     }
 
     private async Task<FinancialPair> CreateOrganizationWithFinancialDataAsync(ApplicationUser user, string name)
@@ -742,6 +745,15 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             context.BankTransactions.Add(bank);
             context.Allocations.Add(allocation);
             context.ReviewCases.Add(reviewCase);
+            context.ReviewCaseComments.Add(
+                ReviewCaseComment.Create(
+                    ReviewCaseCommentId.New(),
+                    tenant,
+                    reviewCase.Id,
+                    name + "-comment",
+                    name + "-comment-actor",
+                    DateTimeOffset.UtcNow,
+                    Guid.NewGuid()));
             context.ReviewCaseAuditEntries.Add(
                 ReviewCaseAuditEntry.ForOpened(
                     ReviewCaseAuditEntryId.New(),
@@ -759,7 +771,8 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             allocation.Id.Value,
             reviewCase.Id.Value,
             name + "-review",
-            name + "-audit-actor");
+            name + "-audit-actor",
+            name + "-comment-actor");
     }
 
     private static async Task AssertReviewAuditVisibleAsync(
@@ -774,6 +787,33 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.DoesNotContain(hidden.AuditActor, body, StringComparison.Ordinal);
         Assert.DoesNotContain(hidden.ReviewCaseId.ToString(), body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(hidden.OrganizationId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task AssertCommentVisibilityAsync(
+        HttpClient client,
+        FinancialPair pair,
+        FinancialPair hidden,
+        bool allowAudit)
+    {
+        HttpResponseMessage response = await client.GetAsync(CommentsPath(pair.ReviewCaseId));
+        string body = await response.Content.ReadAsStringAsync();
+        if (allowAudit)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Contains(pair.CommentActor, body, StringComparison.Ordinal);
+            Assert.DoesNotContain(hidden.CommentActor, body, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.DoesNotContain(pair.CommentActor, body, StringComparison.Ordinal);
+            Assert.DoesNotContain(pair.ReviewNote, body, StringComparison.Ordinal);
+        }
+
+        HttpResponseMessage foreign = await client.GetAsync(CommentsPath(hidden.ReviewCaseId));
+        string foreignBody = await foreign.Content.ReadAsStringAsync();
+        Assert.Equal(allowAudit ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, foreign.StatusCode);
+        Assert.DoesNotContain(hidden.CommentActor, foreignBody, StringComparison.Ordinal);
     }
 
     private static async Task AssertReviewAuditHiddenAsync(
@@ -821,6 +861,11 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
     private static string ReviewAuditPath(Guid reviewCaseId)
     {
         return "/api/review-cases/" + reviewCaseId.ToString("D") + "/audit";
+    }
+
+    private static string CommentsPath(Guid reviewCaseId)
+    {
+        return "/api/review-cases/" + reviewCaseId.ToString("D") + "/comments";
     }
 
     private async Task<ApplicationUser> RequireUserAsync()
@@ -1116,5 +1161,6 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Guid AllocationId,
         Guid ReviewCaseId,
         string ReviewNote,
-        string AuditActor);
+        string AuditActor,
+        string CommentActor);
 }

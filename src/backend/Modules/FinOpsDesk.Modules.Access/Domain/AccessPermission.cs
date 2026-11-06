@@ -29,6 +29,8 @@ public readonly record struct AccessPermission
 
     public static AccessPermission ReviewCasesResolve { get; } = new("review-cases.resolve");
 
+    public static AccessPermission ReviewCasesComment { get; } = new("review-cases.comment");
+
     public static AccessPermission ImportsCreate { get; } = new("imports.create");
 
     public static AccessPermission AuditRead { get; } = new("audit.read");

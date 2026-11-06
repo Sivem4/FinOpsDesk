@@ -27,6 +27,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
         ["POST /api/review-cases"] = FinancialWriteOperation.OpenReviewCase,
         ["POST /api/review-cases/{id}/resolve"] = FinancialWriteOperation.ResolveReviewCase,
         ["POST /api/review-cases/{id}/dismiss"] = FinancialWriteOperation.DismissReviewCase,
+        ["POST /api/review-cases/{id}/comments"] = FinancialWriteOperation.CommentReviewCase,
     };
 
     private readonly FinOpsDeskApiFactory _factory;
@@ -51,6 +52,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["GET /api/allocations/{allocationId}/reversal-context"] = AccessPermission.AllocationsRead.Value,
             ["GET /api/allocations/{allocationId}/audit"] = AccessPermission.AuditRead.Value,
             ["GET /api/review-cases/{id}/audit"] = AccessPermission.AuditRead.Value,
+            ["GET /api/review-cases/{id}/comments"] = AccessPermission.AuditRead.Value,
             ["GET /api/review-cases"] = AccessPermission.ReviewCasesRead.Value,
             ["GET /api/review-cases/summary"] = AccessPermission.ReviewCasesRead.Value,
             ["GET /api/review-cases/{id}"] = AccessPermission.ReviewCasesRead.Value,
@@ -63,6 +65,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["POST /api/review-cases"] = AccessPermission.ReviewCasesOpen.Value,
             ["POST /api/review-cases/{id}/resolve"] = AccessPermission.ReviewCasesResolve.Value,
             ["POST /api/review-cases/{id}/dismiss"] = AccessPermission.ReviewCasesResolve.Value,
+            ["POST /api/review-cases/{id}/comments"] = AccessPermission.ReviewCasesComment.Value,
         };
 
         Assert.Equal(

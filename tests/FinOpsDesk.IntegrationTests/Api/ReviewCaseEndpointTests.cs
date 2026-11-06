@@ -36,9 +36,11 @@ public sealed class ReviewCaseEndpointTests : IDisposable
     [InlineData("GET", "/api/review-cases/summary")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/audit")]
+    [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/comments")]
     [InlineData("POST", "/api/review-cases")]
     [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/resolve")]
     [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/dismiss")]
+    [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/comments")]
     public async Task Missing_bearer_token_returns_401(string method, string path)
     {
         using HttpClient client = _factory.CreateApiClient();
@@ -53,9 +55,11 @@ public sealed class ReviewCaseEndpointTests : IDisposable
     [InlineData("GET", "/api/review-cases/summary")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/audit")]
+    [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/comments")]
     [InlineData("POST", "/api/review-cases")]
     [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/resolve")]
     [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/dismiss")]
+    [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/comments")]
     public async Task Invalid_bearer_token_returns_401(string method, string path)
     {
         using HttpClient client = _factory.CreateApiClient(
@@ -71,9 +75,11 @@ public sealed class ReviewCaseEndpointTests : IDisposable
     [InlineData("GET", "/api/review-cases/summary")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/audit")]
+    [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/comments")]
     [InlineData("POST", "/api/review-cases")]
     [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/resolve")]
     [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/dismiss")]
+    [InlineData("POST", "/api/review-cases/11111111-1111-1111-1111-111111111111/comments")]
     public async Task Missing_organization_claim_returns_403(string method, string path)
     {
         using HttpClient client = _factory.CreateApiClient(

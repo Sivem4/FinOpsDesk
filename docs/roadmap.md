@@ -370,6 +370,8 @@ Phase 8H adds `GET /api/review-cases/summary`. The route counts every persisted 
 
 Phase 8I shows those six counters on the existing `/review-cases` screen. The screen calls `GET /api/review-cases/summary` without query parameters and does not derive the counters from the list page. Filters, pagination, and the selected case do not change the summary. The values stay decimal strings, including integers above `Number.MAX_SAFE_INTEGER`. An HTTP 401 or 403 hides the counts until a later successful read. A transient failure can keep the last successful counts with a warning. `ProductionCookie` still revalidates a denied read without signing the browser out. `audit.read` is not required. There is no separate dashboard route. Deployed financial flags stay unset. The cookie write allowlist is unchanged. Phase 8 stays Planned.
 
+Phase 8J appends an immutable `ReviewCaseComment` through `POST /api/review-cases/{id}/comments` and lists it through `GET /api/review-cases/{id}/comments`. A comment can be added to an open, resolved, or dismissed case and does not change the decision, `ClosedAt`, `rowversion`, balances, allocations, or existing audit rows. Text is trimmed plain text of 1 to 500 UTF-16 code units. U+FEFF is preserved. `Idempotency-Key` is required. GET requires `audit.read`. POST is `review-cases.comment` and is granted only to `Operator`. `DevelopmentJwt` can post. Cookie POST stays outside the allowlist. There is no comment screen. Deployed financial flags stay unset. The cookie write allowlist is unchanged. Phase 8 stays Planned. See ADR 0028.
+
 Add:
 
 - Disputes module;

@@ -249,6 +249,36 @@ public static class ReconciliationApplicationErrors
             "reconciliation.review_case.request_too_large",
             "The review case request body must be at most 4096 bytes.");
 
+    public static Error ReviewCaseCommentInvalidRequest { get; } =
+        new(
+            "reconciliation.review_case_comment.invalid_request",
+            "The review case comment request has invalid text, an invalid review case id, or an unsupported parameter.");
+
+    public static Error ReviewCaseCommentIdempotencyKeyRequired { get; } =
+        new(
+            "reconciliation.review_case_comment.idempotency_key_required",
+            "An Idempotency-Key header with one UUID in D format is required.");
+
+    public static Error ReviewCaseCommentIdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.review_case_comment.idempotency_key_invalid",
+            "Idempotency-Key must be one non-empty UUID in D format with no surrounding whitespace.");
+
+    public static Error ReviewCaseCommentIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.review_case_comment.idempotency_payload_conflict",
+            "This idempotency key was already used for a different review case comment.");
+
+    public static Error ReviewCaseCommentConcurrencyConflict { get; } =
+        new(
+            "reconciliation.review_case_comment.concurrency_conflict",
+            "The review case comment could not be recovered after a concurrent insert.");
+
+    public static Error ReviewCaseCommentInvalidPagination { get; } =
+        new(
+            "reconciliation.review_case_comment.invalid_pagination",
+            "Page must be at least 1, page size must be between 1 and 100, and the page offset must fit in a 32-bit integer.");
+
     public static Error BatchInvalidRequest { get; } =
         new(
             "reconciliation.batch.invalid_request",

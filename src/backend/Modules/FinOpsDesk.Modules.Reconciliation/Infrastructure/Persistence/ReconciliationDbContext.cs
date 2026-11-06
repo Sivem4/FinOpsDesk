@@ -47,6 +47,8 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
 
     public DbSet<ReviewCaseOpenAttempt> ReviewCaseOpenAttempts => Set<ReviewCaseOpenAttempt>();
 
+    public DbSet<ReviewCaseComment> ReviewCaseComments => Set<ReviewCaseComment>();
+
     public DbSet<BatchExecution> BatchExecutions => Set<BatchExecution>();
 
     public DbSet<FinancialAuditEntry> FinancialAuditEntries => Set<FinancialAuditEntry>();
@@ -118,6 +120,7 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new ReviewCaseConfiguration());
         modelBuilder.ApplyConfiguration(new ReviewCaseAuditEntryConfiguration());
         modelBuilder.ApplyConfiguration(new ReviewCaseOpenAttemptConfiguration());
+        modelBuilder.ApplyConfiguration(new ReviewCaseCommentConfiguration());
         modelBuilder.ApplyConfiguration(new BatchExecutionConfiguration());
         modelBuilder.ApplyConfiguration(new FinancialAuditEntryConfiguration());
     }

@@ -28,6 +28,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/allocations", "get", "allocations.read"),
         ("/api/allocations/{allocationId}/audit", "get", "audit.read"),
         ("/api/review-cases/{id}/audit", "get", "audit.read"),
+        ("/api/review-cases/{id}/comments", "get", "audit.read"),
         ("/api/allocations/{allocationId}/reversal-context", "get", "allocations.read"),
         ("/api/review-cases", "get", "review-cases.read"),
         ("/api/review-cases/summary", "get", "review-cases.read"),
@@ -49,6 +50,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases", "post", "review-cases.open"),
         ("/api/review-cases/{id}/resolve", "post", "review-cases.resolve"),
         ("/api/review-cases/{id}/dismiss", "post", "review-cases.resolve"),
+        ("/api/review-cases/{id}/comments", "post", "review-cases.comment"),
     ];
 
     private readonly SqlServerFixture _fixture;
@@ -120,6 +122,9 @@ public sealed class OpenApiAuthenticationDocumentTests
 
         JsonElement reverse = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         Assert.True(Parameter(reverse, "Idempotency-Key").GetProperty("required").GetBoolean());
+        JsonElement comment = paths.GetProperty("/api/review-cases/{id}/comments").GetProperty("post");
+        Assert.True(Parameter(comment, "Idempotency-Key").GetProperty("required").GetBoolean());
+        AssertCommentTextSchema(comment);
         Assert.Equal(
             JsonValueKind.False,
             reverse.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("additionalProperties").ValueKind);
@@ -254,10 +259,12 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.True(operation.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _));
         }
 
-        foreach (string idempotentPath in new[] { "/api/allocations", "/api/allocations/{allocationId}/reverse", "/api/matches/batch/execute" })
+        foreach (string idempotentPath in new[] { "/api/allocations", "/api/allocations/{allocationId}/reverse", "/api/matches/batch/execute", "/api/review-cases/{id}/comments" })
         {
             Assert.True(Parameter(paths.GetProperty(idempotentPath).GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         }
+
+        AssertCommentTextSchema(paths.GetProperty("/api/review-cases/{id}/comments").GetProperty("post"));
 
         JsonElement reverse = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         Assert.True(reverse.GetProperty("responses").GetProperty("400").GetProperty("content").TryGetProperty("application/problem+json", out _));
@@ -347,7 +354,8 @@ public sealed class OpenApiAuthenticationDocumentTests
                 or "/api/matches/batch/execute"
                 or "/api/review-cases"
                 or "/api/review-cases/{id}/resolve"
-                or "/api/review-cases/{id}/dismiss";
+                or "/api/review-cases/{id}/dismiss"
+                or "/api/review-cases/{id}/comments";
     }
 
     private static void AssertHandlerActorForbidden(JsonElement operation)
@@ -409,6 +417,22 @@ public sealed class OpenApiAuthenticationDocumentTests
     private static bool RequiredFlag(JsonElement element)
     {
         return element.TryGetProperty("required", out JsonElement required) && required.GetBoolean();
+    }
+
+    private static void AssertCommentTextSchema(JsonElement operation)
+    {
+        JsonElement text = operation
+            .GetProperty("requestBody")
+            .GetProperty("content")
+            .GetProperty("application/json")
+            .GetProperty("schema")
+            .GetProperty("properties")
+            .GetProperty("text");
+        Assert.False(text.TryGetProperty("maxLength", out _));
+        string description = text.GetProperty("description").GetString() ?? string.Empty;
+        Assert.Contains("string.Trim()", description, StringComparison.Ordinal);
+        Assert.Contains("1 to 500 UTF-16", description, StringComparison.Ordinal);
+        Assert.Contains("no maxLength", description, StringComparison.Ordinal);
     }
 
     private static void AssertReviewCaseAuditDocument(JsonElement root)

@@ -96,6 +96,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.DoesNotContain("imports.create", operatorPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("review-cases.open", operatorPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("review-cases.resolve", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("review-cases.comment", operatorPermissions, StringComparison.Ordinal);
         Assert.True(operatorSession.RootElement.GetProperty("financialAccess").GetBoolean());
 
         await host.RevokeAsync(membership, OrganizationRole.Operator);
@@ -697,6 +698,31 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Equal(0, await host.CountCompletedBatchesAsync(confirmPair.OrganizationId));
         Assert.Equal(0, await host.CountReviewCasesAsync(confirmPair.OrganizationId, ReviewCaseStatus.Open));
         Assert.Equal(0, await host.CountReviewCaseAuditEntriesAsync(confirmPair.OrganizationId));
+
+        ReviewCase commentCase = ReviewCase.Open(
+            ReviewCaseId.New(),
+            new OrganizationId(confirmPair.OrganizationId),
+            ReviewCaseReason.NeedsInvestigation,
+            new InvoiceId(confirmPair.InvoiceId),
+            null,
+            null,
+            "cookie-comment",
+            DateTimeOffset.UtcNow);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            context.ReviewCases.Add(commentCase);
+            await context.SaveChangesAsync();
+        }
+
+        HttpResponseMessage comment = await host.SendAsync(CommentRequest(commentCase.Id.Value, host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, comment.StatusCode);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            Assert.Equal(
+                0,
+                await context.ReviewCaseComments.CountAsync(
+                    row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
+        }
     }
 
     public void Dispose()
@@ -1016,6 +1042,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             OpenReview(pair, host.Csrf),
             ReviewAction("/api/review-cases/" + reviewId + "/resolve", host.Csrf),
             ReviewAction("/api/review-cases/" + reviewId + "/dismiss", host.Csrf),
+            CommentRequest(Guid.Parse(reviewId), host.Csrf),
         ];
         foreach (HttpRequestMessage request in requests)
         {
@@ -1141,6 +1168,19 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey.Value.ToString("D"));
         }
 
+        return request;
+    }
+
+    private static HttpRequestMessage CommentRequest(Guid reviewCaseId, string csrf)
+    {
+        HttpRequestMessage request = new(
+            HttpMethod.Post,
+            "/api/review-cases/" + reviewCaseId.ToString("D") + "/comments")
+        {
+            Content = new StringContent("{\"text\":\"kept\"}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
         return request;
     }
 
