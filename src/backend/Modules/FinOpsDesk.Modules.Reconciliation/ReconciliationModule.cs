@@ -92,6 +92,15 @@ public static class ReconciliationModule
         services.AddScoped<GetReviewCaseSummaryHandler>();
         services.AddScoped<IReviewCaseAuditQueries, ReviewCaseAuditQueries>();
         services.AddScoped<GetReviewCaseAuditHandler>();
+        services.AddScoped<ReviewCaseCommentStore>();
+        services.AddScoped<IReviewCaseCommentLookup>(
+            serviceProvider => serviceProvider.GetRequiredService<ReviewCaseCommentStore>());
+        services.AddScoped<IReviewCaseCommentWriter>(
+            serviceProvider => serviceProvider.GetRequiredService<ReviewCaseCommentStore>());
+        services.AddScoped<IReviewCaseCommentConflict, ReviewCaseCommentConflict>();
+        services.AddScoped<IReviewCaseCommentQueries, ReviewCaseCommentQueries>();
+        services.AddScoped<AddReviewCaseCommentHandler>();
+        services.AddScoped<GetReviewCaseCommentsHandler>();
         services.AddScoped<IUnitOfWork>(
             serviceProvider => serviceProvider.GetRequiredService<ReconciliationDbContext>());
         services.AddSingleton<IImportFileReader, CsvHelperImportFileReader>();

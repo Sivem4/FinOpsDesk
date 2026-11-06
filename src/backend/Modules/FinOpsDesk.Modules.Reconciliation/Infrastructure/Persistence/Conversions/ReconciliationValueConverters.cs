@@ -35,6 +35,9 @@ internal static class ReconciliationValueConverters
     public static ValueConverter<ReviewCaseAuditEntryId, Guid> ReviewCaseAuditEntryId { get; } =
         new(id => id.Value, value => new ReviewCaseAuditEntryId(value));
 
+    public static ValueConverter<ReviewCaseCommentId, Guid> ReviewCaseCommentId { get; } =
+        new(id => id.Value, value => new ReviewCaseCommentId(value));
+
     public static ValueConverter<BatchExecutionId, Guid> BatchExecutionId { get; } =
         new(id => id.Value, value => new BatchExecutionId(value));
 

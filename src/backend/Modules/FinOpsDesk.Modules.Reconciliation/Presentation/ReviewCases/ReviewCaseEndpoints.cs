@@ -54,6 +54,10 @@ internal static class ReviewCaseEndpoints
 
     private static readonly string[] AuditQueryNames = ["page", "pageSize"];
 
+    private static readonly string[] CommentQueryNames = ["page", "pageSize"];
+
+    private static readonly string[] CommentPropertyNames = ["text"];
+
     public static RouteGroupBuilder MapReviewCaseEndpoints(this RouteGroupBuilder group)
     {
         ArgumentNullException.ThrowIfNull(group);
@@ -148,6 +152,55 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .AddOpenApiOperationTransformer(DocumentAuditOperation)
+            .WithMetadata(FinancialEndpointClassification.Read("audit.read"));
+
+        group.MapPost("/review-cases/{id}/comments", AddCommentAsync)
+            .WithName("AddReviewCaseComment")
+            .WithSummary("Append an immutable comment to one review case.")
+            .WithDescription(
+                TenantDescription
+                + " The comment can be appended while the case is Open, Resolved, or Dismissed. "
+                + "It does not reopen a closed case and does not change the decision, ClosedAt, rowversion, balances, allocations, or audit rows. "
+                + "text is required plain text. string.Trim() normalizes it, and the stored value must then contain 1 to 500 UTF-16 code units. "
+                + "U+FEFF is preserved. HTML is not interpreted. "
+                + "Idempotency-Key is required and must be one non-empty UUID in D format with no surrounding whitespace. "
+                + "The same key, case, and normalized text return the original comment. "
+                + "A different case or text for that key conflicts. "
+                + "The same text with a new key can append another comment. "
+                + "Organization, actor, and time come from the server. "
+                + "A missing or invalid actor is rejected before replay. "
+                + "There is no single-comment route and the response has no Location header.")
+            .Produces<ReviewCaseCommentResponse>(StatusCodes.Status201Created, "application/json")
+            .Produces<ReviewCaseCommentResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .AddOpenApiOperationTransformer(DocumentCommentOperation)
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "review-cases.comment",
+                FinancialWriteOperation.CommentReviewCase));
+
+        group.MapGet("/review-cases/{id}/comments", GetCommentsAsync)
+            .WithName("GetReviewCaseComments")
+            .WithSummary("List immutable comments for one review case.")
+            .WithDescription(
+                TenantDescription
+                + " DevelopmentJwt allows any TenantMember to read ActorId. "
+                + "ProductionCookie read authorization, when enabled, requires audit.read. "
+                + "review-cases.read does not authorize this list. "
+                + "Results are ordered by RecordedAt ascending, then comment id ascending. "
+                + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. "
+                + "totalCount is a 64-bit count. "
+                + "An existing case with no comments returns an empty page. "
+                + "The existence check, the count, and the page are separate statements and are not one snapshot. "
+                + "This read does not change the case, the comments, or rowversion.")
+            .Produces<ReviewCaseCommentListResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .AddOpenApiOperationTransformer(DocumentCommentsOperation)
             .WithMetadata(FinancialEndpointClassification.Read("audit.read"));
 
         group.MapPost("/review-cases/{id}/resolve", ResolveAsync)
@@ -336,6 +389,85 @@ internal static class ReviewCaseEndpoints
         return TypedResults.Ok(result.Value);
     }
 
+    private static async Task<Results<JsonHttpResult<ReviewCaseCommentResponse>, Ok<ReviewCaseCommentResponse>, ProblemHttpResult>> AddCommentAsync(
+        string id,
+        HttpRequest httpRequest,
+        AddReviewCaseCommentHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadCommentRouteId(id, out Guid reviewCaseId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (RejectUnexpectedCommentQuery(httpRequest, []) is ProblemHttpResult queryProblem)
+        {
+            return queryProblem;
+        }
+
+        if (!TryReadRequiredCommentIdempotencyKey(httpRequest, out Guid idempotencyKey, out ProblemHttpResult? keyProblem))
+        {
+            return keyProblem!;
+        }
+
+        JsonRead read = await TryReadJsonObjectAsync(
+            httpRequest,
+            CommentPropertyNames,
+            cancellationToken,
+            ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest);
+        if (read.Problem is not null)
+        {
+            return read.Problem;
+        }
+
+        using (read.Document)
+        {
+            if (!TryReadCommentText(read.Properties!, out string? text))
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest);
+            }
+
+            Result<AddReviewCaseCommentResponse> result = await handler.Handle(
+                new AddReviewCaseCommentCommand(new ReviewCaseId(reviewCaseId), text, idempotencyKey),
+                cancellationToken);
+            if (result.IsFailure)
+            {
+                return Problem(result.Error);
+            }
+
+            return result.Value.Created
+                ? TypedResults.Json(result.Value.Comment, statusCode: StatusCodes.Status201Created)
+                : TypedResults.Ok(result.Value.Comment);
+        }
+    }
+
+    private static async Task<Results<Ok<ReviewCaseCommentListResponse>, ProblemHttpResult>> GetCommentsAsync(
+        string id,
+        HttpRequest httpRequest,
+        GetReviewCaseCommentsHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadCommentRouteId(id, out Guid reviewCaseId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (!TryBindCommentQuery(httpRequest, out int page, out int pageSize, out ProblemHttpResult? queryProblem))
+        {
+            return queryProblem!;
+        }
+
+        Result<ReviewCaseCommentListResponse> result = await handler.Handle(
+            new GetReviewCaseCommentsQuery(new ReviewCaseId(reviewCaseId), page, pageSize),
+            cancellationToken);
+        if (result.IsFailure)
+        {
+            return Problem(result.Error);
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
     private static async Task<Results<Ok<ReviewCaseResponse>, ProblemHttpResult>> ResolveAsync(
         string id,
         HttpRequest httpRequest,
@@ -415,8 +547,10 @@ internal static class ReviewCaseEndpoints
     private static async Task<JsonRead> TryReadJsonObjectAsync(
         HttpRequest httpRequest,
         string[] allowedNames,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Error? invalidRequest = null)
     {
+        Error invalid = invalidRequest ?? ReconciliationApplicationErrors.ReviewCaseInvalidRequest;
         if (!IsJsonContentType(httpRequest.ContentType))
         {
             return JsonRead.Failed(Problem(ReconciliationApplicationErrors.ReviewCaseUnsupportedMediaType));
@@ -435,16 +569,138 @@ internal static class ReviewCaseEndpoints
         }
         catch (JsonException exception) when (exception.InnerException is not OperationCanceledException)
         {
-            return JsonRead.Failed(Problem(ReconciliationApplicationErrors.ReviewCaseInvalidRequest));
+            return JsonRead.Failed(Problem(invalid));
         }
 
         if (!TryReadProperties(document.RootElement, allowedNames, out Dictionary<string, JsonElement>? properties))
         {
             document.Dispose();
-            return JsonRead.Failed(Problem(ReconciliationApplicationErrors.ReviewCaseInvalidRequest));
+            return JsonRead.Failed(Problem(invalid));
         }
 
         return JsonRead.Succeeded(document, properties!);
+    }
+
+    private static bool TryReadRequiredCommentIdempotencyKey(
+        HttpRequest httpRequest,
+        out Guid idempotencyKey,
+        out ProblemHttpResult? problem)
+    {
+        idempotencyKey = Guid.Empty;
+        problem = null;
+        if (!httpRequest.Headers.TryGetValue("Idempotency-Key", out StringValues values))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyRequired);
+            return false;
+        }
+
+        if (values.Count != 1 || !IsExactIdempotencyKey(values[0], out idempotencyKey))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyInvalid);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadCommentText(Dictionary<string, JsonElement> properties, out string? text)
+    {
+        text = null;
+        if (!properties.TryGetValue("text", out JsonElement element)
+            || element.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        text = element.GetString();
+        return text is not null;
+    }
+
+    private static bool TryReadCommentRouteId(string id, out Guid reviewCaseId, out ProblemHttpResult? problem)
+    {
+        if (!Guid.TryParse(id, out reviewCaseId) || reviewCaseId == Guid.Empty)
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest);
+            return false;
+        }
+
+        problem = null;
+        return true;
+    }
+
+    private static bool TryBindCommentQuery(
+        HttpRequest httpRequest,
+        out int page,
+        out int pageSize,
+        out ProblemHttpResult? problem)
+    {
+        page = ReviewCaseCommentListPagination.DefaultPage;
+        pageSize = ReviewCaseCommentListPagination.DefaultPageSize;
+        problem = RejectUnexpectedCommentQuery(httpRequest, CommentQueryNames);
+        if (problem is not null)
+        {
+            return false;
+        }
+
+        if (!TryReadCommentPage(
+                httpRequest,
+                "page",
+                ReviewCaseCommentListPagination.DefaultPage,
+                out page,
+                out problem)
+            || !TryReadCommentPage(
+                httpRequest,
+                "pageSize",
+                ReviewCaseCommentListPagination.DefaultPageSize,
+                out pageSize,
+                out problem))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ProblemHttpResult? RejectUnexpectedCommentQuery(HttpRequest httpRequest, string[] allowedNames)
+    {
+        foreach (string key in httpRequest.Query.Keys)
+        {
+            if (!allowedNames.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest);
+            }
+
+            if (httpRequest.Query[key].Count != 1)
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseCommentInvalidPagination);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadCommentPage(
+        HttpRequest httpRequest,
+        string name,
+        int defaultValue,
+        out int page,
+        out ProblemHttpResult? problem)
+    {
+        page = defaultValue;
+        problem = null;
+        if (!httpRequest.Query.TryGetValue(name, out StringValues values))
+        {
+            return true;
+        }
+
+        if (values.Count != 1
+            || !int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out page))
+        {
+            problem = Problem(ReconciliationApplicationErrors.ReviewCaseCommentInvalidPagination);
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryReadIdempotencyKey(
@@ -1156,6 +1412,66 @@ internal static class ReviewCaseEndpoints
         return Task.CompletedTask;
     }
 
+    private static Task DocumentCommentOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        DescribeRouteId(operation);
+        operation.RequestBody = JsonBody(
+            "text is required. Blank text is rejected. The stored value is the .NET trim of the submitted text.",
+            CreateCommentRequestSchema());
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "Idempotency-Key",
+            In = ParameterLocation.Header,
+            Required = true,
+            Description = "Required. One non-empty UUID in D format with no surrounding whitespace. The value is not trimmed into a valid key.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
+            },
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task DocumentCommentsOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        DescribeRouteId(operation);
+        operation.Parameters ??= [];
+        operation.Parameters.Add(QueryParameter(
+            "page",
+            "Page number. Defaults to 1. The zero-based offset must fit in a 32-bit integer.",
+            new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(ReviewCaseCommentListPagination.DefaultPage),
+                Minimum = "1",
+            }));
+        operation.Parameters.Add(QueryParameter(
+            "pageSize",
+            "Page size. Defaults to 50. Maximum is 100.",
+            new OpenApiSchema
+            {
+                Type = JsonSchemaType.Integer,
+                Default = JsonValue.Create(ReviewCaseCommentListPagination.DefaultPageSize),
+                Minimum = "1",
+                Maximum = "100",
+            }));
+        return Task.CompletedTask;
+    }
+
     private static Task DocumentResolveOperation(
         OpenApiOperation operation,
         OpenApiOperationTransformerContext context,
@@ -1378,6 +1694,24 @@ internal static class ReviewCaseEndpoints
         return true;
     }
 
+    private static OpenApiSchema CreateCommentRequestSchema()
+    {
+        return new OpenApiSchema
+        {
+            Type = JsonSchemaType.Object,
+            AdditionalPropertiesAllowed = false,
+            Required = new HashSet<string> { "text" },
+            Properties = new Dictionary<string, IOpenApiSchema>
+            {
+                ["text"] = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String,
+                    Description = "Required plain text. The server applies string.Trim() and then requires 1 to 500 UTF-16 code units. Surrounding whitespace is not part of that limit. U+FEFF is preserved. The raw value has no maxLength.",
+                },
+            },
+        };
+    }
+
     private static OpenApiSchema CreateOpenRequestSchema()
     {
         return new OpenApiSchema
@@ -1503,7 +1837,11 @@ internal static class ReviewCaseEndpoints
             || error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidConcurrencyToken.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidPagination.Code
             || error.Code == ReconciliationErrors.ReviewCaseAllocationRequired.Code
-            || error.Code == ReconciliationErrors.ReviewCaseAllocationForbidden.Code)
+            || error.Code == ReconciliationErrors.ReviewCaseAllocationForbidden.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyRequired.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyInvalid.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidPagination.Code)
         {
             return StatusCodes.Status400BadRequest;
         }
@@ -1520,7 +1858,9 @@ internal static class ReviewCaseEndpoints
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAllocationMismatch.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseSubjectConflict.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseIdempotencyPayloadConflict.Code
-            || error.Code == ReconciliationApplicationErrors.ReviewCaseOpenRequestConflict.Code)
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseOpenRequestConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyPayloadConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentConcurrencyConflict.Code)
         {
             return StatusCodes.Status409Conflict;
         }
@@ -1572,7 +1912,8 @@ internal static class ReviewCaseEndpoints
         }
 
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInvalidPagination.Code
-            || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination.Code)
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidPagination.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidPagination.Code)
         {
             return "Invalid pagination.";
         }
@@ -1580,6 +1921,31 @@ internal static class ReviewCaseEndpoints
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseAuditInvalidRequest.Code)
         {
             return "Review case audit request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseCommentInvalidRequest.Code)
+        {
+            return "Review case comment request is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyRequired.Code)
+        {
+            return "Idempotency-Key is required.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyKeyInvalid.Code)
+        {
+            return "Idempotency-Key is invalid.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseCommentIdempotencyPayloadConflict.Code)
+        {
+            return "This idempotency key was already used for a different comment.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseCommentConcurrencyConflict.Code)
+        {
+            return "The review case comment could not be recovered.";
         }
 
         if (error.Code == ReconciliationErrors.ReviewCaseAllocationRequired.Code)

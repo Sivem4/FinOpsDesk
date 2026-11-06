@@ -20,6 +20,7 @@ public static class OrganizationRolePermissions
         AccessPermission.AllocationsCreate,
         AccessPermission.ReviewCasesOpen,
         AccessPermission.ReviewCasesResolve,
+        AccessPermission.ReviewCasesComment,
         AccessPermission.AuditRead,
     ]).ToFrozenSet();
 

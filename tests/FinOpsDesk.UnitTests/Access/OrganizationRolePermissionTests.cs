@@ -41,6 +41,7 @@ public sealed class OrganizationRolePermissionTests
                 AccessPermission.AllocationsCreate,
                 AccessPermission.ReviewCasesOpen,
                 AccessPermission.ReviewCasesResolve,
+                AccessPermission.ReviewCasesComment,
                 AccessPermission.AuditRead),
             OrganizationRolePermissions.For(OrganizationRole.Operator));
     }

@@ -642,6 +642,55 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("ReviewCaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReviewCaseComments_OrganizationId_IdempotencyKey");
+
+                    b.HasIndex("OrganizationId", "ReviewCaseId", "RecordedAt", "Id");
+
+                    b.ToTable("ReviewCaseComments", "reconciliation", t =>
+                        {
+                            t.HasTrigger("TR_ReviewCaseComments_RejectMutation");
+
+                            t.HasCheckConstraint("CK_ReviewCaseComments_ActorId", "DATALENGTH([ActorId]) = DATALENGTH(LTRIM(RTRIM([ActorId]))) AND DATALENGTH([ActorId]) BETWEEN 2 AND 512");
+
+                            t.HasCheckConstraint("CK_ReviewCaseComments_IdempotencyKey", "[IdempotencyKey] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_ReviewCaseComments_Text", "DATALENGTH([Text]) = DATALENGTH(LTRIM(RTRIM([Text]))) AND DATALENGTH([Text]) BETWEEN 2 AND 1000");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseOpenAttempt", b =>
                 {
                     b.Property<Guid>("OrganizationId")
@@ -817,6 +866,16 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ReviewCaseId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseComment", b =>
+                {
                     b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", null)
                         .WithMany()
                         .HasForeignKey("OrganizationId", "ReviewCaseId")
