@@ -15,6 +15,7 @@ internal static class FinancialWritePermissionCatalog
         [AccessPermission.ReviewCasesOpen.Value] = AccessPermission.ReviewCasesOpen,
         [AccessPermission.ReviewCasesResolve.Value] = AccessPermission.ReviewCasesResolve,
         [AccessPermission.ReviewCasesComment.Value] = AccessPermission.ReviewCasesComment,
+        [AccessPermission.ReviewCasesAssign.Value] = AccessPermission.ReviewCasesAssign,
     };
 
     public static bool TryGet(string? permission, out AccessPermission resolved)

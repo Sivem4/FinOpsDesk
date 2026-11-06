@@ -44,6 +44,12 @@ public sealed class ReviewCase
 
     public DateTimeOffset? ClosedAt { get; private set; }
 
+    public ReviewCaseActorSource? AssignedActorSource { get; private set; }
+
+    public string? AssignedActorId { get; private set; }
+
+    public DateTimeOffset? AssignedAt { get; private set; }
+
 #pragma warning disable CS8618
     private ReviewCase()
     {
@@ -190,6 +196,64 @@ public sealed class ReviewCase
         return Result<ReviewCaseDecision>.Success(ReviewCaseDecision.Applied);
     }
 
+    public ReviewCaseAssignmentRejection? Claim(
+        ReviewCaseActorSource source,
+        string actorId,
+        DateTimeOffset assignedAt)
+    {
+        if (Status != ReviewCaseStatus.Open)
+        {
+            return ReviewCaseAssignmentRejection.Terminal;
+        }
+
+        if (HasAssignment)
+        {
+            return ReviewCaseAssignmentRejection.AlreadyAssigned;
+        }
+
+        if (!Enum.IsDefined(source))
+        {
+            throw new ArgumentOutOfRangeException(nameof(source), "Actor source is not defined.");
+        }
+
+        string normalizedActorId = NormalizeActorId(actorId);
+        DateTimeOffset normalizedAssignedAt = RequireAssignedAt(assignedAt);
+        AssignedActorSource = source;
+        AssignedActorId = normalizedActorId;
+        AssignedAt = normalizedAssignedAt;
+        return null;
+    }
+
+    public ReviewCaseAssignmentRejection? Release(ReviewCaseActorSource source, string actorId)
+    {
+        if (Status != ReviewCaseStatus.Open)
+        {
+            return ReviewCaseAssignmentRejection.Terminal;
+        }
+
+        if (!HasAssignment)
+        {
+            return ReviewCaseAssignmentRejection.NotAssigned;
+        }
+
+        if (!Enum.IsDefined(source))
+        {
+            throw new ArgumentOutOfRangeException(nameof(source), "Actor source is not defined.");
+        }
+
+        string normalized = NormalizeActorId(actorId);
+        if (AssignedActorSource != source
+            || !string.Equals(AssignedActorId, normalized, StringComparison.Ordinal))
+        {
+            return ReviewCaseAssignmentRejection.NotAssignee;
+        }
+
+        AssignedActorSource = null;
+        AssignedActorId = null;
+        AssignedAt = null;
+        return null;
+    }
+
     internal static string? NormalizeNote(string? note)
     {
         if (string.IsNullOrWhiteSpace(note))
@@ -284,6 +348,50 @@ public sealed class ReviewCase
                 nameof(closedAt),
                 "Close time cannot precede open time.");
         }
+    }
+
+    private bool HasAssignment
+    {
+        get
+        {
+            bool sourceSet = AssignedActorSource is not null;
+            bool actorSet = AssignedActorId is not null;
+            bool timeSet = AssignedAt is not null;
+            if (sourceSet != actorSet || actorSet != timeSet)
+            {
+                throw new InvalidOperationException("Review case assignment is incomplete.");
+            }
+
+            return sourceSet;
+        }
+    }
+
+    private static string NormalizeActorId(string actorId)
+    {
+        ArgumentNullException.ThrowIfNull(actorId);
+
+        if (actorId.Length == 0
+            || actorId.Length > ReviewCaseAssignmentEntry.MaxActorIdLength
+            || actorId != actorId.Trim())
+        {
+            throw new ArgumentException(
+                "Actor id must be a trimmed non-blank value of at most 256 characters.",
+                nameof(actorId));
+        }
+
+        return actorId;
+    }
+
+    private static DateTimeOffset RequireAssignedAt(DateTimeOffset assignedAt)
+    {
+        if (assignedAt == default)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(assignedAt),
+                "Assignment time cannot be the default value.");
+        }
+
+        return assignedAt;
     }
 
     private bool MatchesTerminal(

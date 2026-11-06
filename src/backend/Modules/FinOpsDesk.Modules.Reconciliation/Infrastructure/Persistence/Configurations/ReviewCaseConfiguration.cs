@@ -19,6 +19,8 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
 
     internal const string SourceLabelCheckName = "CK_ReviewCases_SourceLabel";
 
+    internal const string AssignmentCheckName = "CK_ReviewCases_Assignment";
+
     internal const string ClosedAtCheckSql =
         "[ClosedAt] IS NULL OR [ClosedAt] >= [OpenedAt]";
 
@@ -56,6 +58,16 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
         + $"{(int)ReviewCaseStatus.Dismissed} "
         + "AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ClosedAt] IS NOT NULL))";
 
+    internal static readonly string AssignmentCheckSql =
+        "(([AssignedActorSource] IS NULL AND [AssignedActorId] IS NULL AND [AssignedAt] IS NULL) "
+        + "OR ([AssignedActorSource] IS NOT NULL AND [AssignedActorSource] IN ("
+        + $"{(int)ReviewCaseActorSource.DevelopmentJwt}, {(int)ReviewCaseActorSource.ProductionCookie}) "
+        + "AND [AssignedActorId] IS NOT NULL "
+        + "AND DATALENGTH([AssignedActorId]) = DATALENGTH(LTRIM(RTRIM([AssignedActorId]))) "
+        + "AND DATALENGTH([AssignedActorId]) BETWEEN 2 AND "
+        + (ReviewCaseAssignmentEntry.MaxActorIdLength * 2)
+        + " AND [AssignedAt] IS NOT NULL))";
+
     internal static readonly string SourceLabelCheckSql =
         "([SourceLabel] IS NULL OR [SourceLabel] IN (N'"
         + ReviewCaseSource.Manual.Value
@@ -73,6 +85,7 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
             table.HasCheckConstraint(ReasonShapeCheckName, ReasonShapeCheckSql);
             table.HasCheckConstraint(StatusShapeCheckName, StatusShapeCheckSql);
             table.HasCheckConstraint(SourceLabelCheckName, SourceLabelCheckSql);
+            table.HasCheckConstraint(AssignmentCheckName, AssignmentCheckSql);
         });
 
         builder.HasKey(reviewCase => reviewCase.Id);
@@ -135,6 +148,15 @@ internal sealed class ReviewCaseConfiguration : IEntityTypeConfiguration<ReviewC
             .HasColumnType("datetimeoffset");
 
         builder.Property(reviewCase => reviewCase.ClosedAt)
+            .HasColumnType("datetimeoffset");
+
+        builder.Property(reviewCase => reviewCase.AssignedActorSource)
+            .HasConversion<int>();
+
+        builder.Property(reviewCase => reviewCase.AssignedActorId)
+            .HasMaxLength(ReviewCaseAssignmentEntry.MaxActorIdLength);
+
+        builder.Property(reviewCase => reviewCase.AssignedAt)
             .HasColumnType("datetimeoffset");
 
         builder.Property<byte[]>("RowVersion")

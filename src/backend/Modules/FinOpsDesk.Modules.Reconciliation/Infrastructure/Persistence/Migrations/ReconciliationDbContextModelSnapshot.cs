@@ -485,6 +485,16 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<Guid?>("AllocationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("AssignedActorId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int?>("AssignedActorSource")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("AssignedAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<Guid?>("BankTransactionId")
                         .HasColumnType("uniqueidentifier");
 
@@ -548,6 +558,8 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.ToTable("ReviewCases", "reconciliation", t =>
                         {
+                            t.HasCheckConstraint("CK_ReviewCases_Assignment", "(([AssignedActorSource] IS NULL AND [AssignedActorId] IS NULL AND [AssignedAt] IS NULL) OR ([AssignedActorSource] IS NOT NULL AND [AssignedActorSource] IN (1, 2) AND [AssignedActorId] IS NOT NULL AND DATALENGTH([AssignedActorId]) = DATALENGTH(LTRIM(RTRIM([AssignedActorId]))) AND DATALENGTH([AssignedActorId]) BETWEEN 2 AND 512 AND [AssignedAt] IS NOT NULL))");
+
                             t.HasCheckConstraint("CK_ReviewCases_ClosedAt", "[ClosedAt] IS NULL OR [ClosedAt] >= [OpenedAt]");
 
                             t.HasCheckConstraint("CK_ReviewCases_ReasonShape", "([Reason] IN (1, 2)) AND (([Reason] = 1 AND [InvoiceId] IS NOT NULL AND [BankTransactionId] IS NOT NULL) OR ([Reason] = 2 AND (([InvoiceId] IS NOT NULL AND [BankTransactionId] IS NULL) OR ([InvoiceId] IS NULL AND [BankTransactionId] IS NOT NULL))))");
@@ -556,6 +568,70 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                             t.HasCheckConstraint("CK_ReviewCases_StatusShape", "([Status] IN (1, 2, 3)) AND ([Outcome] IS NULL OR [Outcome] IN (1, 2, 3)) AND (([Status] = 1 AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ResolutionNote] IS NULL AND [ClosedAt] IS NULL) OR ([Status] = 2 AND [Outcome] IS NOT NULL AND [ClosedAt] IS NOT NULL AND (([Outcome] = 1 AND [AllocationId] IS NOT NULL) OR ([Outcome] IN (2, 3) AND [AllocationId] IS NULL))) OR ([Status] = 3 AND [Outcome] IS NULL AND [AllocationId] IS NULL AND [ClosedAt] IS NOT NULL))");
                         });
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseAssignmentEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int>("ActorSource")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("AssignedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Operation")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("RequestConcurrencyToken")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
+
+                    b.Property<Guid>("ReviewCaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ReviewCaseAssignmentEntries_OrganizationId_IdempotencyKey");
+
+                    b.HasIndex("OrganizationId", "ReviewCaseId");
+
+                    b.ToTable("ReviewCaseAssignmentEntries", "reconciliation", t =>
+                        {
+                            t.HasTrigger("TR_ReviewCaseAssignmentEntries_RejectMutation");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_ActorId", "DATALENGTH([ActorId]) = DATALENGTH(LTRIM(RTRIM([ActorId]))) AND DATALENGTH([ActorId]) BETWEEN 2 AND 512");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_ActorSource", "[ActorSource] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_AssignedAt", "(([Operation] = 1 AND [AssignedAt] IS NOT NULL) OR ([Operation] = 2 AND [AssignedAt] IS NULL))");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_IdempotencyKey", "[IdempotencyKey] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_Operation", "[Operation] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_RequestConcurrencyToken", "DATALENGTH([RequestConcurrencyToken]) = DATALENGTH(LTRIM(RTRIM([RequestConcurrencyToken]))) AND DATALENGTH([RequestConcurrencyToken]) = 24");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseAuditEntry", b =>
@@ -844,6 +920,16 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasForeignKey("OrganizationId", "InvoiceId")
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseAssignmentEntry", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "ReviewCaseId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.ReviewCases.ReviewCaseAuditEntry", b =>

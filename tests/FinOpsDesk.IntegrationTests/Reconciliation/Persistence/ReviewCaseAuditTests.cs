@@ -601,8 +601,10 @@ public sealed class ReviewCaseAuditTests
                 string migration = baseline.Database.GetMigrations()
                     .Single(name => name.EndsWith("_AddAllocationHistoryIndex", StringComparison.Ordinal));
                 await baseline.Database.MigrateAsync(migration);
-                baseline.AddRange(openInvoice, closedInvoice, historicalOpen, historicalClosed);
+                baseline.AddRange(openInvoice, closedInvoice);
                 await baseline.SaveChangesAsync();
+                await InsertHistoricalReviewCaseAsync(connectionString, historicalOpen);
+                await InsertHistoricalReviewCaseAsync(connectionString, historicalClosed);
             }
 
             await using (ReconciliationDbContext upgraded = _fixture.CreateContext(connectionString))
@@ -610,6 +612,7 @@ public sealed class ReviewCaseAuditTests
                 await upgraded.Database.MigrateAsync();
                 Assert.Equal(0, await upgraded.ReviewCaseAuditEntries.CountAsync());
                 Assert.Equal(2, await upgraded.ReviewCases.CountAsync());
+                Assert.Equal(0, await upgraded.ReviewCases.CountAsync(reviewCase => reviewCase.AssignedActorId != null));
             }
 
             await using ServiceProvider provider = CreateProvider(connectionString);
@@ -1081,6 +1084,39 @@ public sealed class ReviewCaseAuditTests
             context.Entry(reviewCase).Property<byte[]>("RowVersion").CurrentValue!);
     }
 
+    private static async Task InsertHistoricalReviewCaseAsync(string connectionString, ReviewCase reviewCase)
+    {
+        await using SqlConnection connection = new(connectionString);
+        await connection.OpenAsync();
+        await using SqlCommand command = new(
+            """
+            INSERT INTO [reconciliation].[ReviewCases]
+                ([Id], [OrganizationId], [Reason], [Status], [InvoiceId], [BankTransactionId],
+                 [SubjectKey], [SourceLabel], [Note], [Outcome], [ResolutionNote], [AllocationId],
+                 [OpenedAt], [ClosedAt])
+            VALUES
+                (@id, @organizationId, @reason, @status, @invoiceId, @bankTransactionId,
+                 @subjectKey, @sourceLabel, @note, @outcome, @resolutionNote, @allocationId,
+                 @openedAt, @closedAt)
+            """,
+            connection);
+        command.Parameters.AddWithValue("@id", reviewCase.Id.Value);
+        command.Parameters.AddWithValue("@organizationId", reviewCase.OrganizationId.Value);
+        command.Parameters.AddWithValue("@reason", (int)reviewCase.Reason);
+        command.Parameters.AddWithValue("@status", (int)reviewCase.Status);
+        command.Parameters.AddWithValue("@invoiceId", (object?)reviewCase.InvoiceId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("@bankTransactionId", (object?)reviewCase.BankTransactionId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("@subjectKey", reviewCase.SubjectKey);
+        command.Parameters.AddWithValue("@sourceLabel", (object?)reviewCase.SourceLabel?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("@note", (object?)reviewCase.Note ?? DBNull.Value);
+        command.Parameters.AddWithValue("@outcome", (object?)(reviewCase.Outcome is null ? null : (int)reviewCase.Outcome) ?? DBNull.Value);
+        command.Parameters.AddWithValue("@resolutionNote", (object?)reviewCase.ResolutionNote ?? DBNull.Value);
+        command.Parameters.AddWithValue("@allocationId", (object?)reviewCase.AllocationId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("@openedAt", reviewCase.OpenedAt);
+        command.Parameters.AddWithValue("@closedAt", (object?)reviewCase.ClosedAt ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private async Task<SqlException> InsertRawAsync(
         OrganizationId organizationId,
         ReviewCaseId reviewCaseId,
@@ -1202,6 +1238,11 @@ public sealed class ReviewCaseAuditTests
 
     private async Task AssertTriggerRejectsMutationAsync(string connectionString)
     {
+        await using (ReconciliationDbContext upgraded = _fixture.CreateContext(connectionString))
+        {
+            await upgraded.Database.MigrateAsync();
+        }
+
         OrganizationId organizationId = OrganizationId.New();
         Invoice invoice = PersistenceTestData.CreateInvoice(organizationId, 1m, "INV-" + Guid.NewGuid().ToString("N")[..8]);
         ReviewCase reviewCase = ReviewCase.Open(
