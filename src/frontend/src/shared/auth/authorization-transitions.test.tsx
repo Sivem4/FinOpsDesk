@@ -353,9 +353,14 @@ describe('authorization transitions', () => {
 
   it('mounts review cases for review-cases.read and does not post', async () => {
     let reviewGets = 0;
+    let summaryGets = 0;
     let posts = 0;
     server.use(
       http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['review-cases.read'], [northOrg()]))),
+      http.get('/api/review-cases/summary', () => {
+        summaryGets += 1;
+        return reviewSummary();
+      }),
       http.get('/api/review-cases', () => {
         reviewGets += 1;
         return HttpResponse.json({ items: [], page: 1, pageSize: 50, totalCount: 0 });
@@ -381,13 +386,20 @@ describe('authorization transitions', () => {
     expect(screen.getByRole('link', { name: 'Review cases' })).toHaveAttribute('href', '/review-cases');
     await flush();
     expect(reviewGets).toBeGreaterThan(0);
+    expect(summaryGets).toBeGreaterThan(0);
     expect(posts).toBe(0);
+    expect(screen.getByText('All cases 1')).toBeInTheDocument();
   });
 
   it('does not fetch review cases for a deep link without review-cases.read', async () => {
     let reviewGets = 0;
+    let summaryGets = 0;
     server.use(
       http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['invoices.read'], [northOrg()]))),
+      http.get('/api/review-cases/summary', () => {
+        summaryGets += 1;
+        return reviewSummary();
+      }),
       http.get('/api/review-cases', () => {
         reviewGets += 1;
         return HttpResponse.json({ items: [], page: 1, pageSize: 50, totalCount: 0 });
@@ -400,6 +412,7 @@ describe('authorization transitions', () => {
     expect(await screen.findByText('That page is not available.')).toBeInTheDocument();
     await flush();
     expect(reviewGets).toBe(0);
+    expect(summaryGets).toBe(0);
     expect(screen.queryByRole('heading', { name: 'Review cases' })).not.toBeInTheDocument();
   });
 
@@ -407,6 +420,7 @@ describe('authorization transitions', () => {
     const user = userEvent.setup();
     let sessionCalls = 0;
     let reviewCalls = 0;
+    let summaryCalls = 0;
     let logoutPosts = 0;
     let signedOut = false;
     server.use(
@@ -415,6 +429,10 @@ describe('authorization transitions', () => {
         return HttpResponse.json(signedOut
           ? anonymousBody()
           : workspaceBody(northId, 'North Ledger', viewerPermissions, [northOrg()]));
+      }),
+      http.get('/api/review-cases/summary', () => {
+        summaryCalls += 1;
+        return reviewSummary(true);
       }),
       http.get('/api/review-cases', () => {
         reviewCalls += 1;
@@ -435,10 +453,14 @@ describe('authorization transitions', () => {
     await vi.waitFor(() => {
       expect(sessionCalls).toBe(2);
       expect(reviewCalls).toBe(2);
+      expect(summaryCalls).toBe(2);
     });
     await flush();
     expect(sessionCalls).toBe(2);
     expect(reviewCalls).toBe(2);
+    expect(summaryCalls).toBe(2);
+    expect(screen.getByText('The organization summary is not available for this organization.')).toBeInTheDocument();
+    expect(screen.queryByText('All cases 1')).not.toBeInTheDocument();
     expect(screen.getByText('Signed in as Ada Operator')).toBeInTheDocument();
     expect(screen.getByText('Active organization: North Ledger')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument();
@@ -455,6 +477,7 @@ describe('authorization transitions', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     await vi.waitFor(() => expect(reviewCalls).toBe(3));
     await flush();
+    expect(summaryCalls).toBe(2);
     expect(sessionCalls).toBe(2);
     expect(sessionStore.getSnapshot().authenticated).toBe(true);
     expect(sessionStore.getSnapshot().csrfToken).toBe('csrf-session');
@@ -478,6 +501,7 @@ describe('authorization transitions', () => {
         sessionCalls += 1;
         return HttpResponse.json(workspaceBody(northId, 'North Ledger', operatorPermissions, [northOrg()]));
       }),
+      http.get('/api/review-cases/summary', () => reviewSummary()),
       http.get('/api/review-cases', () => HttpResponse.text(reviewCaseList())),
       http.get('/api/review-cases/:id/audit', () => {
         auditCalls += 1;
@@ -531,6 +555,7 @@ describe('authorization transitions', () => {
         posts += 1;
         return new HttpResponse(null, { status: 204 });
       }),
+      http.get('/api/review-cases/summary', () => reviewSummary()),
       http.get('/api/review-cases', () => HttpResponse.text(reviewCaseList())),
       http.get('/api/review-cases/:id/audit', async () => {
         auditCalls += 1;
@@ -737,6 +762,17 @@ function reviewAuditDocument(actorId: string): string {
     pageSize: 50,
     totalCount: 1,
   });
+}
+
+function reviewSummary(denied = false) {
+  if (denied) {
+    return HttpResponse.json({ code: 'auth.permission.denied', title: 'Forbidden' }, { status: 403 });
+  }
+
+  return HttpResponse.text(
+    '{"totalCount":1,"openCount":1,"resolvedCount":0,"dismissedCount":0,"openCompetingMatchCount":1,"openNeedsInvestigationCount":0}',
+    { headers: { 'Content-Type': 'application/json' } },
+  );
 }
 
 function reviewCaseList(): string {

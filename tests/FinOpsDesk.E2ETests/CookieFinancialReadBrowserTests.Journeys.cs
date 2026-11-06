@@ -152,6 +152,14 @@ public sealed partial class CookieFinancialReadBrowserTests
         await page.GetByText("Bank transaction unapplied 10.0001 PLN").WaitForAsync();
         await page.GetByText("not one atomic snapshot").WaitForAsync();
         await page.GetByText("This screen only reads them.").WaitForAsync();
+        ILocator summary = page.GetByRole(AriaRole.Region, new() { Name = "Organization summary" });
+        await summary.GetByText("All cases 1", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Open 1", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Resolved 0", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Dismissed 0", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Open competing matches 1", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Open investigations 0", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("These counts cover every persisted review case in this organization.").WaitForAsync();
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "View audit" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Open review case" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same opening again" }).CountAsync());
@@ -195,6 +203,13 @@ public sealed partial class CookieFinancialReadBrowserTests
         await page.GetByRole(AriaRole.Button, new() { Name = "Show review case", Exact = false }).ClickAsync();
         await page.GetByText("Invoice outstanding 0.00 PLN").WaitForAsync();
         await page.GetByText("This screen only reads them.").WaitForAsync();
+        ILocator summary = page.GetByRole(AriaRole.Region, new() { Name = "Organization summary" });
+        await summary.GetByText("All cases 1", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Open 1", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Resolved 0", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Dismissed 0", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Open competing matches 1", new() { Exact = true }).WaitForAsync();
+        await summary.GetByText("Open investigations 0", new() { Exact = true }).WaitForAsync();
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Open review case" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Send the same opening again" }).CountAsync());
         Assert.Equal(0, await page.GetByRole(AriaRole.Button, new() { Name = "Resolve", Exact = true }).CountAsync());

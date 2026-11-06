@@ -39,6 +39,7 @@ import {
 import { reviewCaseFilterSchema, type ReviewCaseFilterValues } from './review-case-filters';
 import { ReviewCaseDecisionPanel } from './ReviewCaseDecisionPanel';
 import { ReviewCaseOpenPanel } from './ReviewCaseOpenPanel';
+import { ReviewCaseSummaryPanel } from './ReviewCaseSummaryPanel';
 
 const defaultPage = 1;
 const defaultPageSize = 50;
@@ -195,6 +196,7 @@ export function ReviewCasePage() {
         />
       ) : null}
       {!readable ? <Alert severity="warning">Review cases are not available for this session.</Alert> : null}
+      <ReviewCaseSummaryPanel />
       {readable && (!paginationValid || !filtersValid) ? <InvalidAddress /> : null}
       {readable && paginationValid && filtersValid && !selectedValid ? (
         <Alert severity="warning">The selected review case address is not valid. The list can still be read.</Alert>

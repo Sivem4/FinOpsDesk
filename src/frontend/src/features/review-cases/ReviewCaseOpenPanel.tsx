@@ -29,6 +29,7 @@ import {
   useReviewCaseOpenAttempt,
   type VerifiedReviewCaseOpen,
 } from './review-case-open-attempt';
+import { startReviewCaseSummaryRefresh } from './review-case-summary-api';
 import {
   normalizeReviewCaseOpen,
   reviewCaseOpenReasons,
@@ -85,6 +86,7 @@ export function ReviewCaseOpenPanel({ onSelect }: { onSelect: (reviewCaseId: str
       return;
     }
 
+    startReviewCaseSummaryRefresh(queryClient, epoch);
     const options = { throwOnError: true } as const;
     await queryClient.invalidateQueries({ queryKey: ['review-cases', 'list', epoch] }, options);
     await queryClient.invalidateQueries({ queryKey: ['review-cases', 'detail', epoch] }, options);

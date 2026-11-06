@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { BrowserRouter, Link, MemoryRouter, Route, RouterProvider, Routes, createMemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '../../shared/api/errors';
 import { queryClient } from '../../shared/api/query-client';
 import { sessionStore, type CookieSessionFields } from '../../shared/api/session-store';
 import { server } from '../../test/server';
@@ -15,6 +16,7 @@ import {
   reviewCaseDecisionAttemptStorageKey,
 } from './review-case-decision-attempt';
 import { ReviewCasePage } from './ReviewCasePage';
+import { clearSummaryCountsForAccessDenial } from './review-case-summary-api';
 import { reviewCaseOpenAttemptStorageKey } from './review-case-open-attempt';
 
 const caseId = '11111111-1111-4111-8111-111111111111';
@@ -36,6 +38,7 @@ describe('review case page', () => {
     const user = userEvent.setup();
     let posts = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.post('/api/review-cases', () => {
         posts += 1;
@@ -59,6 +62,7 @@ describe('review case page', () => {
     sessionStorage.setItem(reviewCaseDecisionAttemptStorageKey, '{"schemaVersion":1,"operation":"ReviewCaseResolve"}');
     let posts = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.post('/api/review-cases', () => {
         posts += 1;
@@ -92,8 +96,13 @@ describe('review case page', () => {
     const openedId = '55555555-5555-4555-8555-555555555555';
     let posts = 0;
     let reads = 0;
+    let summaryReads = 0;
     queryClient.clear();
     server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        return text(summaryDocument());
+      }),
       http.get('/api/review-cases', () => {
         reads += 1;
         if (reads === 1) {
@@ -119,6 +128,7 @@ describe('review case page', () => {
     expect(await screen.findByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
     expect(screen.getByText('The opening is confirmed. The review case lists could not be refreshed.')).toBeInTheDocument();
     expect(posts).toBe(1);
+    await waitFor(() => expect(summaryReads).toBeGreaterThan(1));
     expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
     expect(router.state.location.search).not.toContain('selected=');
 
@@ -147,6 +157,7 @@ describe('review case page', () => {
     let lists = 0;
     queryClient.clear();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', async () => {
         lists += 1;
         if (refreshHold.armed) {
@@ -206,6 +217,7 @@ describe('review case page', () => {
     let posts = 0;
     queryClient.clear();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', async () => {
         if (gates.length === 0 && posts === 0) {
           return text(listDocument());
@@ -261,6 +273,7 @@ describe('review case page', () => {
     let holdRead = false;
     queryClient.clear();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', async () => {
         reads += 1;
         if (reads === 1) {
@@ -314,6 +327,7 @@ describe('review case page', () => {
       let posts = 0;
       queryClient.clear();
       server.use(
+        http.get('/api/review-cases/summary', () => text(summaryDocument())),
         http.get('/api/review-cases', () => text(listDocument())),
         http.get('/api/review-cases/:id', () => text(detailDocument())),
         http.post('/api/review-cases', async () => {
@@ -345,6 +359,7 @@ describe('review case page', () => {
       let posts = 0;
       queryClient.clear();
       server.use(
+        http.get('/api/review-cases/summary', () => text(summaryDocument())),
         http.get('/api/review-cases', () => text(listDocument())),
         http.get('/api/review-cases/:id', () => text(detailDocument())),
         http.post('/api/review-cases', async () => {
@@ -380,6 +395,7 @@ describe('review case page', () => {
       let lists = 0;
       queryClient.clear();
       server.use(
+        http.get('/api/review-cases/summary', () => text(summaryDocument())),
         http.get('/api/review-cases', async () => {
           lists += 1;
           if (lists > 1) {
@@ -420,6 +436,7 @@ describe('review case page', () => {
       let holdRead = false;
       queryClient.clear();
       server.use(
+        http.get('/api/review-cases/summary', () => text(summaryDocument())),
         http.get('/api/review-cases', async () => {
           lists += 1;
           if (lists === 1) {
@@ -466,6 +483,7 @@ describe('review case page', () => {
     const listUrls: string[] = [];
     let posts = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', ({ request }) => {
         listUrls.push(request.url);
         return text(listDocument());
@@ -500,6 +518,7 @@ describe('review case page', () => {
     vi.stubEnv('VITE_AUTH_MODE', 'cookie');
     sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
     );
@@ -530,6 +549,7 @@ describe('review case page', () => {
     const user = userEvent.setup();
     let detailCalls = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text('{"items":[],"page":1,"pageSize":50,"totalCount":0}')),
       http.get('/api/review-cases/:id', () => {
         detailCalls += 1;
@@ -557,6 +577,7 @@ describe('review case page', () => {
 
   it('reports a missing review case and an empty filter', async () => {
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', ({ request }) => {
         const status = new URL(request.url).searchParams.get('status');
         if (status === 'Resolved') {
@@ -583,6 +604,7 @@ describe('review case page', () => {
     const gate = deferred<void>();
     let detailCalls = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', async () => {
         detailCalls += 1;
@@ -684,6 +706,7 @@ describe('review case page', () => {
   it('shows a resolved allocation and a dismissed closing note without writing', async () => {
     let posts = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', ({ params }) => text(params.id === caseId
         ? resolvedDetail()
@@ -747,6 +770,7 @@ describe('review case page', () => {
     const auditUrls: string[] = [];
     let posts = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', ({ request }) => {
@@ -806,6 +830,7 @@ describe('review case page', () => {
   it('shows a closing entry when the count is zero and does not invent the opening entry', async () => {
     const user = userEvent.setup();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => text(auditDocument([
@@ -838,6 +863,7 @@ describe('review case page', () => {
   it('shows an empty history without claiming that nothing happened', async () => {
     const user = userEvent.setup();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => text(auditDocument([], 0))),
@@ -855,6 +881,7 @@ describe('review case page', () => {
     sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
     let auditCalls = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => {
@@ -866,6 +893,13 @@ describe('review case page', () => {
     renderPage(`/review-cases?selected=${caseId}`);
 
     expect(await screen.findByText(`Case ${caseId}`)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Organization summary' })).toBeInTheDocument();
+    expect(screen.getByText('All cases 1')).toBeInTheDocument();
+    expect(screen.getByText('Open 1')).toBeInTheDocument();
+    expect(screen.getByText('Resolved 0')).toBeInTheDocument();
+    expect(screen.getByText('Dismissed 0')).toBeInTheDocument();
+    expect(screen.getByText('Open competing matches 1')).toBeInTheDocument();
+    expect(screen.getByText('Open investigations 0')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'View audit' })).not.toBeInTheDocument();
     expect(screen.queryByText('Actor opening-actor')).not.toBeInTheDocument();
     expect(auditCalls).toBe(0);
@@ -876,6 +910,7 @@ describe('review case page', () => {
     vi.stubEnv('VITE_AUTH_MODE', 'cookie');
     sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => text(auditDocument([
@@ -898,6 +933,7 @@ describe('review case page', () => {
     const user = userEvent.setup();
     const gate = deferred<void>();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(`{"items":[${caseDocument()},${caseDocument({ reviewCaseId: otherCaseId, note: 'second case' })}],"page":1,"pageSize":50,"totalCount":2}`)),
       http.get('/api/review-cases/:id', ({ params }) => text(detailFrom(caseDocument({
         reviewCaseId: String(params.id),
@@ -928,6 +964,7 @@ describe('review case page', () => {
     sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
     let auditCalls = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => {
@@ -954,6 +991,7 @@ describe('review case page', () => {
     vi.stubEnv('VITE_AUTH_MODE', 'cookie');
     sessionStore.replaceCookieSession(cookieSession(['review-cases.read', 'audit.read']), true);
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => HttpResponse.json({ title: 'Forbidden' }, { status: 403 })),
@@ -978,6 +1016,7 @@ describe('review case page', () => {
   it('keeps the development token and the case detail when stored history is forbidden', async () => {
     const user = userEvent.setup();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => HttpResponse.json({ title: 'Forbidden' }, { status: 403 })),
@@ -997,6 +1036,7 @@ describe('review case page', () => {
     const user = userEvent.setup();
     let auditCalls = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailDocument())),
       http.get('/api/review-cases/:id/audit', () => {
@@ -1019,6 +1059,308 @@ describe('review case page', () => {
     expect(screen.queryByText('Actor actor-once')).not.toBeInTheDocument();
     expect(screen.getByText(`Case ${caseId}`)).toBeInTheDocument();
   });
+
+  it('keeps summary counts independent of filters, paging, and selection', async () => {
+    const user = userEvent.setup();
+    const summaryUrls: string[] = [];
+    server.use(
+      http.get('/api/review-cases/summary', ({ request }) => {
+        summaryUrls.push(request.url);
+        return text(summaryDocument('7', '3', '2', '2', '1', '2'));
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage(`/review-cases?page=2&pageSize=25&status=Resolved&selected=${caseId}&invoiceId=${invoiceId}`);
+
+    expect(await screen.findByText('All cases 7')).toBeInTheDocument();
+    expect(screen.getByText('Open 3')).toBeInTheDocument();
+    expect(screen.getByText('Resolved 2')).toBeInTheDocument();
+    expect(screen.getByText('Dismissed 2')).toBeInTheDocument();
+    expect(screen.getByText('Open competing matches 1')).toBeInTheDocument();
+    expect(screen.getByText('Open investigations 2')).toBeInTheDocument();
+    expect(summaryUrls.every((url) => new URL(url).search === '')).toBe(true);
+    const summaryReads = summaryUrls.length;
+
+    await user.click(screen.getByLabelText('Status'));
+    await user.click(screen.getByRole('option', { name: 'Open' }));
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await flush();
+
+    expect(summaryUrls).toHaveLength(summaryReads);
+    expect(screen.getByText('All cases 7')).toBeInTheDocument();
+  });
+
+  it('reads the summary when the list address is invalid', async () => {
+    server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases?page=0');
+
+    expect(await screen.findByText('All cases 1')).toBeInTheDocument();
+    expect(screen.getByText(/review case address/)).toBeInTheDocument();
+  });
+
+  it('refreshes only the organization summary', async () => {
+    const user = userEvent.setup();
+    let summaryReads = 0;
+    let listReads = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        return text(summaryDocument());
+      }),
+      http.get('/api/review-cases', () => {
+        listReads += 1;
+        return text(listDocument());
+      }),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 1')).toBeInTheDocument();
+    const lists = listReads;
+    const summaries = summaryReads;
+
+    await user.click(screen.getByRole('button', { name: 'Refresh organization summary' }));
+    await waitFor(() => expect(summaryReads).toBeGreaterThan(summaries));
+    expect(listReads).toBe(lists);
+  });
+
+  it('keeps the list when the summary cannot be read', async () => {
+    server.use(
+      http.get('/api/review-cases/summary', () => HttpResponse.json({ title: 'Broken' }, { status: 500 })),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases');
+
+    expect(await screen.findByText('watch the zero balance')).toBeInTheDocument();
+    expect(await screen.findByText('The organization summary could not be loaded.')).toBeInTheDocument();
+    expect(screen.queryByText(/All cases/)).not.toBeInTheDocument();
+    expect(screen.queryByText('This organization has no persisted review cases.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the last counts with a warning after a transient summary error', async () => {
+    const user = userEvent.setup();
+    let failed = false;
+    server.use(
+      http.get('/api/review-cases/summary', () => failed
+        ? HttpResponse.json({ title: 'Unavailable' }, { status: 500 })
+        : text(summaryDocument('4', '3', '1', '0', '2', '1'))),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 4')).toBeInTheDocument();
+
+    failed = true;
+    await user.click(screen.getByRole('button', { name: 'Refresh organization summary' }));
+
+    expect(await screen.findByText('The organization summary could not be refreshed. The counts shown are from the last successful read.')).toBeInTheDocument();
+    expect(screen.getByText('All cases 4')).toBeInTheDocument();
+    expect(screen.getByText('Open investigations 1')).toBeInTheDocument();
+  });
+
+  it('hides counts after 403 until a later success, including a 500 in between', async () => {
+    const user = userEvent.setup();
+    let mode: 'ok' | 'denied' | 'failed' | 'restored' = 'ok';
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        if (mode === 'denied') {
+          return HttpResponse.json({ title: 'Forbidden' }, { status: 403 });
+        }
+        if (mode === 'failed') {
+          return HttpResponse.json({ title: 'Unavailable' }, { status: 500 });
+        }
+        if (mode === 'restored') {
+          return text(summaryDocument('9', '4', '3', '2', '3', '1'));
+        }
+        return text(summaryDocument('4', '3', '1', '0', '2', '1'));
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 4')).toBeInTheDocument();
+
+    mode = 'denied';
+    await user.click(screen.getByRole('button', { name: 'Refresh organization summary' }));
+    const summary = await screen.findByRole('region', { name: 'Organization summary' });
+    expect(await within(summary).findByText('You don’t have access to the organization summary. Check your access details.')).toBeInTheDocument();
+    expect(screen.queryByText('All cases 4')).not.toBeInTheDocument();
+
+    mode = 'failed';
+    await user.click(within(summary).getByRole('button', { name: 'Refresh organization summary' }));
+    await flush();
+    expect(screen.queryByText('All cases 4')).not.toBeInTheDocument();
+    expect(screen.queryByText('All cases 9')).not.toBeInTheDocument();
+    expect(within(summary).getByText('You don’t have access to the organization summary. Check your access details.')).toBeInTheDocument();
+
+    mode = 'restored';
+    await user.click(within(summary).getByRole('button', { name: 'Refresh organization summary' }));
+    expect(await screen.findByText('All cases 9')).toBeInTheDocument();
+    expect(screen.queryByText('You don’t have access to the organization summary. Check your access details.')).not.toBeInTheDocument();
+
+    clearSummaryCountsForAccessDenial(
+      queryClient,
+      ['review-cases', 'summary', sessionStore.getSnapshot().epoch],
+      new ApiError(403, null, 'Forbidden', ''),
+    );
+    expect(screen.getByText('All cases 9')).toBeInTheDocument();
+  });
+
+  it('hides counts after 401 and keeps them hidden while the denial is retried', async () => {
+    const user = userEvent.setup();
+    let denied = false;
+    server.use(
+      http.get('/api/review-cases/summary', () => denied
+        ? HttpResponse.json({ title: 'Unauthorized' }, { status: 401 })
+        : text(summaryDocument('4', '3', '1', '0', '2', '1'))),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 4')).toBeInTheDocument();
+
+    denied = true;
+    await user.click(screen.getByRole('button', { name: 'Refresh organization summary' }));
+    const summary = await screen.findByRole('region', { name: 'Organization summary' });
+    expect(await within(summary).findByText('Your access has expired or is no longer valid. Update it to continue.')).toBeInTheDocument();
+    expect(screen.queryByText('All cases 4')).not.toBeInTheDocument();
+    expect(sessionStore.getSnapshot().token).not.toBeNull();
+
+    await user.click(within(summary).getByRole('button', { name: 'Refresh organization summary' }));
+    await flush();
+    expect(screen.queryByText('All cases 4')).not.toBeInTheDocument();
+    expect(sessionStore.getSnapshot().token).not.toBeNull();
+  });
+
+  it('hides summary counts when review-cases.read is removed and does not fetch again', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    let summaryReads = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        return text(summaryDocument());
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 1')).toBeInTheDocument();
+    const reads = summaryReads;
+
+    sessionStore.replaceCookieSession(cookieSession(['invoices.read']), false);
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Organization summary' })).not.toBeInTheDocument());
+    expect(screen.queryByText('All cases 1')).not.toBeInTheDocument();
+    await flush();
+    expect(summaryReads).toBe(reads);
+  });
+
+  it('hides the previous summary when cookie readiness changes', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    let reads = 0;
+    let releaseSecond: ((value: ReturnType<typeof text>) => void) | undefined;
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        reads += 1;
+        if (reads === 1) {
+          return text(summaryDocument('4', '4', '0', '0', '0', '4'));
+        }
+        return new Promise<HttpResponse<string>>((resolve) => {
+          releaseSecond = resolve;
+        });
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 4')).toBeInTheDocument();
+
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    await waitFor(() => expect(screen.queryByText('All cases 4')).not.toBeInTheDocument());
+    expect(await screen.findByText('Loading the organization summary')).toBeInTheDocument();
+    releaseSecond?.(text(summaryDocument('6', '1', '2', '3', '1', '0')));
+    expect(await screen.findByText('All cases 6')).toBeInTheDocument();
+  });
+
+  it('hides the previous summary after the organization epoch changes', async () => {
+    let releaseSecond: ((value: HttpResponse<string>) => void) | undefined;
+    let reads = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        reads += 1;
+        if (reads === 1) {
+          return text(summaryDocument('4', '3', '1', '0', '2', '1'));
+        }
+        return new Promise<HttpResponse<string>>((resolve) => {
+          releaseSecond = resolve;
+        });
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+    );
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    renderPage('/review-cases');
+    expect(await screen.findByText('All cases 4')).toBeInTheDocument();
+
+    sessionStore.rotate('memory-token', 4_000_000_000, null);
+    await waitFor(() => expect(screen.queryByText('All cases 4')).not.toBeInTheDocument());
+    expect(await screen.findByText('Loading the organization summary')).toBeInTheDocument();
+    releaseSecond?.(text(summaryDocument('2', '2', '0', '0', '0', '2')));
+    expect(await screen.findByText('All cases 2')).toBeInTheDocument();
+  });
+
+  it('selects a confirmed opening before a held summary read settles', async () => {
+    const user = userEvent.setup();
+    const openedId = '55555555-5555-4555-8555-555555555555';
+    let posts = 0;
+    let summaryReads = 0;
+    let releaseSummary: ((value: HttpResponse<string>) => void) | undefined;
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        if (summaryReads === 1) {
+          return text(summaryDocument());
+        }
+        return new Promise<HttpResponse<string>>((resolve) => {
+          releaseSummary = resolve;
+        });
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailDocument())),
+      http.post('/api/review-cases', () => {
+        posts += 1;
+        return HttpResponse.json(openedCase(openedId, invoiceId), {
+          status: 201,
+          headers: { Location: `/api/review-cases/${openedId}` },
+        });
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = renderReviewCases();
+    expect(await screen.findByText('All cases 1')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Opening invoice id'), invoiceId);
+    await user.click(screen.getByRole('button', { name: 'Open review case' }));
+
+    expect(await screen.findByText('Review case opened.')).toBeInTheDocument();
+    await waitFor(() => expect(router.state.location.search).toContain(`selected=${openedId}`));
+    expect(summaryReads).toBeGreaterThan(1);
+    expect(releaseSummary).toBeTypeOf('function');
+    expect(posts).toBe(1);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+
+    releaseSummary?.(HttpResponse.text('{"title":"Unavailable"}', {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    expect(await screen.findByText('The organization summary could not be refreshed. The counts shown are from the last successful read.')).toBeInTheDocument();
+    expect(posts).toBe(1);
+    expect(sessionStorage.getItem(reviewCaseOpenAttemptStorageKey)).toBeNull();
+    expect(screen.getByText('Review case opened.')).toBeInTheDocument();
+  });
 });
 
 describe('review case decision page', () => {
@@ -1036,6 +1378,7 @@ describe('review case decision page', () => {
     const bodies: string[] = [];
     let reads = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => {
         reads += 1;
@@ -1084,6 +1427,7 @@ describe('review case decision page', () => {
     });
     sessionStorage.setItem(reviewCaseDecisionAttemptStorageKey, stored);
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(`{"items":[${caseDocument({ concurrencyToken: commandToken })},${caseDocument({ reviewCaseId: otherCaseId, concurrencyToken: otherToken })}],"page":1,"pageSize":50,"totalCount":2}`)),
       http.get('/api/review-cases/:id', ({ params }) => text(detailFrom(caseDocument({
         reviewCaseId: String(params.id),
@@ -1104,6 +1448,7 @@ describe('review case decision page', () => {
     const user = userEvent.setup();
     queryClient.clear();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailFrom(caseDocument({ concurrencyToken: commandToken })))),
     );
@@ -1123,6 +1468,7 @@ describe('review case decision page', () => {
     queryClient.clear();
     const pending: Array<(value: Response) => void> = [];
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => new Promise((resolve) => {
         pending.push(resolve);
@@ -1162,7 +1508,12 @@ describe('review case decision page', () => {
     queryClient.clear();
     let posts = 0;
     let detailReads = 0;
+    let summaryReads = 0;
     server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        return text(summaryDocument());
+      }),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => {
         detailReads += 1;
@@ -1182,6 +1533,7 @@ describe('review case decision page', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss review case' }));
 
     expect(await screen.findByText('The review case matches this decision.')).toBeInTheDocument();
+    await waitFor(() => expect(summaryReads).toBeGreaterThan(1));
     expect(await screen.findByRole('button', { name: 'Refresh displayed data' })).toBeInTheDocument();
     const readsAfterFailure = detailReads;
     await user.click(screen.getByRole('button', { name: 'Refresh displayed data' }));
@@ -1190,11 +1542,39 @@ describe('review case decision page', () => {
     expect(screen.getByText('The review case matches this decision.')).toBeInTheDocument();
   });
 
+  it('refreshes the summary after a verified resolve', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    let summaryReads = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => {
+        summaryReads += 1;
+        return text(summaryDocument());
+      }),
+      http.get('/api/review-cases', () => text(listDocument())),
+      http.get('/api/review-cases/:id', () => text(detailFrom(caseDocument({ concurrencyToken: commandToken })))),
+      http.post(`/api/review-cases/${caseId}/resolve`, () => {
+        posts += 1;
+        return HttpResponse.json(decisionResponse('Resolved', 'NoActionRequired', null));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage(`/review-cases?selected=${caseId}`);
+    await user.click(await screen.findByRole('button', { name: 'Resolve' }));
+    await user.type(screen.getByLabelText('Decision resolution note'), 'kept');
+    await user.click(screen.getByRole('button', { name: 'Resolve review case' }));
+
+    expect(await screen.findByText('The review case matches this decision.')).toBeInTheDocument();
+    await waitFor(() => expect(summaryReads).toBeGreaterThan(1));
+    expect(posts).toBe(1);
+  });
+
   it('does not apply a late decision to a page the operator has left', async () => {
     const user = userEvent.setup();
     queryClient.clear();
     const gate = deferred<void>();
     server.use(
+      http.get('/api/review-cases/summary', () => text(summaryDocument())),
       http.get('/api/review-cases', () => text(listDocument())),
       http.get('/api/review-cases/:id', () => text(detailFrom(caseDocument({ concurrencyToken: commandToken })))),
       http.post(`/api/review-cases/${caseId}/dismiss`, async () => {
@@ -1301,6 +1681,17 @@ function text(body: string) {
 
 function listDocument(): string {
   return `{"items":[${caseDocument()}],"page":1,"pageSize":50,"totalCount":1}`;
+}
+
+function summaryDocument(
+  total = '1',
+  open = '1',
+  resolved = '0',
+  dismissed = '0',
+  competing = '1',
+  needs = '0',
+): string {
+  return `{"totalCount":${total},"openCount":${open},"resolvedCount":${resolved},"dismissedCount":${dismissed},"openCompetingMatchCount":${competing},"openNeedsInvestigationCount":${needs}}`;
 }
 
 function detailDocument(invoiceAmount = '0'): string {

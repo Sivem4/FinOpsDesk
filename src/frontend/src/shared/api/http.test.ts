@@ -84,6 +84,26 @@ describe('review case reads', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('fetches a cookie summary for review-cases.read without audit.read', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['review-cases.read']), true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await apiGet('/api/review-cases/summary', new AbortController().signal);
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('/api/review-cases/summary');
+  });
+
+  it('does not fetch a cookie summary without review-cases.read', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'cookie');
+    sessionStore.replaceCookieSession(cookieSession(['audit.read']), true);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await expect(apiGet('/api/review-cases/summary', new AbortController().signal)).rejects.toMatchObject({ status: 403 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('fetches a development review case detail when a token is present', async () => {
     sessionStore.rotate('memory-token', 4_000_000_000, null);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));

@@ -46,6 +46,7 @@ import {
   type ReviewCaseResolveFormValues,
 } from './review-case-decision-request';
 import { developmentActorId, developmentOrganizationId } from './review-case-open-request';
+import { startReviewCaseSummaryRefresh } from './review-case-summary-api';
 
 const emptyResolve: ReviewCaseResolveFormValues = {
   outcome: 'NoActionRequired',
@@ -152,6 +153,7 @@ export function ReviewCaseDecisionPanel({
       return;
     }
 
+    startReviewCaseSummaryRefresh(queryClient, epoch);
     const options = { throwOnError: true } as const;
     await queryClient.invalidateQueries({ queryKey: ['review-cases', 'list', epoch] }, options);
     await queryClient.invalidateQueries({ queryKey: ['review-cases', 'detail', epoch] }, options);
