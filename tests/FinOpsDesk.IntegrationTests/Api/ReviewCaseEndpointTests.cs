@@ -33,6 +33,7 @@ public sealed class ReviewCaseEndpointTests : IDisposable
 
     [Theory]
     [InlineData("GET", "/api/review-cases")]
+    [InlineData("GET", "/api/review-cases/summary")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/audit")]
     [InlineData("POST", "/api/review-cases")]
@@ -49,6 +50,7 @@ public sealed class ReviewCaseEndpointTests : IDisposable
 
     [Theory]
     [InlineData("GET", "/api/review-cases")]
+    [InlineData("GET", "/api/review-cases/summary")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/audit")]
     [InlineData("POST", "/api/review-cases")]
@@ -66,6 +68,7 @@ public sealed class ReviewCaseEndpointTests : IDisposable
 
     [Theory]
     [InlineData("GET", "/api/review-cases")]
+    [InlineData("GET", "/api/review-cases/summary")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111")]
     [InlineData("GET", "/api/review-cases/11111111-1111-1111-1111-111111111111/audit")]
     [InlineData("POST", "/api/review-cases")]

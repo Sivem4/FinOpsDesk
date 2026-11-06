@@ -366,6 +366,8 @@ Phase 8F lets a `DevelopmentJwt` operator open one case from `/review-cases`. Th
 
 Phase 8G lets that same `DevelopmentJwt` operator resolve or dismiss an open case from the selected detail. The draft copies the concurrency token from the detail read that the operator chose. A later read does not replace it. After the operator removes local tracking, only a detail read that started after that removal can start another draft. The browser stores one `finopsdesk.review-case-decision-attempt` record before the POST and retries that same operation, case id, and body, including the original token. Resolve and dismiss do not send `Idempotency-Key` and do not allocate money. A verified HTTP 200 that matches the stored decision clears the record. The response token may differ from the request token. `ProductionCookie` does not mount the decision forms or that recovery panel. The cookie write allowlist, flags, and capabilities stay unchanged. Phase 8 stays Planned.
 
+Phase 8H adds `GET /api/review-cases/summary`. The route counts every persisted review case in the authenticated organization and returns six non-negative counters. It does not follow the list page or the list filters. A later case for the same subject counts separately after the earlier case is closed. The read requires `review-cases.read` and does not require `audit.read`. It does not change cases, audit rows, or `rowversion`, and it does not add an index. The current screen does not call it. This is not the operational dashboard. Deployed financial flags stay unset. The cookie write allowlist is unchanged. Phase 8 stays Planned.
+
 Add:
 
 - Disputes module;

@@ -52,6 +52,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["GET /api/allocations/{allocationId}/audit"] = AccessPermission.AuditRead.Value,
             ["GET /api/review-cases/{id}/audit"] = AccessPermission.AuditRead.Value,
             ["GET /api/review-cases"] = AccessPermission.ReviewCasesRead.Value,
+            ["GET /api/review-cases/summary"] = AccessPermission.ReviewCasesRead.Value,
             ["GET /api/review-cases/{id}"] = AccessPermission.ReviewCasesRead.Value,
             ["POST /api/imports/invoices"] = AccessPermission.ImportsCreate.Value,
             ["POST /api/imports/bank-transactions"] = AccessPermission.ImportsCreate.Value,

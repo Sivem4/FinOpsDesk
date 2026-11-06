@@ -89,6 +89,7 @@ public static class ReconciliationModule
         services.AddScoped<DismissReviewCaseHandler>();
         services.AddScoped<ListReviewCasesHandler>();
         services.AddScoped<GetReviewCaseHandler>();
+        services.AddScoped<GetReviewCaseSummaryHandler>();
         services.AddScoped<IReviewCaseAuditQueries, ReviewCaseAuditQueries>();
         services.AddScoped<GetReviewCaseAuditHandler>();
         services.AddScoped<IUnitOfWork>(

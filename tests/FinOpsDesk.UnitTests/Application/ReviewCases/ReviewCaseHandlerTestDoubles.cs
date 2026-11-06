@@ -460,18 +460,23 @@ internal sealed class FakeReviewCaseQueries : IReviewCaseQueries
 {
     private readonly ReviewCaseListResponse _list;
     private readonly ReviewCaseDetailResponse? _detail;
+    private readonly ReviewCaseSummaryResponse _summary;
 
     public FakeReviewCaseQueries(
         ReviewCaseListResponse? list = null,
-        ReviewCaseDetailResponse? detail = null)
+        ReviewCaseDetailResponse? detail = null,
+        ReviewCaseSummaryResponse? summary = null)
     {
         _list = list ?? new ReviewCaseListResponse([], 1, 50, 0);
         _detail = detail;
+        _summary = summary ?? new ReviewCaseSummaryResponse(0, 0, 0, 0, 0, 0);
     }
 
     public int ListCount { get; private set; }
 
     public int GetCount { get; private set; }
+
+    public int SummarizeCount { get; private set; }
 
     public OrganizationId? OrganizationId { get; private set; }
 
@@ -525,5 +530,16 @@ internal sealed class FakeReviewCaseQueries : IReviewCaseQueries
         }
 
         return Task.FromResult(Result<ReviewCaseDetailResponse>.Success(_detail));
+    }
+
+    public Task<ReviewCaseSummaryResponse> SummarizeAsync(
+        OrganizationId organizationId,
+        CancellationToken cancellationToken)
+    {
+        SummarizeCount++;
+        OrganizationId = organizationId;
+        CancellationToken = cancellationToken;
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_summary);
     }
 }

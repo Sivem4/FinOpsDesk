@@ -30,6 +30,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/{id}/audit", "get", "audit.read"),
         ("/api/allocations/{allocationId}/reversal-context", "get", "allocations.read"),
         ("/api/review-cases", "get", "review-cases.read"),
+        ("/api/review-cases/summary", "get", "review-cases.read"),
         ("/api/review-cases/{id}", "get", "review-cases.read"),
     ];
 
@@ -115,6 +116,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         }
 
         AssertReviewCaseAuditDocument(root);
+        AssertReviewCaseSummaryDocument(root);
 
         JsonElement reverse = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         Assert.True(Parameter(reverse, "Idempotency-Key").GetProperty("required").GetBoolean());
@@ -224,6 +226,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         }
 
         AssertReviewCaseAuditDocument(root);
+        AssertReviewCaseSummaryDocument(root);
 
         foreach ((string path, string method, string permission) in AllowlistedWrites)
         {
@@ -458,6 +461,42 @@ public sealed class OpenApiAuthenticationDocumentTests
         Assert.False(itemSchema.GetProperty("properties").TryGetProperty("organizationId", out _));
         Assert.False(itemSchema.GetProperty("properties").TryGetProperty("reviewCaseId", out _));
         Assert.False(itemSchema.GetProperty("properties").TryGetProperty("concurrencyToken", out _));
+    }
+
+    private static void AssertReviewCaseSummaryDocument(JsonElement root)
+    {
+        JsonElement operation = root.GetProperty("paths")
+            .GetProperty("/api/review-cases/summary")
+            .GetProperty("get");
+        Assert.Equal("GetReviewCaseSummary", operation.GetProperty("operationId").GetString());
+        Assert.False(operation.TryGetProperty("parameters", out _));
+        JsonElement schema = ResolveSchema(
+            root,
+            operation.GetProperty("responses")
+                .GetProperty("200")
+                .GetProperty("content")
+                .GetProperty("application/json")
+                .GetProperty("schema"));
+        string[] names =
+        [
+            "totalCount",
+            "openCount",
+            "resolvedCount",
+            "dismissedCount",
+            "openCompetingMatchCount",
+            "openNeedsInvestigationCount",
+        ];
+        string[] required = schema.GetProperty("required").EnumerateArray()
+            .Select(item => item.GetString() ?? string.Empty)
+            .ToArray();
+        Assert.Equal(names.OrderBy(name => name, StringComparer.Ordinal), required.OrderBy(name => name, StringComparer.Ordinal));
+        foreach (string name in names)
+        {
+            JsonElement property = schema.GetProperty("properties").GetProperty(name);
+            Assert.Equal("integer", property.GetProperty("type").GetString());
+            Assert.Equal("int64", property.GetProperty("format").GetString());
+            Assert.Equal(0, property.GetProperty("minimum").GetInt32());
+        }
     }
 
     private static JsonElement ResolveSchema(JsonElement root, JsonElement schema)

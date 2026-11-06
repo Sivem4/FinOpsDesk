@@ -83,6 +83,43 @@ internal sealed class ReviewCaseQueries : IReviewCaseQueries
             totalCount);
     }
 
+    public async Task<ReviewCaseSummaryResponse> SummarizeAsync(
+        OrganizationId organizationId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(organizationId);
+
+        ReviewCaseSummaryCounts? counts = await _dbContext.ReviewCases
+            .AsNoTracking()
+            .Where(reviewCase => reviewCase.OrganizationId == organizationId)
+            .GroupBy(_ => 1)
+            .Select(group => new ReviewCaseSummaryCounts(
+                group.LongCount(),
+                group.LongCount(reviewCase => reviewCase.Status == ReviewCaseStatus.Open),
+                group.LongCount(reviewCase => reviewCase.Status == ReviewCaseStatus.Resolved),
+                group.LongCount(reviewCase => reviewCase.Status == ReviewCaseStatus.Dismissed),
+                group.LongCount(reviewCase =>
+                    reviewCase.Status == ReviewCaseStatus.Open
+                    && reviewCase.Reason == ReviewCaseReason.CompetingMatch),
+                group.LongCount(reviewCase =>
+                    reviewCase.Status == ReviewCaseStatus.Open
+                    && reviewCase.Reason == ReviewCaseReason.NeedsInvestigation)))
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (counts is null)
+        {
+            return new ReviewCaseSummaryResponse(0, 0, 0, 0, 0, 0);
+        }
+
+        return new ReviewCaseSummaryResponse(
+            counts.TotalCount,
+            counts.OpenCount,
+            counts.ResolvedCount,
+            counts.DismissedCount,
+            counts.OpenCompetingMatchCount,
+            counts.OpenNeedsInvestigationCount);
+    }
+
     public async Task<Result<ReviewCaseDetailResponse>> GetAsync(
         OrganizationId organizationId,
         ReviewCaseId reviewCaseId,
@@ -308,6 +345,14 @@ internal sealed class ReviewCaseQueries : IReviewCaseQueries
             row.ClosedAt,
             ReviewCaseConcurrencyToken.Encode(row.RowVersion));
     }
+
+    private sealed record ReviewCaseSummaryCounts(
+        long TotalCount,
+        long OpenCount,
+        long ResolvedCount,
+        long DismissedCount,
+        long OpenCompetingMatchCount,
+        long OpenNeedsInvestigationCount);
 
     private sealed record ReviewCaseRow(
         ReviewCaseId ReviewCaseId,
