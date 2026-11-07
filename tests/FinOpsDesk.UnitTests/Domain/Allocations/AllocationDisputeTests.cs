@@ -46,4 +46,17 @@ public sealed class AllocationDisputeTests
         Assert.False(dispute.Matches(allocationId, "same text "));
         Assert.False(dispute.Matches(AllocationId.New(), "same text"));
     }
+
+    [Fact]
+    public void Actor_source_names_the_two_allowed_values_and_rejects_an_unknown_one()
+    {
+        Assert.Equal(
+            "developmentJwt",
+            AllocationDispute.ActorSourceName(ReviewCaseActorSource.DevelopmentJwt));
+        Assert.Equal(
+            "productionCookie",
+            AllocationDispute.ActorSourceName(ReviewCaseActorSource.ProductionCookie));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => AllocationDispute.ActorSourceName((ReviewCaseActorSource)9));
+    }
 }

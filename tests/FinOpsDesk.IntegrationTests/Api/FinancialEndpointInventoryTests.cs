@@ -73,6 +73,8 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["POST /api/review-cases/{id}/assignment"] = AccessPermission.ReviewCasesAssign.Value,
             ["POST /api/review-cases/{id}/assignment/release"] = AccessPermission.ReviewCasesAssign.Value,
             ["GET /api/review-cases/{id}/assignment"] = AccessPermission.ReviewCasesAssignmentRead.Value,
+            ["GET /api/allocation-disputes"] = AccessPermission.AllocationDisputesRead.Value,
+            ["GET /api/allocation-disputes/{disputeId}"] = AccessPermission.AllocationDisputesRead.Value,
         };
 
         Assert.Equal(

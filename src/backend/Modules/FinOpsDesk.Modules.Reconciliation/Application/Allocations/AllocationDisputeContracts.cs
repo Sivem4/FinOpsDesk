@@ -1,4 +1,5 @@
 using FinOpsDesk.Modules.Reconciliation.Domain.Allocations;
+using FinOpsDesk.SharedKernel.Results;
 using FinOpsDesk.SharedKernel.Tenancy;
 
 namespace FinOpsDesk.Modules.Reconciliation.Application.Allocations;
@@ -19,6 +20,34 @@ public sealed record AllocationDisputeResponse(
 public sealed record RegisterAllocationDisputeResult(
     AllocationDisputeResponse Dispute,
     bool Created);
+
+public sealed record AllocationDisputeListResponse(
+    IReadOnlyList<AllocationDisputeResponse> Items,
+    int Page,
+    int PageSize,
+    long TotalCount);
+
+public sealed record GetAllocationDisputesQuery(
+    int Page,
+    int PageSize,
+    Guid? AllocationId);
+
+public sealed record GetAllocationDisputeQuery(Guid DisputeId);
+
+public interface IAllocationDisputeQueries
+{
+    Task<Result<AllocationDisputeListResponse>> ListAsync(
+        OrganizationId organizationId,
+        int page,
+        int pageSize,
+        Guid? allocationId,
+        CancellationToken cancellationToken);
+
+    Task<Result<AllocationDisputeResponse>> GetAsync(
+        OrganizationId organizationId,
+        Guid disputeId,
+        CancellationToken cancellationToken);
+}
 
 public interface IAllocationDisputeLookup
 {

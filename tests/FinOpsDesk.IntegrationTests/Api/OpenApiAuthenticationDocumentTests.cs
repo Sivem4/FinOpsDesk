@@ -34,6 +34,8 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/summary", "get", "review-cases.read"),
         ("/api/review-cases/{id}", "get", "review-cases.read"),
         ("/api/review-cases/{id}/assignment", "get", "review-cases.assignment.read"),
+        ("/api/allocation-disputes", "get", "allocation-disputes.read"),
+        ("/api/allocation-disputes/{disputeId}", "get", "allocation-disputes.read"),
     ];
 
     private static readonly (string Path, string Method, string Permission)[] AllowlistedWrites =
@@ -123,6 +125,7 @@ public sealed class OpenApiAuthenticationDocumentTests
 
         AssertReviewCaseAuditDocument(root);
         AssertReviewCaseSummaryDocument(root);
+        AssertAllocationDisputeReadDocument(root);
 
         JsonElement reverse = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         Assert.True(Parameter(reverse, "Idempotency-Key").GetProperty("required").GetBoolean());
@@ -239,6 +242,7 @@ public sealed class OpenApiAuthenticationDocumentTests
 
         AssertReviewCaseAuditDocument(root);
         AssertReviewCaseSummaryDocument(root);
+        AssertAllocationDisputeReadDocument(root);
 
         foreach ((string path, string method, string permission) in AllowlistedWrites)
         {
@@ -565,6 +569,32 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.Equal("int64", property.GetProperty("format").GetString());
             Assert.Equal(0, property.GetProperty("minimum").GetInt32());
         }
+    }
+
+    private static void AssertAllocationDisputeReadDocument(JsonElement root)
+    {
+        JsonElement list = root.GetProperty("paths").GetProperty("/api/allocation-disputes").GetProperty("get");
+        string[] queryNames = list.GetProperty("parameters").EnumerateArray()
+            .Select(item => item.GetProperty("name").GetString() ?? string.Empty)
+            .ToArray();
+        Assert.Equal(["page", "pageSize", "allocationId"], queryNames);
+        JsonElement listSchema = ResolveSchema(
+            root,
+            list.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema"));
+        Assert.Equal("int64", listSchema.GetProperty("properties").GetProperty("totalCount").GetProperty("format").GetString());
+        JsonElement itemSchema = ResolveSchema(root, listSchema.GetProperty("properties").GetProperty("items").GetProperty("items"));
+        Assert.False(itemSchema.GetProperty("properties").TryGetProperty("idempotencyKey", out _));
+        Assert.False(itemSchema.GetProperty("properties").TryGetProperty("organizationId", out _));
+
+        JsonElement detail = root.GetProperty("paths").GetProperty("/api/allocation-disputes/{disputeId}").GetProperty("get");
+        JsonElement parameter = Assert.Single(detail.GetProperty("parameters").EnumerateArray());
+        Assert.Equal("disputeId", parameter.GetProperty("name").GetString());
+        Assert.Equal("path", parameter.GetProperty("in").GetString());
+        JsonElement detailSchema = ResolveSchema(
+            root,
+            detail.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema"));
+        Assert.False(detailSchema.GetProperty("properties").TryGetProperty("idempotencyKey", out _));
+        Assert.False(detailSchema.GetProperty("properties").TryGetProperty("organizationId", out _));
     }
 
     private static JsonElement ResolveSchema(JsonElement root, JsonElement schema)

@@ -99,6 +99,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.DoesNotContain("review-cases.comment", operatorPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("review-cases.assign", operatorPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("review-cases.assignment.read", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("allocation-disputes.read", operatorPermissions, StringComparison.Ordinal);
         Assert.True(operatorSession.RootElement.GetProperty("financialAccess").GetBoolean());
 
         await host.RevokeAsync(membership, OrganizationRole.Operator);
