@@ -378,15 +378,14 @@ Phase 8L lets an operator claim an unassigned open review case and release only 
 
 Phase 8M shows that assignment on the existing `/review-cases` screen for `DevelopmentJwt`. The selected case reads the detail and `GET /api/review-cases/{id}/assignment`. The current assignee stays separate from the confirmation of a claim or release. A new command waits for both reads to start again after a verified result or after the operator removes local tracking, and the two concurrency tokens must match. The browser stores one `finopsdesk.review-case-assignment-attempt` record, bound to the organization, `developmentJwt`, and the normalized `sub`, before the POST. Another operator in that tab can read the assignment and cannot send, retry, or remove the record. `ProductionCookie` does not mount the panel or recovery and does not call `/assignment`. Resolve, dismiss, and comments do not wait for an assignment. Contract v2, the cookie allowlist, and the financial flags stay unchanged. There is no delegation and no dashboard. Phase 8 stays Planned. See ADR 0031.
 
-Add:
+Phase 8N lets an operator register an external counterparty challenge against one allocation through `POST /api/allocations/{allocationId}/disputes`. A new row commits only while that allocation is `Confirmed`. One allocation can store many disputes, including the same statement under a new idempotency key. A matching key returns the original confirmation after reversal. Registration does not change the allocation, its `rowversion`, invoice or bank balances, or the financial audit. There is no dispute read, list, screen, resolution, or settlement correction. The route is outside the cookie write allowlist. `DevelopmentJwt` still does not distinguish roles. Deployed financial flags stay unset. Phase 8 stays Planned. See ADR 0032.
 
-- Disputes module;
-- case lifecycle;
+Still later:
+
+- dispute read and list;
+- dispute resolution and any settlement correction;
 - delegation;
-- comments;
-- resolution;
-- audit history screen;
-- operational dashboard read models.
+- operational dashboard.
 
 ## Phase 9: Performance and operability
 

@@ -383,4 +383,44 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.allocation.reversal_integrity_conflict",
             "The stored reversal is not a complete reversal for this request.");
+
+    public static Error AllocationDisputeInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation_dispute.invalid_request",
+            "The allocation dispute request has an invalid allocation id, an invalid body, or an unsupported parameter.");
+
+    public static Error AllocationDisputeStatementRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.statement_required",
+            "The dispute statement is required after trim.");
+
+    public static Error AllocationDisputeStatementTooLong { get; } =
+        new(
+            "reconciliation.allocation_dispute.statement_too_long",
+            "The dispute statement must contain at most 500 UTF-16 code units after trim.");
+
+    public static Error AllocationDisputeIdempotencyKeyRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.idempotency_key_required",
+            "An Idempotency-Key header with one UUID in D format is required.");
+
+    public static Error AllocationDisputeIdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.allocation_dispute.idempotency_key_invalid",
+            "Idempotency-Key must be one non-empty UUID whose raw text is the canonical D format, with no surrounding whitespace.");
+
+    public static Error AllocationDisputeIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.idempotency_payload_conflict",
+            "This idempotency key was already used for a different allocation dispute.");
+
+    public static Error AllocationDisputeAllocationNotConfirmed { get; } =
+        new(
+            "reconciliation.allocation_dispute.allocation_not_confirmed",
+            "The allocation is not confirmed.");
+
+    public static Error AllocationDisputeConcurrencyConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.concurrency_conflict",
+            "The allocation dispute could not be recovered after a concurrent insert.");
 }

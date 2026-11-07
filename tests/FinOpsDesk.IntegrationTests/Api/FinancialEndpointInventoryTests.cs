@@ -30,6 +30,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
         ["POST /api/review-cases/{id}/comments"] = FinancialWriteOperation.CommentReviewCase,
         ["POST /api/review-cases/{id}/assignment"] = FinancialWriteOperation.ClaimReviewCase,
         ["POST /api/review-cases/{id}/assignment/release"] = FinancialWriteOperation.ReleaseReviewCase,
+        ["POST /api/allocations/{allocationId}/disputes"] = FinancialWriteOperation.RegisterAllocationDispute,
     };
 
     private readonly FinOpsDeskApiFactory _factory;
@@ -64,6 +65,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["POST /api/matches/batch/execute"] = AccessPermission.ReconciliationConfirm.Value,
             ["POST /api/allocations"] = AccessPermission.AllocationsCreate.Value,
             ["POST /api/allocations/{allocationId}/reverse"] = AccessPermission.AllocationsReverse.Value,
+            ["POST /api/allocations/{allocationId}/disputes"] = AccessPermission.AllocationDisputesRegister.Value,
             ["POST /api/review-cases"] = AccessPermission.ReviewCasesOpen.Value,
             ["POST /api/review-cases/{id}/resolve"] = AccessPermission.ReviewCasesResolve.Value,
             ["POST /api/review-cases/{id}/dismiss"] = AccessPermission.ReviewCasesResolve.Value,
