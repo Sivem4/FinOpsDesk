@@ -117,6 +117,9 @@ public static class ReconciliationModule
             serviceProvider => serviceProvider.GetRequiredService<AllocationDisputeStore>());
         services.AddScoped<IAllocationDisputeConflict, AllocationDisputeConflict>();
         services.AddScoped<RegisterAllocationDisputeHandler>();
+        services.AddScoped<IAllocationDisputeQueries, AllocationDisputeQueries>();
+        services.AddScoped<GetAllocationDisputesHandler>();
+        services.AddScoped<GetAllocationDisputeHandler>();
         services.AddScoped<IUnitOfWork>(
             serviceProvider => serviceProvider.GetRequiredService<ReconciliationDbContext>());
         services.AddSingleton<IImportFileReader, CsvHelperImportFileReader>();

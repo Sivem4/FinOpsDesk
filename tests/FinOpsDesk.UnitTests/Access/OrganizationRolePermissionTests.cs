@@ -45,6 +45,7 @@ public sealed class OrganizationRolePermissionTests
                 AccessPermission.ReviewCasesAssign,
                 AccessPermission.ReviewCasesAssignmentRead,
                 AccessPermission.AllocationDisputesRegister,
+                AccessPermission.AllocationDisputesRead,
                 AccessPermission.AuditRead),
             OrganizationRolePermissions.For(OrganizationRole.Operator));
     }
@@ -83,7 +84,11 @@ public sealed class OrganizationRolePermissionTests
             [OrganizationRole.Operator, OrganizationRole.ReversalApprover]);
         Assert.Contains(AccessPermission.AllocationsCreate, combined);
         Assert.Contains(AccessPermission.AllocationsReverse, combined);
+        Assert.Contains(AccessPermission.AllocationDisputesRead, combined);
         Assert.DoesNotContain(AccessPermission.RolesManage, (IEnumerable<AccessPermission>)combined);
+        IReadOnlySet<AccessPermission> administration = OrganizationRolePermissions.Union(
+            [OrganizationRole.Viewer, OrganizationRole.OrganizationAdmin]);
+        Assert.DoesNotContain(AccessPermission.AllocationDisputesRead, (IEnumerable<AccessPermission>)administration);
     }
 
     [Fact]

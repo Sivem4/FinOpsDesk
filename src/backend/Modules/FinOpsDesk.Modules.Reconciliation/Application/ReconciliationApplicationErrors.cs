@@ -423,4 +423,14 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.allocation_dispute.concurrency_conflict",
             "The allocation dispute could not be recovered after a concurrent insert.");
+
+    public static Error AllocationDisputeInvalidPagination { get; } =
+        new(
+            "reconciliation.allocation_dispute.invalid_pagination",
+            "Allocation dispute pagination is invalid.");
+
+    public static Error AllocationDisputeNotFound { get; } =
+        new(
+            "reconciliation.allocation_dispute.not_found",
+            "The allocation dispute was not found.");
 }
