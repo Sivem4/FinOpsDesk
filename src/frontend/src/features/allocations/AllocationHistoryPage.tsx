@@ -15,12 +15,16 @@ import {
 } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 
 import { ApiError, NetworkError, StaleSessionError } from '../../shared/api/errors';
 import { sessionStore } from '../../shared/api/session-store';
 import { endSession, useSession } from '../../shared/auth/session';
 import { formatMoney } from '../../shared/money/money';
+import {
+  AllocationDisputeRecovery,
+  AllocationDisputeRegistrationPanel,
+} from '../allocation-disputes/AllocationDisputeRegistrationPanel';
 import { useAllocationAttempt } from '../reconciliation/allocation-attempt';
 import { listAllocationAudit, type AllocationAuditEntry } from './allocation-audit-api';
 import { listAllocationHistory, type AllocationHistoryItem } from './allocation-history-api';
@@ -38,7 +42,12 @@ const emptyGuid = '00000000-0000-0000-0000-000000000000';
 
 export function AllocationHistoryPage() {
   const session = useSession();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [routeScope, setRouteScope] = useState(() => ({ key: location.key, generation: 0 }));
+  if (routeScope.key !== location.key) {
+    setRouteScope({ key: location.key, generation: routeScope.generation + 1 });
+  }
   const page = readPage(searchParams.get('page'));
   const pageSize = readPageSize(searchParams.get('pageSize'));
   const invoiceFilter = readOptionalGuid(searchParams, 'invoiceId');
@@ -49,12 +58,18 @@ export function AllocationHistoryPage() {
   const bankTransactionId = bankFilter === 'absent' ? null : bankFilter === 'invalid' ? null : bankFilter;
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selection, setSelection] = useState<{ epoch: number; allocationId: string } | null>(null);
+  const [disputeTarget, setDisputeTarget] = useState<{ epoch: number; allocationId: string } | null>(null);
+  const [recoveryVisit, setRecoveryVisit] = useState(0);
   const allocationAttempt = useAllocationAttempt();
   const reversalAttempt = useReversalAttempt();
   const reversal = useReversal();
 
   if (selection !== null && selection.epoch !== session.epoch && reversalAttempt.status !== 'pending') {
     setSelection(null);
+  }
+
+  if (disputeTarget !== null && disputeTarget.epoch !== session.epoch) {
+    setDisputeTarget(null);
   }
 
   const dialogAllocationId = reversalAttempt.status === 'pending'
@@ -152,6 +167,18 @@ export function AllocationHistoryPage() {
       {reversalAttempt.status === 'invalid-storage' ? (
         <Alert severity="error">A stored reversal cannot be read safely. It was not replaced.</Alert>
       ) : null}
+      <AllocationDisputeRecovery visit={routeScope.generation + recoveryVisit} />
+      {disputeTarget !== null && disputeTarget.epoch === session.epoch ? (
+        <AllocationDisputeRegistrationPanel
+          key={`${routeScope.generation}:${disputeTarget.epoch}:${disputeTarget.allocationId}`}
+          allocationId={disputeTarget.allocationId}
+          epoch={disputeTarget.epoch}
+          onClose={() => {
+            setRecoveryVisit((current) => current + 1);
+            setDisputeTarget(null);
+          }}
+        />
+      ) : null}
       {filtered && filtersValid ? (
         <Alert
           severity="info"
@@ -195,6 +222,13 @@ export function AllocationHistoryPage() {
             reversal.dismiss();
             setSelection({ epoch: sessionStore.getSnapshot().epoch, allocationId });
           }}
+          onRecordDispute={(allocationId) => {
+            setRecoveryVisit((current) => current + 1);
+            setDisputeTarget({
+              epoch: sessionStore.getSnapshot().epoch,
+              allocationId,
+            });
+          }}
           reversing={reversal.submitting}
         />
       ) : null}
@@ -229,6 +263,7 @@ function HistoryTable({
   onToggle,
   onPageChange,
   onReverse,
+  onRecordDispute,
   reversing,
 }: {
   items: AllocationHistoryItem[];
@@ -240,6 +275,7 @@ function HistoryTable({
   onToggle: (allocationId: string) => void;
   onPageChange: (page: number, pageSize: number) => void;
   onReverse: (allocationId: string) => void;
+  onRecordDispute: (allocationId: string) => void;
   reversing: boolean;
 }) {
   return (
@@ -267,6 +303,7 @@ function HistoryTable({
                 epoch={epoch}
                 onToggle={onToggle}
                 onReverse={onReverse}
+                onRecordDispute={onRecordDispute}
                 reversing={reversing}
               />
             ))}
@@ -292,6 +329,7 @@ function HistoryRows({
   epoch,
   onToggle,
   onReverse,
+  onRecordDispute,
   reversing,
 }: {
   item: AllocationHistoryItem;
@@ -299,6 +337,7 @@ function HistoryRows({
   epoch: number;
   onToggle: (allocationId: string) => void;
   onReverse: (allocationId: string) => void;
+  onRecordDispute: (allocationId: string) => void;
   reversing: boolean;
 }) {
   const auditId = `allocation-audit-${item.allocationId}`;
@@ -332,6 +371,13 @@ function HistoryRows({
                 disabled={reversing}
               >
                 Reverse
+              </Button>
+              <Button
+                type="button"
+                aria-label={`Record dispute for allocation ${item.allocationId}`}
+                onClick={() => onRecordDispute(item.allocationId)}
+              >
+                Record dispute
               </Button>
             </Stack>
           ) : (
