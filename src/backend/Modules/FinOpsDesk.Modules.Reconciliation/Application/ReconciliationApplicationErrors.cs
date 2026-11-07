@@ -433,4 +433,49 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.allocation_dispute.not_found",
             "The allocation dispute was not found.");
+
+    public static Error AllocationDisputeResolutionInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.invalid_request",
+            "The allocation dispute resolution request has an invalid dispute id, an invalid body, or an unsupported parameter.");
+
+    public static Error AllocationDisputeResolutionOutcomeRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.outcome_required",
+            "The resolution outcome is required.");
+
+    public static Error AllocationDisputeResolutionReasonRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.reason_required",
+            "The resolution reason is required after trim.");
+
+    public static Error AllocationDisputeResolutionReasonTooLong { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.reason_too_long",
+            "The resolution reason must contain at most 500 UTF-16 code units after trim.");
+
+    public static Error AllocationDisputeResolutionIdempotencyKeyRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.idempotency_key_required",
+            "An Idempotency-Key header with one UUID in D format is required.");
+
+    public static Error AllocationDisputeResolutionIdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.idempotency_key_invalid",
+            "Idempotency-Key must be one non-empty UUID whose raw text is the canonical D format, with no surrounding whitespace.");
+
+    public static Error AllocationDisputeResolutionIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.idempotency_payload_conflict",
+            "This idempotency key was already used for a different allocation dispute resolution.");
+
+    public static Error AllocationDisputeResolutionAlreadyResolved { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.already_resolved",
+            "The allocation dispute already has a resolution under a different idempotency key.");
+
+    public static Error AllocationDisputeResolutionConcurrencyConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.resolution.concurrency_conflict",
+            "The allocation dispute resolution could not be recovered after a concurrent insert.");
 }

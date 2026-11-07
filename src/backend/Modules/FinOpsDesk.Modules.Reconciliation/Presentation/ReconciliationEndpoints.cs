@@ -24,6 +24,7 @@ public static class ReconciliationEndpoints
         group.MapBatchMatchEndpoints();
         group.MapAllocationEndpoints();
         group.MapAllocationDisputeEndpoints();
+        group.MapAllocationDisputeResolutionEndpoints();
         group.MapReviewCaseEndpoints();
 
         return group;

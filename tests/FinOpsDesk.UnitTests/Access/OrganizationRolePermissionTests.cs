@@ -46,6 +46,8 @@ public sealed class OrganizationRolePermissionTests
                 AccessPermission.ReviewCasesAssignmentRead,
                 AccessPermission.AllocationDisputesRegister,
                 AccessPermission.AllocationDisputesRead,
+                AccessPermission.AllocationDisputesResolve,
+                AccessPermission.AllocationDisputesResolutionRead,
                 AccessPermission.AuditRead),
             OrganizationRolePermissions.For(OrganizationRole.Operator));
     }
@@ -85,7 +87,18 @@ public sealed class OrganizationRolePermissionTests
         Assert.Contains(AccessPermission.AllocationsCreate, combined);
         Assert.Contains(AccessPermission.AllocationsReverse, combined);
         Assert.Contains(AccessPermission.AllocationDisputesRead, combined);
+        Assert.Contains(AccessPermission.AllocationDisputesResolve, combined);
+        Assert.Contains(AccessPermission.AllocationDisputesResolutionRead, combined);
         Assert.DoesNotContain(AccessPermission.RolesManage, (IEnumerable<AccessPermission>)combined);
+        Assert.DoesNotContain(
+            AccessPermission.AllocationDisputesResolve,
+            (IEnumerable<AccessPermission>)OrganizationRolePermissions.For(OrganizationRole.Viewer));
+        Assert.DoesNotContain(
+            AccessPermission.AllocationDisputesResolutionRead,
+            (IEnumerable<AccessPermission>)OrganizationRolePermissions.For(OrganizationRole.ReversalApprover));
+        Assert.DoesNotContain(
+            AccessPermission.AllocationDisputesResolve,
+            (IEnumerable<AccessPermission>)OrganizationRolePermissions.For(OrganizationRole.OrganizationAdmin));
         IReadOnlySet<AccessPermission> administration = OrganizationRolePermissions.Union(
             [OrganizationRole.Viewer, OrganizationRole.OrganizationAdmin]);
         Assert.DoesNotContain(AccessPermission.AllocationDisputesRead, (IEnumerable<AccessPermission>)administration);

@@ -8,6 +8,8 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Configura
 
 internal sealed class AllocationDisputeConfiguration : IEntityTypeConfiguration<AllocationDispute>
 {
+    internal const string OrganizationDisputeKeyName = "AK_AllocationDisputes_OrganizationId_Id";
+
     internal const string IdempotencyKeyIndexName = "UX_AllocationDisputes_OrganizationId_IdempotencyKey";
 
     internal const string IdempotencyKeyCheckName = "CK_AllocationDisputes_IdempotencyKey";
@@ -44,6 +46,13 @@ internal sealed class AllocationDisputeConfiguration : IEntityTypeConfiguration<
         });
 
         builder.HasKey(dispute => dispute.Id);
+
+        builder.HasAlternateKey(dispute => new
+        {
+            dispute.OrganizationId,
+            dispute.Id,
+        })
+            .HasName(OrganizationDisputeKeyName);
 
         builder.Property(dispute => dispute.Id)
             .HasConversion(ReconciliationValueConverters.AllocationDisputeId)

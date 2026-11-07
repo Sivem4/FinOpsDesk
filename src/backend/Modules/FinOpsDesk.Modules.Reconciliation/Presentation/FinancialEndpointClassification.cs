@@ -19,6 +19,7 @@ public enum FinancialWriteOperation
     ClaimReviewCase = 12,
     ReleaseReviewCase = 13,
     RegisterAllocationDispute = 14,
+    ResolveAllocationDispute = 15,
 }
 
 // Endpoint metadata read by the host authorization policy. It is not itself

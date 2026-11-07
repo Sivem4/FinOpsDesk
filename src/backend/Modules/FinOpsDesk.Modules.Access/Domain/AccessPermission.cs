@@ -39,6 +39,10 @@ public readonly record struct AccessPermission
 
     public static AccessPermission AllocationDisputesRead { get; } = new("allocation-disputes.read");
 
+    public static AccessPermission AllocationDisputesResolve { get; } = new("allocation-disputes.resolve");
+
+    public static AccessPermission AllocationDisputesResolutionRead { get; } = new("allocation-disputes.resolution.read");
+
     public static AccessPermission ImportsCreate { get; } = new("imports.create");
 
     public static AccessPermission AuditRead { get; } = new("audit.read");

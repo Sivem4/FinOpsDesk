@@ -674,35 +674,40 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
         string listPath = "/api/allocation-disputes";
         string detailPath = "/api/allocation-disputes/" + dispute.Id.Value.ToString("D");
+        string resolutionPath = detailPath + "/resolution";
         string csrf = await ReadCsrfAsync(client);
         Assert.Equal(HttpStatusCode.NoContent, (await SelectAsync(client, csrf, organizationId)).StatusCode);
 
-        await AssertDisputeReadAsync(client, listPath, detailPath, HttpStatusCode.Forbidden);
+        await AssertDisputeReadAsync(client, listPath, detailPath, resolutionPath, HttpStatusCode.Forbidden);
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Viewer));
-        await AssertDisputeReadAsync(client, listPath, detailPath, HttpStatusCode.Forbidden);
+        await AssertDisputeReadAsync(client, listPath, detailPath, resolutionPath, HttpStatusCode.Forbidden);
         Assert.Equal(OrganizationRoleMutationStatus.Granted, await StoreGrantAsync(membershipId, OrganizationRole.Operator));
-        await AssertDisputeReadAsync(client, listPath, detailPath, HttpStatusCode.OK);
+        await AssertDisputeReadAsync(client, listPath, detailPath, resolutionPath, HttpStatusCode.OK);
         using (JsonDocument session = await ReadContractSessionAsync(client, "2"))
         {
             Assert.DoesNotContain(
                 "allocation-disputes.read",
                 session.RootElement.GetProperty("permissions").GetRawText(),
                 StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "allocation-disputes.resolution.read",
+                session.RootElement.GetProperty("permissions").GetRawText(),
+                StringComparison.Ordinal);
         }
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(membershipId, OrganizationRole.Operator));
-        await AssertDisputeReadAsync(client, listPath, detailPath, HttpStatusCode.Forbidden);
+        await AssertDisputeReadAsync(client, listPath, detailPath, resolutionPath, HttpStatusCode.Forbidden);
         Assert.Equal(OrganizationRoleMutationStatus.Revoked, await StoreRevokeAsync(membershipId, OrganizationRole.Viewer));
         Assert.Equal(
             OrganizationRoleMutationStatus.Granted,
             await StoreGrantAsync(membershipId, OrganizationRole.ReversalApprover));
-        await AssertDisputeReadAsync(client, listPath, detailPath, HttpStatusCode.Forbidden);
+        await AssertDisputeReadAsync(client, listPath, detailPath, resolutionPath, HttpStatusCode.Forbidden);
         Assert.Equal(
             OrganizationRoleMutationStatus.Revoked,
             await StoreRevokeAsync(membershipId, OrganizationRole.ReversalApprover));
         Assert.Equal(
             OrganizationRoleMutationStatus.Granted,
             await StoreGrantAsync(membershipId, OrganizationRole.OrganizationAdmin));
-        await AssertDisputeReadAsync(client, listPath, detailPath, HttpStatusCode.Forbidden);
+        await AssertDisputeReadAsync(client, listPath, detailPath, resolutionPath, HttpStatusCode.Forbidden);
 
         using FinOpsDeskApiFactory closed = CreateFactory(financialReadAuthorizationEnabled: false);
         using HttpClient closedClient = closed.CreateBrowserClient();
@@ -712,13 +717,14 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.Equal(
             OrganizationRoleMutationStatus.Granted,
             await StoreGrantAsync(membershipId, OrganizationRole.Operator));
-        await AssertDisputeReadAsync(closedClient, listPath, detailPath, HttpStatusCode.Forbidden);
+        await AssertDisputeReadAsync(closedClient, listPath, detailPath, resolutionPath, HttpStatusCode.Forbidden);
     }
 
     private static async Task AssertDisputeReadAsync(
         HttpClient client,
         string listPath,
         string detailPath,
+        string resolutionPath,
         HttpStatusCode statusCode)
     {
         using HttpResponseMessage list = await client.GetAsync(listPath);
@@ -727,12 +733,19 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         using HttpResponseMessage detail = await client.GetAsync(detailPath);
         string detailBody = await detail.Content.ReadAsStringAsync();
         Assert.Equal(statusCode, detail.StatusCode);
+        using HttpResponseMessage resolution = await client.GetAsync(resolutionPath);
+        string resolutionBody = await resolution.Content.ReadAsStringAsync();
+        Assert.Equal(statusCode, resolution.StatusCode);
         if (statusCode == HttpStatusCode.OK)
         {
             Assert.Contains("counterparty challenge", listBody, StringComparison.Ordinal);
             Assert.Contains("counterparty challenge", detailBody, StringComparison.Ordinal);
             Assert.DoesNotContain("idempotencyKey", listBody, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("idempotencyKey", detailBody, StringComparison.OrdinalIgnoreCase);
+            using JsonDocument resolutionDocument = JsonDocument.Parse(resolutionBody);
+            Assert.Equal(JsonValueKind.Null, resolutionDocument.RootElement.GetProperty("decision").ValueKind);
+            Assert.False(resolutionDocument.RootElement.TryGetProperty("organizationId", out _));
+            Assert.False(resolutionDocument.RootElement.TryGetProperty("idempotencyKey", out _));
             return;
         }
 
@@ -1223,6 +1236,8 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         Assert.DoesNotContain("membership.manage", actual);
         Assert.DoesNotContain("roles.manage", actual);
         Assert.DoesNotContain("allocation-disputes.read", actual);
+        Assert.DoesNotContain("allocation-disputes.resolve", actual);
+        Assert.DoesNotContain("allocation-disputes.resolution.read", actual);
     }
 
     private static async Task<HttpResponseMessage> SelectAsync(HttpClient client, string csrf, Guid organizationId)
