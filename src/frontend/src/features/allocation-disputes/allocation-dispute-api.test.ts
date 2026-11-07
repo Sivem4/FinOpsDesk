@@ -7,6 +7,7 @@ import {
   allocationDisputeNextEnabled,
   mapAllocationDispute,
   mapAllocationDisputeList,
+  mapRegisteredAllocationDispute,
   readAllocationDisputeAddress,
 } from './allocation-dispute-api';
 
@@ -128,6 +129,14 @@ describe('allocation dispute response parser', () => {
     ], '2')), 1, null).items).toHaveLength(2);
 
     expect(() => mapAllocationDispute(read(disputeBody({ disputeId: otherDisputeId })), disputeId))
+      .toThrow(UnexpectedResponseError);
+    expect(mapRegisteredAllocationDispute(read(disputeBody({ disputeId: otherDisputeId, actorId: 'historical-operator' })), allocationId, 'counterparty challenge'))
+      .toMatchObject({ disputeId: otherDisputeId, actorId: 'historical-operator' });
+    expect(() => mapRegisteredAllocationDispute(read(disputeBody({ disputeId: '' })), allocationId, 'counterparty challenge'))
+      .toThrow(UnexpectedResponseError);
+    expect(() => mapRegisteredAllocationDispute(read(disputeBody({ allocationId: otherAllocationId })), allocationId, 'counterparty challenge'))
+      .toThrow(UnexpectedResponseError);
+    expect(() => mapRegisteredAllocationDispute(read(disputeBody({ statement: 'other' })), allocationId, 'counterparty challenge'))
       .toThrow(UnexpectedResponseError);
     expect(() => mapAllocationDisputeList(
       read(listBody([dispute({ allocationId: otherAllocationId })], '1')),

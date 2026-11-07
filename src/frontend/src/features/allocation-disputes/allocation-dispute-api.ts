@@ -20,6 +20,7 @@ const maximumStatementLength = 500;
 const maximumActorLength = 256;
 const invalidList = 'The allocation disputes could not be read.';
 const invalidDetail = 'The allocation dispute could not be read.';
+const invalidRegistration = 'The allocation dispute registration could not be read.';
 const listKeys = ['items', 'page', 'pageSize', 'totalCount'];
 const disputeKeys = ['disputeId', 'allocationId', 'statement', 'actorSource', 'actorId', 'recordedAt'];
 
@@ -168,6 +169,19 @@ export function mapAllocationDispute(body: unknown, requestedDisputeId: string):
   const record = readDispute(body, invalidDetail);
   if (!allocationDisputeIdsMatch(record.disputeId, requestedDisputeId)) {
     throw new UnexpectedResponseError(invalidDetail);
+  }
+
+  return record;
+}
+
+export function mapRegisteredAllocationDispute(
+  body: unknown,
+  allocationId: string,
+  normalizedStatement: string,
+): AllocationDisputeRecord {
+  const record = readDispute(body, invalidRegistration);
+  if (!allocationDisputeIdsMatch(record.allocationId, allocationId) || record.statement !== normalizedStatement) {
+    throw new UnexpectedResponseError(invalidRegistration);
   }
 
   return record;
