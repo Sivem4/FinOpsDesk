@@ -23,6 +23,9 @@ internal static class ReconciliationValueConverters
     public static ValueConverter<AllocationId, Guid> AllocationId { get; } =
         new(id => id.Value, value => new AllocationId(value));
 
+    public static ValueConverter<AllocationDisputeId, Guid> AllocationDisputeId { get; } =
+        new(id => id.Value, value => new AllocationDisputeId(value));
+
     public static ValueConverter<FinancialAuditEntryId, Guid> FinancialAuditEntryId { get; } =
         new(id => id.Value, value => new FinancialAuditEntryId(value));
 

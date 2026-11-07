@@ -724,6 +724,19 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             AssignmentRequest("/api/review-cases/" + commentCase.Id.Value.ToString("D") + "/assignment/release", host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, claim.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, release.StatusCode);
+        Guid confirmedAllocationId;
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            confirmedAllocationId = await context.Allocations
+                .Where(allocation => allocation.OrganizationId == new OrganizationId(confirmPair.OrganizationId)
+                    && allocation.InvoiceId == new InvoiceId(confirmPair.InvoiceId))
+                .Select(allocation => allocation.Id.Value)
+                .SingleAsync();
+        }
+
+        HttpResponseMessage dispute = await host.SendAsync(
+            DisputeRequest(confirmedAllocationId, host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, dispute.StatusCode);
         await using (ReconciliationDbContext context = _fixture.CreateContext())
         {
             Assert.Equal(
@@ -733,6 +746,10 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             Assert.Equal(
                 0,
                 await context.ReviewCaseAssignmentEntries.CountAsync(
+                    row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
+            Assert.Equal(
+                0,
+                await context.AllocationDisputes.CountAsync(
                     row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
         }
     }
@@ -1203,6 +1220,22 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             "/api/review-cases/" + reviewCaseId.ToString("D") + "/comments")
         {
             Content = new StringContent("{\"text\":\"kept\"}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
+        return request;
+    }
+
+    private static HttpRequestMessage DisputeRequest(Guid allocationId, string csrf)
+    {
+        HttpRequestMessage request = new(
+            HttpMethod.Post,
+            "/api/allocations/" + allocationId.ToString("D") + "/disputes")
+        {
+            Content = new StringContent(
+                "{\"statement\":\"The counterparty challenges this allocation.\"}",
+                Encoding.UTF8,
+                "application/json"),
         };
         request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
         request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));

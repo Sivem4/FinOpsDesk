@@ -89,6 +89,30 @@ internal static class AllocationEndpoints
                 "allocations.reverse",
                 FinancialWriteOperation.ReverseAllocation));
 
+        group.MapPost("/allocations/{allocationId}/disputes", RegisterDisputeAsync)
+            .WithName("RegisterAllocationDispute")
+            .WithSummary("Register one counterparty challenge against a confirmed allocation.")
+            .WithDescription(
+                "Requires the TenantMember policy. The effective OrganizationId comes from the host organization context. "
+                + "A client-supplied organization id is not the tenant. "
+                + "The actor source and actor id come from the authenticated caller, not from the request. "
+                + "The body accepts only statement. string.Trim() normalizes it, and the stored value must then contain 1 to 500 UTF-16 code units. "
+                + "U+FEFF is preserved. Idempotency-Key is one non-empty UUID whose raw text is the canonical D format, ignoring case, with no surrounding whitespace. "
+                + "A new dispute returns HTTP 201 with no Location header. A matching replay returns HTTP 200 and the original confirmation, including after reversal. "
+                + "The registration does not change the allocation, its rowversion, invoice or bank balances, or financial audit rows.")
+            .Produces<AllocationDisputeResponse>(StatusCodes.Status201Created, "application/json")
+            .Produces<AllocationDisputeResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .AddOpenApiOperationTransformer(DocumentDisputeOperation)
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "allocation-disputes.register",
+                FinancialWriteOperation.RegisterAllocationDispute));
+
         group.MapGet("/allocations", GetHistoryAsync)
             .WithName("ListAllocationHistory")
             .WithSummary("List persisted allocations for the authenticated organization.")
@@ -1605,6 +1629,298 @@ internal static class AllocationEndpoints
             }
         }
 
+        return Task.CompletedTask;
+    }
+
+    private static async Task<Results<JsonHttpResult<AllocationDisputeResponse>, Ok<AllocationDisputeResponse>, ProblemHttpResult>> RegisterDisputeAsync(
+        string allocationId,
+        HttpRequest httpRequest,
+        RegisterAllocationDisputeHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(allocationId, out Guid parsedAllocationId) || parsedAllocationId == Guid.Empty)
+        {
+            return DisputeProblem(ReconciliationApplicationErrors.AllocationDisputeInvalidRequest);
+        }
+
+        if (httpRequest.Query.Count > 0)
+        {
+            return DisputeProblem(ReconciliationApplicationErrors.AllocationDisputeInvalidRequest);
+        }
+
+        if (!IsJsonContentType(httpRequest.ContentType))
+        {
+            return DisputeProblem(ReconciliationApplicationErrors.AllocationUnsupportedMediaType);
+        }
+
+        if (!TryReadDisputeIdempotencyKey(httpRequest, out Guid idempotencyKey, out Error? keyError))
+        {
+            return DisputeProblem(keyError!);
+        }
+
+        byte[]? body = await ReadBoundedBodyAsync(httpRequest.Body, cancellationToken);
+        if (body is null)
+        {
+            return DisputeProblem(ReconciliationApplicationErrors.AllocationRequestTooLarge);
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body);
+        }
+        catch (JsonException exception) when (exception.InnerException is not OperationCanceledException)
+        {
+            return DisputeProblem(ReconciliationApplicationErrors.AllocationDisputeInvalidRequest);
+        }
+
+        using (document)
+        {
+            if (!TryReadDisputeStatement(document.RootElement, out string? statement, out Error? requestError))
+            {
+                return DisputeProblem(requestError!);
+            }
+
+            Result<RegisterAllocationDisputeResult> result = await handler.Handle(
+                new RegisterAllocationDisputeCommand(
+                    new AllocationId(parsedAllocationId),
+                    statement,
+                    idempotencyKey),
+                cancellationToken);
+            if (result.IsFailure)
+            {
+                return DisputeProblem(result.Error);
+            }
+
+            return result.Value.Created
+                ? TypedResults.Json(result.Value.Dispute, statusCode: StatusCodes.Status201Created)
+                : TypedResults.Ok(result.Value.Dispute);
+        }
+    }
+
+    private static bool TryReadDisputeIdempotencyKey(
+        HttpRequest httpRequest,
+        out Guid idempotencyKey,
+        out Error? error)
+    {
+        idempotencyKey = Guid.Empty;
+        if (!httpRequest.Headers.TryGetValue("Idempotency-Key", out StringValues values))
+        {
+            error = ReconciliationApplicationErrors.AllocationDisputeIdempotencyKeyRequired;
+            return false;
+        }
+
+        if (values.Count != 1 || !IsExactDisputeIdempotencyKey(values[0], out idempotencyKey))
+        {
+            error = ReconciliationApplicationErrors.AllocationDisputeIdempotencyKeyInvalid;
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    // Guid.TryParseExact trims Char.IsWhiteSpace and accepts + or 0x prefixes in .NET 10.
+    // The raw header is rejected unless it is the canonical D text of the parsed value.
+    private static bool IsExactDisputeIdempotencyKey(string? value, out Guid key)
+    {
+        key = Guid.Empty;
+        if (string.IsNullOrEmpty(value)
+            || char.IsWhiteSpace(value[0])
+            || char.IsWhiteSpace(value[^1]))
+        {
+            return false;
+        }
+
+        return Guid.TryParseExact(value, "D", out key)
+            && key != Guid.Empty
+            && string.Equals(value, key.ToString("D"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryReadDisputeStatement(JsonElement root, out string? statement, out Error? error)
+    {
+        statement = null;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            error = ReconciliationApplicationErrors.AllocationDisputeInvalidRequest;
+            return false;
+        }
+
+        int statementCount = 0;
+        JsonElement value = default;
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            string name;
+            try
+            {
+                name = property.Name;
+            }
+            catch (InvalidOperationException)
+            {
+                error = ReconciliationApplicationErrors.AllocationDisputeInvalidRequest;
+                return false;
+            }
+
+            if (!string.Equals(name, "statement", StringComparison.Ordinal))
+            {
+                error = ReconciliationApplicationErrors.AllocationDisputeInvalidRequest;
+                return false;
+            }
+
+            statementCount++;
+            value = property.Value;
+        }
+
+        if (statementCount == 0)
+        {
+            error = ReconciliationApplicationErrors.AllocationDisputeStatementRequired;
+            return false;
+        }
+
+        if (statementCount != 1 || value.ValueKind != JsonValueKind.String)
+        {
+            error = ReconciliationApplicationErrors.AllocationDisputeInvalidRequest;
+            return false;
+        }
+
+        try
+        {
+            statement = value.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            error = ReconciliationApplicationErrors.AllocationDisputeInvalidRequest;
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static ProblemHttpResult DisputeProblem(Error error)
+    {
+        return Problem(error, StatusCodeForDispute(error), TitleForDispute(error));
+    }
+
+    private static int StatusCodeForDispute(Error error)
+    {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return StatusCodes.Status403Forbidden;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationDisputeInvalidRequest.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeStatementRequired.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeStatementTooLong.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeIdempotencyKeyRequired.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeIdempotencyKeyInvalid.Code)
+        {
+            return StatusCodes.Status400BadRequest;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationRequestTooLarge.Code)
+        {
+            return StatusCodes.Status413PayloadTooLarge;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationUnsupportedMediaType.Code)
+        {
+            return StatusCodes.Status415UnsupportedMediaType;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
+        {
+            return StatusCodes.Status404NotFound;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationDisputeIdempotencyPayloadConflict.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeAllocationNotConfirmed.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeConcurrencyConflict.Code)
+        {
+            return StatusCodes.Status409Conflict;
+        }
+
+        throw new InvalidOperationException("Unexpected allocation dispute error '" + error.Code + "'.");
+    }
+
+    private static string TitleForDispute(Error error)
+    {
+        if (error.Code == ReconciliationApplicationErrors.ActorRequired.Code)
+        {
+            return "Actor is required.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationNotFound.Code)
+        {
+            return "Allocation was not found.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationDisputeIdempotencyPayloadConflict.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeAllocationNotConfirmed.Code
+            || error.Code == ReconciliationApplicationErrors.AllocationDisputeConcurrencyConflict.Code)
+        {
+            return "Allocation dispute conflict.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationRequestTooLarge.Code)
+        {
+            return "Allocation dispute request is too large.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.AllocationUnsupportedMediaType.Code)
+        {
+            return "Unsupported media type.";
+        }
+
+        return "Allocation dispute request is invalid.";
+    }
+
+    private static Task DocumentDisputeOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        operation.RequestBody = new OpenApiRequestBody
+        {
+            Required = true,
+            Description = "statement is required. Blank text is rejected. The stored value is the .NET trim of the submitted text.",
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.Object,
+                        AdditionalPropertiesAllowed = false,
+                        Required = new HashSet<string> { "statement" },
+                        Properties = new Dictionary<string, IOpenApiSchema>
+                        {
+                            ["statement"] = new OpenApiSchema
+                            {
+                                Type = JsonSchemaType.String,
+                                Description = "Required plain text. The server applies string.Trim() and then requires 1 to 500 UTF-16 code units. Surrounding whitespace is not part of that limit. U+FEFF is preserved. The raw value has no maxLength.",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "Idempotency-Key",
+            In = ParameterLocation.Header,
+            Required = true,
+            Description = "Required. One non-empty UUID whose raw text is the canonical D format, ignoring case, with no surrounding whitespace. A parsed + or 0x alias is not a valid key.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
+            },
+        });
         return Task.CompletedTask;
     }
 
