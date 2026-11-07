@@ -141,6 +141,9 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("OrganizationId", "Id")
+                        .HasName("AK_AllocationDisputes_OrganizationId_Id");
+
                     b.HasIndex("OrganizationId", "AllocationId");
 
                     b.HasIndex("OrganizationId", "IdempotencyKey")
@@ -157,6 +160,61 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                             t.HasCheckConstraint("CK_AllocationDisputes_Statement", "DATALENGTH([Statement]) = DATALENGTH(LTRIM(RTRIM([Statement]))) AND DATALENGTH([Statement]) BETWEEN 2 AND 1000");
                         });
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.AllocationDisputeResolution", b =>
+                {
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AllocationDisputeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int>("ActorSource")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("DecidedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.HasKey("OrganizationId", "AllocationDisputeId")
+                        .HasName("PK_AllocationDisputeResolutions");
+
+                    b.HasIndex("OrganizationId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AllocationDisputeResolutions_OrganizationId_IdempotencyKey");
+
+                    b.ToTable("AllocationDisputeResolutions", "reconciliation", t =>
+                        {
+                            t.HasTrigger("TR_AllocationDisputeResolutions_RejectMutation");
+
+                            t.HasCheckConstraint("CK_AllocationDisputeResolutions_ActorId", "DATALENGTH([ActorId]) = DATALENGTH(LTRIM(RTRIM([ActorId]))) AND DATALENGTH([ActorId]) BETWEEN 2 AND 512");
+
+                            t.HasCheckConstraint("CK_AllocationDisputeResolutions_ActorSource", "[ActorSource] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_AllocationDisputeResolutions_IdempotencyKey", "[IdempotencyKey] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_AllocationDisputeResolutions_Outcome", "[Outcome] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_AllocationDisputeResolutions_Reason", "DATALENGTH([Reason]) = DATALENGTH(LTRIM(RTRIM([Reason]))) AND DATALENGTH([Reason]) BETWEEN 2 AND 1000");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.BankTransactions.BankTransaction", b =>
@@ -885,6 +943,17 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                         .HasPrincipalKey("OrganizationId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.AllocationDisputeResolution", b =>
+                {
+                    b.HasOne("FinOpsDesk.Modules.Reconciliation.Domain.Allocations.AllocationDispute", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId", "AllocationDisputeId")
+                        .HasPrincipalKey("OrganizationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_AllocationDisputeResolutions_AllocationDisputes_OrganizationId_AllocationDisputeId");
                 });
 
             modelBuilder.Entity("FinOpsDesk.Modules.Reconciliation.Domain.FinancialAudit.FinancialAuditEntry", b =>

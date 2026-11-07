@@ -100,6 +100,8 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.DoesNotContain("review-cases.assign", operatorPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("review-cases.assignment.read", operatorPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("allocation-disputes.read", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("allocation-disputes.resolve", operatorPermissions, StringComparison.Ordinal);
+        Assert.DoesNotContain("allocation-disputes.resolution.read", operatorPermissions, StringComparison.Ordinal);
         Assert.True(operatorSession.RootElement.GetProperty("financialAccess").GetBoolean());
 
         await host.RevokeAsync(membership, OrganizationRole.Operator);
@@ -753,6 +755,32 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
                 await context.AllocationDisputes.CountAsync(
                     row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
         }
+
+        AllocationDispute seededDispute = AllocationDispute.Create(
+            AllocationDisputeId.New(),
+            new OrganizationId(confirmPair.OrganizationId),
+            new AllocationId(confirmedAllocationId),
+            "cookie resolution stays denied",
+            ReviewCaseActorSource.ProductionCookie,
+            user.Id.ToString("D"),
+            DateTimeOffset.Parse("2026-11-07T12:00:00Z"),
+            Guid.NewGuid());
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            context.AllocationDisputes.Add(seededDispute);
+            await context.SaveChangesAsync();
+        }
+
+        HttpResponseMessage resolution = await host.SendAsync(
+            ResolutionRequest(seededDispute.Id.Value, host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, resolution.StatusCode);
+        await using (ReconciliationDbContext context = _fixture.CreateContext())
+        {
+            Assert.Equal(
+                0,
+                await context.AllocationDisputeResolutions.CountAsync(
+                    row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
+        }
     }
 
     public void Dispose()
@@ -1221,6 +1249,22 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             "/api/review-cases/" + reviewCaseId.ToString("D") + "/comments")
         {
             Content = new StringContent("{\"text\":\"kept\"}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
+        return request;
+    }
+
+    private static HttpRequestMessage ResolutionRequest(Guid disputeId, string csrf)
+    {
+        HttpRequestMessage request = new(
+            HttpMethod.Post,
+            "/api/allocation-disputes/" + disputeId.ToString("D") + "/resolution")
+        {
+            Content = new StringContent(
+                "{\"outcome\":\"upheld\",\"reason\":\"The challenge stands.\"}",
+                Encoding.UTF8,
+                "application/json"),
         };
         request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
         request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));

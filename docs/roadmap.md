@@ -386,9 +386,12 @@ Phase 8P shows those stored registrations on `/allocation-disputes` for `Develop
 
 Phase 8Q records a dispute from a confirmed allocation on `/allocations` for `DevelopmentJwt`. The form normalizes the statement with `string.Trim()` and stores `finopsdesk.allocation-dispute-attempt`, bound to the organization, `developmentJwt`, and the normalized `sub`, before `POST /api/allocations/{allocationId}/disputes`. Replay sends the same key and body only after an explicit click. A later refusal does not clear an earlier uncertain attempt. A verified response removes the descriptor only when that same attempt is still stored. The current module instance can still show the confirmation when local deletion fails. After a reload, that leftover record is unresolved and the explicit replay is the same key. Success invalidates the dispute list cache for the current epoch even if the form has closed. It does not refresh allocation history, balances, or the financial audit, and it does not fetch the dispute detail. `ProductionCookie` does not mount the form or the recovery and does not send this POST. Contract v2, the flags, and the cookie write allowlist stay unchanged. Resolution, delegation, and the operational dashboard remain later. Phase 8 stays Planned. See ADR 0035.
 
+Phase 8R records one terminal decision for a stored allocation dispute through `POST /api/allocation-disputes/{disputeId}/resolution` and reads it through `GET /api/allocation-disputes/{disputeId}/resolution`. The outcome is `upheld` or `not_upheld`, with a required reason and a server actor and time. One dispute has one decision. The decision is allowed after reversal and does not change the registration, the allocation, balances, or the financial audit. `allocation-disputes.resolve` and `allocation-disputes.resolution.read` belong only to `Operator`. Cookie POST stays outside the allowlist when both financial flags are enabled. Contract v2 does not advertise the new read. `DevelopmentJwt` still does not distinguish roles and still requires an actor on POST, including replay. The resolution screen is not in this increment. Deployed financial flags stay unset. Phase 8 stays Planned. See ADR 0036.
+
 Still later:
 
-- dispute resolution and any settlement correction;
+- dispute resolution UI;
+- settlement correction;
 - delegation;
 - operational dashboard.
 

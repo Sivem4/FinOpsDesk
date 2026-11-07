@@ -36,6 +36,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/{id}/assignment", "get", "review-cases.assignment.read"),
         ("/api/allocation-disputes", "get", "allocation-disputes.read"),
         ("/api/allocation-disputes/{disputeId}", "get", "allocation-disputes.read"),
+        ("/api/allocation-disputes/{disputeId}/resolution", "get", "allocation-disputes.resolution.read"),
     ];
 
     private static readonly (string Path, string Method, string Permission)[] AllowlistedWrites =
@@ -57,6 +58,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/{id}/assignment", "post", "review-cases.assign"),
         ("/api/review-cases/{id}/assignment/release", "post", "review-cases.assign"),
         ("/api/allocations/{allocationId}/disputes", "post", "allocation-disputes.register"),
+        ("/api/allocation-disputes/{disputeId}/resolution", "post", "allocation-disputes.resolve"),
     ];
 
     private readonly SqlServerFixture _fixture;
@@ -135,6 +137,8 @@ public sealed class OpenApiAuthenticationDocumentTests
         Assert.True(Parameter(paths.GetProperty("/api/review-cases/{id}/assignment/release").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         AssertCommentTextSchema(comment);
         AssertDisputeStatementSchema(paths.GetProperty("/api/allocations/{allocationId}/disputes").GetProperty("post"));
+        AssertResolutionSchema(paths.GetProperty("/api/allocation-disputes/{disputeId}/resolution").GetProperty("post"));
+        Assert.True(Parameter(paths.GetProperty("/api/allocation-disputes/{disputeId}/resolution").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         Assert.Equal(
             JsonValueKind.False,
             reverse.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("additionalProperties").ValueKind);
@@ -279,6 +283,7 @@ public sealed class OpenApiAuthenticationDocumentTests
             "/api/review-cases/{id}/assignment",
             "/api/review-cases/{id}/assignment/release",
             "/api/allocations/{allocationId}/disputes",
+            "/api/allocation-disputes/{disputeId}/resolution",
         })
         {
             Assert.True(Parameter(paths.GetProperty(idempotentPath).GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
@@ -286,6 +291,7 @@ public sealed class OpenApiAuthenticationDocumentTests
 
         AssertCommentTextSchema(paths.GetProperty("/api/review-cases/{id}/comments").GetProperty("post"));
         AssertDisputeStatementSchema(paths.GetProperty("/api/allocations/{allocationId}/disputes").GetProperty("post"));
+        AssertResolutionSchema(paths.GetProperty("/api/allocation-disputes/{disputeId}/resolution").GetProperty("post"));
 
         JsonElement reverse = paths.GetProperty("/api/allocations/{allocationId}/reverse").GetProperty("post");
         Assert.True(reverse.GetProperty("responses").GetProperty("400").GetProperty("content").TryGetProperty("application/problem+json", out _));
@@ -379,7 +385,8 @@ public sealed class OpenApiAuthenticationDocumentTests
                 or "/api/review-cases/{id}/comments"
                 or "/api/review-cases/{id}/assignment"
                 or "/api/review-cases/{id}/assignment/release"
-                or "/api/allocations/{allocationId}/disputes";
+                or "/api/allocations/{allocationId}/disputes"
+                or "/api/allocation-disputes/{disputeId}/resolution";
     }
 
     private static void AssertHandlerActorForbidden(JsonElement operation)
@@ -473,6 +480,30 @@ public sealed class OpenApiAuthenticationDocumentTests
         Assert.Contains("string.Trim()", description, StringComparison.Ordinal);
         Assert.Contains("1 to 500 UTF-16", description, StringComparison.Ordinal);
         Assert.Contains("no maxLength", description, StringComparison.Ordinal);
+        Assert.Equal(
+            JsonValueKind.False,
+            operation.GetProperty("requestBody")
+                .GetProperty("content")
+                .GetProperty("application/json")
+                .GetProperty("schema")
+                .GetProperty("additionalProperties")
+                .ValueKind);
+    }
+
+    private static void AssertResolutionSchema(JsonElement operation)
+    {
+        JsonElement properties = operation
+            .GetProperty("requestBody")
+            .GetProperty("content")
+            .GetProperty("application/json")
+            .GetProperty("schema")
+            .GetProperty("properties");
+        JsonElement reason = properties.GetProperty("reason");
+        Assert.False(reason.TryGetProperty("maxLength", out _));
+        string description = reason.GetProperty("description").GetString() ?? string.Empty;
+        Assert.Contains("string.Trim()", description, StringComparison.Ordinal);
+        Assert.Contains("1 to 500 UTF-16", description, StringComparison.Ordinal);
+        Assert.Contains("upheld", properties.GetProperty("outcome").GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Equal(
             JsonValueKind.False,
             operation.GetProperty("requestBody")

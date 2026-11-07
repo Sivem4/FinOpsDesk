@@ -41,6 +41,8 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
 
     public DbSet<AllocationDispute> AllocationDisputes => Set<AllocationDispute>();
 
+    public DbSet<AllocationDisputeResolution> AllocationDisputeResolutions => Set<AllocationDisputeResolution>();
+
     public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
 
     public DbSet<ReviewCase> ReviewCases => Set<ReviewCase>();
@@ -121,6 +123,7 @@ public sealed class ReconciliationDbContext : DbContext, IUnitOfWork
         modelBuilder.ApplyConfiguration(new BankTransactionConfiguration());
         modelBuilder.ApplyConfiguration(new AllocationConfiguration());
         modelBuilder.ApplyConfiguration(new AllocationDisputeConfiguration());
+        modelBuilder.ApplyConfiguration(new AllocationDisputeResolutionConfiguration());
         modelBuilder.ApplyConfiguration(new ImportBatchConfiguration());
         modelBuilder.ApplyConfiguration(new ReviewCaseConfiguration());
         modelBuilder.ApplyConfiguration(new ReviewCaseAuditEntryConfiguration());
