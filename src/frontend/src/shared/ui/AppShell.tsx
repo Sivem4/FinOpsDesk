@@ -20,6 +20,7 @@ export function AppShell({
     { to: '/reconciliation', label: 'Reconciliation' },
     { to: '/allocations', label: 'Allocation history' },
     { to: '/review-cases', label: 'Review cases' },
+    { to: '/allocation-disputes', label: 'Allocation disputes' },
   ];
 
   return (

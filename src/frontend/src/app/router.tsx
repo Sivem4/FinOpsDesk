@@ -1,6 +1,7 @@
 import { Alert } from '@mui/material';
 import { Navigate, Route, Routes } from 'react-router';
 
+import { AllocationDisputePage } from '../features/allocation-disputes/AllocationDisputePage';
 import { AllocationHistoryPage } from '../features/allocations/AllocationHistoryPage';
 import { BankTransactionRegisterPage } from '../features/bank-transactions/BankTransactionRegisterPage';
 import { ImportWorkspacePage } from '../features/imports/ImportWorkspacePage';
@@ -18,6 +19,7 @@ export function AppRouter() {
       <Route path="/reconciliation" element={<ReconciliationQueuePage />} />
       <Route path="/allocations" element={<AllocationHistoryPage />} />
       <Route path="/review-cases" element={<ReviewCasePage />} />
+      <Route path="/allocation-disputes" element={<AllocationDisputePage />} />
       <Route
         path="*"
         element={<Alert severity="warning">That page is not available.</Alert>}
