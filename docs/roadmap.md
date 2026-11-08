@@ -388,9 +388,10 @@ Phase 8Q records a dispute from a confirmed allocation on `/allocations` for `De
 
 Phase 8R records one terminal decision for a stored allocation dispute through `POST /api/allocation-disputes/{disputeId}/resolution` and reads it through `GET /api/allocation-disputes/{disputeId}/resolution`. The outcome is `upheld` or `not_upheld`, with a required reason and a server actor and time. One dispute has one decision. The decision is allowed after reversal and does not change the registration, the allocation, balances, or the financial audit. `allocation-disputes.resolve` and `allocation-disputes.resolution.read` belong only to `Operator`. Cookie POST stays outside the allowlist when both financial flags are enabled. Contract v2 does not advertise the new read. `DevelopmentJwt` still does not distinguish roles and still requires an actor on POST, including replay. The resolution screen is not in this increment. Deployed financial flags stay unset. Phase 8 stays Planned. See ADR 0036.
 
+Phase 8S shows that decision on the existing `/allocation-disputes` screen for `DevelopmentJwt`. The selected dispute reads `GET /api/allocation-disputes/{disputeId}/resolution` and can record `upheld` or `not_upheld` with a required reason. The browser stores one `finopsdesk.allocation-dispute-resolution-attempt`, bound to the organization, `developmentJwt`, and the normalized `sub`, before the POST. Replay sends the same key and raw body only after an explicit click. A verified response blocks another command for that dispute and epoch before the following GET finishes. Removing local tracking does not by itself open the form. The decision does not change the registration, the allocation, balances, or the financial audit. `ProductionCookie` does not mount the panel or the recovery and does not send either resolution request. Contract v2, the cookie capability map, the flags, and the cookie write allowlist stay unchanged. Phase 8 stays Planned. See ADR 0037.
+
 Still later:
 
-- dispute resolution UI;
 - settlement correction;
 - delegation;
 - operational dashboard.

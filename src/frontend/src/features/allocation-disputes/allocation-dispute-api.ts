@@ -21,8 +21,11 @@ const maximumActorLength = 256;
 const invalidList = 'The allocation disputes could not be read.';
 const invalidDetail = 'The allocation dispute could not be read.';
 const invalidRegistration = 'The allocation dispute registration could not be read.';
+const invalidResolution = 'The allocation dispute decision could not be read.';
 const listKeys = ['items', 'page', 'pageSize', 'totalCount'];
 const disputeKeys = ['disputeId', 'allocationId', 'statement', 'actorSource', 'actorId', 'recordedAt'];
+const resolutionStateKeys = ['disputeId', 'decision'];
+const resolutionDecisionKeys = ['disputeId', 'outcome', 'reason', 'actorSource', 'actorId', 'decidedAt'];
 
 export const allocationDisputePageSize = 50;
 export const allocationDisputeLastPage = 42949673;
@@ -416,6 +419,101 @@ function isUtcInstantInRange(
     + fractionTicks;
   const utcTicks = localTicks - BigInt(offsetMinutes) * ticksPerMinute;
   return utcTicks >= 0n && utcTicks <= maxDateTimeTicks;
+}
+
+export type AllocationDisputeResolutionOutcome = 'upheld' | 'not_upheld';
+
+export interface AllocationDisputeResolutionDecision {
+  disputeId: string;
+  outcome: AllocationDisputeResolutionOutcome;
+  reason: string;
+  actorSource: 'developmentJwt' | 'productionCookie';
+  actorId: string;
+  decidedAt: string;
+}
+
+export interface AllocationDisputeResolutionState {
+  disputeId: string;
+  decision: AllocationDisputeResolutionDecision | null;
+}
+
+export function allocationDisputeResolutionQueryKey(epoch: number, disputeId: string) {
+  return ['allocation-disputes', 'resolution', epoch, disputeId.toLowerCase()] as const;
+}
+
+export function normalizeAllocationDisputeResolutionReason(value: string): string | null {
+  const reason = trimDotNetWhiteSpace(value);
+  if (reason.length < 1 || reason.length > maximumStatementLength) {
+    return null;
+  }
+
+  return reason;
+}
+
+export function mapAllocationDisputeResolutionState(
+  value: unknown,
+  disputeId: string,
+): AllocationDisputeResolutionState {
+  if (!isRecord(value) || !hasExactKeys(value, resolutionStateKeys)) {
+    throw new UnexpectedResponseError(invalidResolution);
+  }
+
+  const id = readResolutionDisputeId(value.disputeId, disputeId);
+  if (value.decision === null) {
+    return { disputeId: id, decision: null };
+  }
+
+  const decision = mapAllocationDisputeResolutionDecision(value.decision, disputeId);
+  if (!allocationDisputeIdsMatch(decision.disputeId, id)) {
+    throw new UnexpectedResponseError(invalidResolution);
+  }
+
+  return { disputeId: id, decision };
+}
+
+export function mapAllocationDisputeResolutionDecision(
+  value: unknown,
+  disputeId: string,
+): AllocationDisputeResolutionDecision {
+  if (!isRecord(value) || !hasExactKeys(value, resolutionDecisionKeys)) {
+    throw new UnexpectedResponseError(invalidResolution);
+  }
+
+  const id = readResolutionDisputeId(value.disputeId, disputeId);
+  if (value.outcome !== 'upheld' && value.outcome !== 'not_upheld') {
+    throw new UnexpectedResponseError(invalidResolution);
+  }
+
+  const reason = readPreservedText(value.reason, maximumStatementLength, invalidResolution);
+  const actorSource = readActorSource(value.actorSource, invalidResolution);
+  const actorId = readPreservedText(value.actorId, maximumActorLength, invalidResolution);
+  if ((actorSource !== 'developmentJwt' && actorSource !== 'productionCookie') || !isDisputeTimestamp(value.decidedAt)) {
+    throw new UnexpectedResponseError(invalidResolution);
+  }
+
+  return {
+    disputeId: id,
+    outcome: value.outcome,
+    reason,
+    actorSource,
+    actorId,
+    decidedAt: value.decidedAt,
+  };
+}
+
+export async function fetchAllocationDisputeResolution(
+  disputeId: string,
+  signal: AbortSignal,
+): Promise<unknown> {
+  return apiGet(`/api/allocation-disputes/${disputeId}/resolution`, signal);
+}
+
+function readResolutionDisputeId(value: unknown, requestedDisputeId: string): string {
+  if (typeof value !== 'string' || !isExactGuid(value) || !allocationDisputeIdsMatch(value, requestedDisputeId)) {
+    throw new UnexpectedResponseError(invalidResolution);
+  }
+
+  return value;
 }
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {

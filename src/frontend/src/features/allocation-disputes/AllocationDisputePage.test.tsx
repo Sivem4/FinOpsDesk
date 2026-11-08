@@ -453,6 +453,14 @@ describe('allocation dispute screen', () => {
         hits.push('detail');
         return text(disputeDocument());
       }),
+      http.get('/api/allocation-disputes/:disputeId/resolution', ({ params }) => {
+        hits.push('resolution');
+        return HttpResponse.json({ disputeId: params.disputeId, decision: null });
+      }),
+      http.post('/api/allocation-disputes/:disputeId/resolution', () => {
+        hits.push('resolution-post');
+        return new HttpResponse(null, { status: 500 });
+      }),
     );
     render(
       <QueryClientProvider client={queryClient}>

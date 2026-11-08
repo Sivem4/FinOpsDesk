@@ -20,6 +20,7 @@ import {
   allocationDisputeFilterSchema,
   type AllocationDisputeFilterValues,
 } from './allocation-dispute-filters';
+import { AllocationDisputeResolutionPanel } from './AllocationDisputeResolutionPanel';
 
 export function AllocationDisputePage() {
   const session = useSession();
@@ -104,6 +105,7 @@ export function AllocationDisputePage() {
       {readable && selectedId !== null ? (
         <AllocationDisputeDetail query={detailQuery} />
       ) : null}
+      {readable ? <AllocationDisputeResolutionPanel epoch={session.epoch} disputeId={selectedId} /> : null}
     </Stack>
   );
 }
