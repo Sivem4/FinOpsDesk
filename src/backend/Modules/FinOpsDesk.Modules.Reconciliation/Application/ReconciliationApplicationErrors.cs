@@ -478,4 +478,59 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.allocation_dispute.resolution.concurrency_conflict",
             "The allocation dispute resolution could not be recovered after a concurrent insert.");
+
+    public static Error AllocationDisputeCorrectionInvalidRequest { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.invalid_request",
+            "The allocation dispute correction request has an invalid dispute id, an invalid body, or an unsupported parameter.");
+
+    public static Error AllocationDisputeCorrectionReasonRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.reason_required",
+            "The correction reason is required after trim.");
+
+    public static Error AllocationDisputeCorrectionReasonTooLong { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.reason_too_long",
+            "The correction reason must contain at most 500 UTF-16 code units after trim.");
+
+    public static Error AllocationDisputeCorrectionIdempotencyKeyRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.idempotency_key_required",
+            "An Idempotency-Key header with one UUID in D format is required.");
+
+    public static Error AllocationDisputeCorrectionIdempotencyKeyInvalid { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.idempotency_key_invalid",
+            "Idempotency-Key must be one non-empty UUID whose raw text is the canonical D format, with no surrounding whitespace.");
+
+    public static Error AllocationDisputeCorrectionIdempotencyPayloadConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.idempotency_payload_conflict",
+            "This idempotency key was already used for a different allocation dispute correction.");
+
+    public static Error AllocationDisputeCorrectionDecisionRequired { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.decision_required",
+            "The allocation dispute has no upheld decision.");
+
+    public static Error AllocationDisputeCorrectionNotUpheld { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.not_upheld",
+            "A correction requires an upheld allocation dispute decision.");
+
+    public static Error AllocationDisputeCorrectionAlreadyCorrected { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.already_corrected",
+            "The allocation dispute already has a correction under a different idempotency key.");
+
+    public static Error AllocationDisputeCorrectionIntegrityConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.integrity_conflict",
+            "The stored correction does not match its allocation and reversal audit.");
+
+    public static Error AllocationDisputeCorrectionConcurrencyConflict { get; } =
+        new(
+            "reconciliation.allocation_dispute.correction.concurrency_conflict",
+            "The allocation dispute correction could not be recovered after a concurrent write.");
 }

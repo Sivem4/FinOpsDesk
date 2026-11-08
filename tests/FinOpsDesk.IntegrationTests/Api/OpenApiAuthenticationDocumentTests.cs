@@ -37,6 +37,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/allocation-disputes", "get", "allocation-disputes.read"),
         ("/api/allocation-disputes/{disputeId}", "get", "allocation-disputes.read"),
         ("/api/allocation-disputes/{disputeId}/resolution", "get", "allocation-disputes.resolution.read"),
+        ("/api/allocation-disputes/{disputeId}/correction", "get", "allocation-disputes.resolution.read"),
     ];
 
     private static readonly (string Path, string Method, string Permission)[] AllowlistedWrites =
@@ -59,6 +60,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/{id}/assignment/release", "post", "review-cases.assign"),
         ("/api/allocations/{allocationId}/disputes", "post", "allocation-disputes.register"),
         ("/api/allocation-disputes/{disputeId}/resolution", "post", "allocation-disputes.resolve"),
+        ("/api/allocation-disputes/{disputeId}/correction", "post", "allocations.reverse"),
     ];
 
     private readonly SqlServerFixture _fixture;
@@ -139,6 +141,14 @@ public sealed class OpenApiAuthenticationDocumentTests
         AssertDisputeStatementSchema(paths.GetProperty("/api/allocations/{allocationId}/disputes").GetProperty("post"));
         AssertResolutionSchema(paths.GetProperty("/api/allocation-disputes/{disputeId}/resolution").GetProperty("post"));
         Assert.True(Parameter(paths.GetProperty("/api/allocation-disputes/{disputeId}/resolution").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
+        JsonElement correction = paths.GetProperty("/api/allocation-disputes/{disputeId}/correction").GetProperty("post");
+        Assert.True(Parameter(correction, "Idempotency-Key").GetProperty("required").GetBoolean());
+        Assert.Equal(
+            JsonValueKind.False,
+            correction.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("additionalProperties").ValueKind);
+        Assert.Contains(
+            "reason",
+            correction.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("required").EnumerateArray().Select(item => item.GetString()));
         Assert.Equal(
             JsonValueKind.False,
             reverse.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("additionalProperties").ValueKind);
@@ -284,6 +294,7 @@ public sealed class OpenApiAuthenticationDocumentTests
             "/api/review-cases/{id}/assignment/release",
             "/api/allocations/{allocationId}/disputes",
             "/api/allocation-disputes/{disputeId}/resolution",
+            "/api/allocation-disputes/{disputeId}/correction",
         })
         {
             Assert.True(Parameter(paths.GetProperty(idempotentPath).GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
@@ -386,7 +397,8 @@ public sealed class OpenApiAuthenticationDocumentTests
                 or "/api/review-cases/{id}/assignment"
                 or "/api/review-cases/{id}/assignment/release"
                 or "/api/allocations/{allocationId}/disputes"
-                or "/api/allocation-disputes/{disputeId}/resolution";
+                or "/api/allocation-disputes/{disputeId}/resolution"
+                or "/api/allocation-disputes/{disputeId}/correction";
     }
 
     private static void AssertHandlerActorForbidden(JsonElement operation)

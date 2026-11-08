@@ -10,6 +10,9 @@ internal sealed class AllocationDisputeConfiguration : IEntityTypeConfiguration<
 {
     internal const string OrganizationDisputeKeyName = "AK_AllocationDisputes_OrganizationId_Id";
 
+    internal const string OrganizationDisputeAllocationKeyName =
+        "AK_AllocationDisputes_OrganizationId_Id_AllocationId";
+
     internal const string IdempotencyKeyIndexName = "UX_AllocationDisputes_OrganizationId_IdempotencyKey";
 
     internal const string IdempotencyKeyCheckName = "CK_AllocationDisputes_IdempotencyKey";
@@ -53,6 +56,14 @@ internal sealed class AllocationDisputeConfiguration : IEntityTypeConfiguration<
             dispute.Id,
         })
             .HasName(OrganizationDisputeKeyName);
+
+        builder.HasAlternateKey(dispute => new
+        {
+            dispute.OrganizationId,
+            dispute.Id,
+            dispute.AllocationId,
+        })
+            .HasName(OrganizationDisputeAllocationKeyName);
 
         builder.Property(dispute => dispute.Id)
             .HasConversion(ReconciliationValueConverters.AllocationDisputeId)

@@ -774,12 +774,24 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         HttpResponseMessage resolution = await host.SendAsync(
             ResolutionRequest(seededDispute.Id.Value, host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, resolution.StatusCode);
+        HttpResponseMessage correction = await host.SendAsync(
+            CorrectionRequest(seededDispute.Id.Value, host.Csrf));
+        Assert.Equal(HttpStatusCode.Forbidden, correction.StatusCode);
         await using (ReconciliationDbContext context = _fixture.CreateContext())
         {
             Assert.Equal(
                 0,
                 await context.AllocationDisputeResolutions.CountAsync(
                     row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
+            Assert.Equal(
+                0,
+                await context.AllocationDisputeCorrections.CountAsync(
+                    row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)));
+            Assert.Equal(
+                0,
+                await context.FinancialAuditEntries.CountAsync(
+                    row => row.OrganizationId == new OrganizationId(confirmPair.OrganizationId)
+                        && row.Action == FinancialAuditAction.Reversal));
         }
     }
 
@@ -1263,6 +1275,22 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         {
             Content = new StringContent(
                 "{\"outcome\":\"upheld\",\"reason\":\"The challenge stands.\"}",
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
+        return request;
+    }
+
+    private static HttpRequestMessage CorrectionRequest(Guid disputeId, string csrf)
+    {
+        HttpRequestMessage request = new(
+            HttpMethod.Post,
+            "/api/allocation-disputes/" + disputeId.ToString("D") + "/correction")
+        {
+            Content = new StringContent(
+                "{\"reason\":\"Customer evidence accepted\"}",
                 Encoding.UTF8,
                 "application/json"),
         };

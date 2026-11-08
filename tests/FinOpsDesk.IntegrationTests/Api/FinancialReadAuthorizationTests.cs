@@ -736,6 +736,10 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         using HttpResponseMessage resolution = await client.GetAsync(resolutionPath);
         string resolutionBody = await resolution.Content.ReadAsStringAsync();
         Assert.Equal(statusCode, resolution.StatusCode);
+        string correctionPath = resolutionPath.Replace("/resolution", "/correction", StringComparison.Ordinal);
+        using HttpResponseMessage correction = await client.GetAsync(correctionPath);
+        string correctionBody = await correction.Content.ReadAsStringAsync();
+        Assert.Equal(statusCode, correction.StatusCode);
         if (statusCode == HttpStatusCode.OK)
         {
             Assert.Contains("counterparty challenge", listBody, StringComparison.Ordinal);
@@ -746,6 +750,10 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
             Assert.Equal(JsonValueKind.Null, resolutionDocument.RootElement.GetProperty("decision").ValueKind);
             Assert.False(resolutionDocument.RootElement.TryGetProperty("organizationId", out _));
             Assert.False(resolutionDocument.RootElement.TryGetProperty("idempotencyKey", out _));
+            using JsonDocument correctionDocument = JsonDocument.Parse(correctionBody);
+            Assert.Equal(JsonValueKind.Null, correctionDocument.RootElement.GetProperty("correction").ValueKind);
+            Assert.False(correctionDocument.RootElement.TryGetProperty("organizationId", out _));
+            Assert.False(correctionDocument.RootElement.TryGetProperty("idempotencyKey", out _));
             return;
         }
 

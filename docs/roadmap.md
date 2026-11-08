@@ -390,9 +390,11 @@ Phase 8R records one terminal decision for a stored allocation dispute through `
 
 Phase 8S shows that decision on the existing `/allocation-disputes` screen for `DevelopmentJwt`. The selected dispute reads `GET /api/allocation-disputes/{disputeId}/resolution` and can record `upheld` or `not_upheld` with a required reason. The browser stores one `finopsdesk.allocation-dispute-resolution-attempt`, bound to the organization, `developmentJwt`, and the normalized `sub`, before the POST. Replay sends the same key and raw body only after an explicit click. A verified response blocks another command for that dispute and epoch before the following GET finishes. Removing local tracking does not by itself open the form. The decision does not change the registration, the allocation, balances, or the financial audit. `ProductionCookie` does not mount the panel or the recovery and does not send either resolution request. Contract v2, the cookie capability map, the flags, and the cookie write allowlist stay unchanged. Phase 8 stays Planned. See ADR 0037.
 
+Phase 8T adds the backend correction for an upheld dispute. `POST /api/allocation-disputes/{disputeId}/correction` performs one full reversal through `AllocationReversal.Apply` and stores the dispute link, the reversal key, the balance changes, and one reversal audit in the same explicit transaction. The decision itself still does not move money. An earlier independent reversal does not gain a link. The correction key shares `Allocation.ReversalIdempotencyKey` with ordinary reversal, and `ReverseAllocationHandler` keeps its replay behavior. GET reads the stored correction or `correction: null`. The permission for the money movement is `allocations.reverse`, with `FinancialWriteOperation` value 16 outside the cookie allowlist. GET uses `allocation-disputes.resolution.read`. Roles, flags, the three-operation allowlist, and session contract v2 stay unchanged. There is no correction screen in this increment. Phase 8 stays Planned. See ADR 0038.
+
 Still later:
 
-- settlement correction;
+- correction screen;
 - delegation;
 - operational dashboard.
 
