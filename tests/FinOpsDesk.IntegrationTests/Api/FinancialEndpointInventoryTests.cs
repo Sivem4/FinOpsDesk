@@ -32,6 +32,7 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
         ["POST /api/review-cases/{id}/assignment/release"] = FinancialWriteOperation.ReleaseReviewCase,
         ["POST /api/allocations/{allocationId}/disputes"] = FinancialWriteOperation.RegisterAllocationDispute,
         ["POST /api/allocation-disputes/{disputeId}/resolution"] = FinancialWriteOperation.ResolveAllocationDispute,
+        ["POST /api/allocation-disputes/{disputeId}/correction"] = FinancialWriteOperation.CorrectAllocationDispute,
     };
 
     private readonly FinOpsDeskApiFactory _factory;
@@ -78,6 +79,8 @@ public sealed class FinancialEndpointInventoryTests : IDisposable
             ["GET /api/allocation-disputes/{disputeId}"] = AccessPermission.AllocationDisputesRead.Value,
             ["GET /api/allocation-disputes/{disputeId}/resolution"] = AccessPermission.AllocationDisputesResolutionRead.Value,
             ["POST /api/allocation-disputes/{disputeId}/resolution"] = AccessPermission.AllocationDisputesResolve.Value,
+            ["GET /api/allocation-disputes/{disputeId}/correction"] = AccessPermission.AllocationDisputesResolutionRead.Value,
+            ["POST /api/allocation-disputes/{disputeId}/correction"] = AccessPermission.AllocationsReverse.Value,
         };
 
         Assert.Equal(
