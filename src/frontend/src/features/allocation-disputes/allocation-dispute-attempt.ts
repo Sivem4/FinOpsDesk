@@ -489,6 +489,14 @@ export async function refreshAllocationDisputeLists(epoch: number): Promise<void
     { queryKey: ['allocation-disputes', 'list', epoch] },
     { throwOnError: true },
   );
+  await queryClient.invalidateQueries(
+    { queryKey: ['allocation-disputes', 'work-summary', epoch] },
+    { throwOnError: true },
+  );
+  await queryClient.invalidateQueries(
+    { queryKey: ['allocation-disputes', 'queue', epoch, 'needs-decision'] },
+    { throwOnError: true },
+  );
 }
 
 function trackListRefresh(epoch: number): Promise<void> {

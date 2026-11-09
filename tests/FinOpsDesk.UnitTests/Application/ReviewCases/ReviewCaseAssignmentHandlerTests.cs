@@ -187,6 +187,7 @@ public sealed class ReviewCaseAssignmentHandlerTests
             lookup,
             new RecordingWriter(),
             new NeverConflict(),
+            new ClosedDirectory(),
             unitOfWork,
             new FixedTime());
     }
@@ -205,8 +206,22 @@ public sealed class ReviewCaseAssignmentHandlerTests
             lookup,
             new RecordingWriter(),
             new NeverConflict(),
+            new ClosedDirectory(),
             unitOfWork,
             new FixedTime());
+    }
+
+    private sealed class ClosedDirectory : IReviewCaseDelegationDirectory
+    {
+        public ReviewCaseDelegationDirectoryRead ReadCurrentOrganization()
+        {
+            return ReviewCaseDelegationDirectoryRead.Unavailable.Instance;
+        }
+
+        public bool Allows(OrganizationId organizationId, string normalizedRecipientActorId)
+        {
+            return false;
+        }
     }
 
     private static ReviewCase Open(OrganizationId organizationId, ReviewCaseId reviewCaseId)

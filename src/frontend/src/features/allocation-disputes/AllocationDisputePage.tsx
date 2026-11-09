@@ -8,6 +8,7 @@ import { useSearchParams } from 'react-router';
 import { ApiError, NetworkError, StaleSessionError, UnexpectedResponseError } from '../../shared/api/errors';
 import { endSession, useSession } from '../../shared/auth/session';
 import {
+  allocationDisputeDetailQueryKey,
   allocationDisputeIdsMatch,
   allocationDisputeNextEnabled,
   getAllocationDispute,
@@ -20,6 +21,8 @@ import {
   allocationDisputeFilterSchema,
   type AllocationDisputeFilterValues,
 } from './allocation-dispute-filters';
+import { listAllocationDisputeQueue } from './allocation-dispute-work-api';
+import { AllocationDisputeCorrectionPanel } from './AllocationDisputeCorrectionPanel';
 import { AllocationDisputeResolutionPanel } from './AllocationDisputeResolutionPanel';
 
 export function AllocationDisputePage() {
@@ -29,18 +32,20 @@ export function AllocationDisputePage() {
   const readable = session.token !== null;
   const selectedId = address.selectedState === 'valid' ? address.selectedValues[0] ?? null : null;
   const listQuery = useQuery({
-    queryKey: ['allocation-disputes', 'list', session.epoch, address.page, address.allocationId],
+    queryKey: ['allocation-disputes', address.queue === null ? 'list' : 'queue', session.epoch, address.queue, address.page, address.allocationId],
     enabled: readable && address.listValid,
     queryFn: ({ signal }) => {
       if (address.page === null) {
         throw new UnexpectedResponseError('The allocation disputes could not be read.');
       }
 
-      return listAllocationDisputes(address.page, address.allocationId, signal);
+      return address.queue === null
+        ? listAllocationDisputes(address.page, address.allocationId, signal)
+        : listAllocationDisputeQueue(address.queue, address.page, signal);
     },
   });
   const detailQuery = useQuery({
-    queryKey: ['allocation-disputes', 'detail', session.epoch, selectedId],
+    queryKey: allocationDisputeDetailQueryKey(session.epoch, selectedId ?? ''),
     enabled: readable && selectedId !== null,
     queryFn: ({ signal }) => {
       if (selectedId === null) {
@@ -51,9 +56,18 @@ export function AllocationDisputePage() {
     },
   });
 
-  function writeAddress(page: number, allocationId: string | null, selectedValues: readonly string[]) {
+  function writeAddress(
+    page: number,
+    allocationId: string | null,
+    selectedValues: readonly string[],
+    queue: 'needs-decision' | 'needs-correction' | null,
+  ) {
     const next = new URLSearchParams();
     next.set('page', String(page));
+    if (queue !== null) {
+      next.set('queue', queue);
+    }
+
     if (allocationId !== null) {
       next.set('allocationId', allocationId);
     }
@@ -79,9 +93,25 @@ export function AllocationDisputePage() {
         <AllocationDisputeFilter
           allocationId={address.allocationId ?? ''}
           onApply={(allocationId) => {
-            writeAddress(1, allocationId, address.selectedValues);
+            writeAddress(1, allocationId, address.selectedValues, null);
           }}
         />
+      ) : null}
+      {readable && address.listValid && address.queue !== null ? (
+        <Stack spacing={1}>
+          <Typography>
+            This queue is not filtered by allocation. Applying the allocation filter leaves the queue and opens the register.
+          </Typography>
+          <Button
+            variant="outlined"
+            sx={{ alignSelf: 'flex-start' }}
+            onClick={() => {
+              writeAddress(1, address.allocationId, address.selectedValues, null);
+            }}
+          >
+            Show the full register
+          </Button>
+        </Stack>
       ) : null}
       {readable && address.selectedState === 'invalid' ? (
         <Alert severity="warning">
@@ -95,10 +125,10 @@ export function AllocationDisputePage() {
           page={address.page ?? 1}
           selectedId={selectedId}
           onPage={(page) => {
-            writeAddress(page, address.allocationId, address.selectedValues);
+            writeAddress(page, address.allocationId, address.selectedValues, address.queue);
           }}
           onSelect={(disputeId) => {
-            writeAddress(address.page ?? 1, address.allocationId, [disputeId]);
+            writeAddress(address.page ?? 1, address.allocationId, [disputeId], address.queue);
           }}
         />
       ) : null}
@@ -106,6 +136,9 @@ export function AllocationDisputePage() {
         <AllocationDisputeDetail query={detailQuery} />
       ) : null}
       {readable ? <AllocationDisputeResolutionPanel epoch={session.epoch} disputeId={selectedId} /> : null}
+      {readable ? (
+        <AllocationDisputeCorrectionPanel epoch={session.epoch} disputeId={selectedId} />
+      ) : null}
     </Stack>
   );
 }

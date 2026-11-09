@@ -63,6 +63,66 @@ public sealed class ReviewCaseAssignmentTests
     }
 
     [Fact]
+    public void Delegate_moves_the_case_to_another_actor_of_the_same_source()
+    {
+        ReviewCase reviewCase = Open();
+        Assert.Equal(ReviewCaseAssignmentRejection.NotAssigned, reviewCase.Delegate(
+            ReviewCaseActorSource.DevelopmentJwt,
+            "owner",
+            "colleague",
+            Later));
+        Assert.Null(reviewCase.Claim(ReviewCaseActorSource.DevelopmentJwt, "owner", Later));
+
+        Assert.Equal(
+            ReviewCaseAssignmentRejection.DelegateeUnavailable,
+            reviewCase.Delegate(ReviewCaseActorSource.DevelopmentJwt, "owner", "owner", Later.AddMinutes(1)));
+        Assert.Equal("owner", reviewCase.AssignedActorId);
+        Assert.Equal(Later, reviewCase.AssignedAt);
+        Assert.Throws<ArgumentOutOfRangeException>(() => reviewCase.Delegate(
+            ReviewCaseActorSource.DevelopmentJwt,
+            "owner",
+            "colleague",
+            default));
+        Assert.Equal("owner", reviewCase.AssignedActorId);
+        Assert.Equal(Later, reviewCase.AssignedAt);
+
+        Assert.Null(reviewCase.Delegate(
+            ReviewCaseActorSource.DevelopmentJwt,
+            "owner",
+            "colleague",
+            Later.AddMinutes(2)));
+        Assert.Equal(ReviewCaseActorSource.DevelopmentJwt, reviewCase.AssignedActorSource);
+        Assert.Equal("colleague", reviewCase.AssignedActorId);
+        Assert.Equal(Later.AddMinutes(2), reviewCase.AssignedAt);
+        Assert.Throws<ArgumentException>(() => ReviewCaseAssignmentEntry.Create(
+            ReviewCaseAssignmentEntryId.New(),
+            reviewCase.OrganizationId,
+            reviewCase.Id,
+            ReviewCaseAssignmentOperation.Claim,
+            ReviewCaseActorSource.DevelopmentJwt,
+            "owner",
+            "AAAAAAAAAAA=",
+            Guid.NewGuid(),
+            Later,
+            Later,
+            "colleague"));
+        ReviewCaseAssignmentEntry delegated = ReviewCaseAssignmentEntry.Create(
+            ReviewCaseAssignmentEntryId.New(),
+            reviewCase.OrganizationId,
+            reviewCase.Id,
+            ReviewCaseAssignmentOperation.Delegate,
+            ReviewCaseActorSource.DevelopmentJwt,
+            "owner",
+            "AAAAAAAAAAA=",
+            Guid.NewGuid(),
+            Later.AddMinutes(2),
+            Later.AddMinutes(2),
+            "colleague");
+        Assert.Equal("colleague", delegated.RecipientActorId);
+        Assert.Equal(ReviewCaseAssignmentOperation.Delegate, delegated.Operation);
+    }
+
+    [Fact]
     public void A_default_assignment_time_leaves_every_field_unchanged_and_the_same_instance_can_be_claimed()
     {
         ReviewCase reviewCase = Open();

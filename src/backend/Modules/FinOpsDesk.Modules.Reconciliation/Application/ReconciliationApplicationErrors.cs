@@ -297,7 +297,7 @@ public static class ReconciliationApplicationErrors
     public static Error ReviewCaseAssignmentTerminal { get; } =
         new(
             "reconciliation.review_case_assignment.terminal",
-            "A resolved or dismissed review case cannot be claimed or released.");
+            "A resolved or dismissed review case cannot be claimed, released, or delegated.");
 
     public static Error ReviewCaseAssignmentAlreadyAssigned { get; } =
         new(
@@ -323,6 +323,16 @@ public static class ReconciliationApplicationErrors
         new(
             "reconciliation.review_case_assignment.concurrency_conflict",
             "The review case assignment could not be recovered after a concurrent change.");
+
+    public static Error ReviewCaseAssignmentDelegateeUnavailable { get; } =
+        new(
+            "reconciliation.review_case_assignment.delegatee_unavailable",
+            "The recipient cannot take this review case.");
+
+    public static Error ReviewCaseDelegationUnavailable { get; } =
+        new(
+            "reconciliation.review_case_assignment.delegation_unavailable",
+            "Delegation recipients are not available for this session.");
 
     public static Error BatchInvalidRequest { get; } =
         new(

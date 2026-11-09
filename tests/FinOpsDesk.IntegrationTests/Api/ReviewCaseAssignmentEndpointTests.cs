@@ -773,12 +773,126 @@ public sealed class ReviewCaseAssignmentEndpointTests : IDisposable
         await AssertAssignmentColumnsAsync(connection, reviewCaseId, null, null, null);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Delegate_and_release_leave_one_assignment_change(bool delegateWins)
+    {
+        AssignmentRaceProbe probe = new(AssignmentRaceMode.WinnerThenLoserReads);
+        OrganizationId organizationId = OrganizationId.New();
+        using FinOpsDeskApiFactory factory = RaceFactory(probe, DelegationList(organizationId));
+        using HttpClient client = factory.CreateApiClient(TestAccessTokens.CreateForActor(organizationId.Value, "owner"));
+        Guid reviewCaseId = await OpenAsync(client, (await SeedInvoiceAsync(organizationId, "delegate-release-" + delegateWins)).Id.Value);
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await PostAssignmentAsync(client, AssignmentPath(reviewCaseId), await DetailTokenAsync(client, reviewCaseId), Guid.NewGuid())).StatusCode);
+        string token = await AssignmentTokenAsync(client, reviewCaseId);
+        probe.Arm();
+        Task<HttpResponseMessage> winner = delegateWins
+            ? PostDelegateAsync(client, reviewCaseId, token)
+            : PostAssignmentAsync(client, ReleasePath(reviewCaseId), token, Guid.NewGuid());
+        await probe.WaitForCaseReadsAsync(1);
+        Task<HttpResponseMessage> loser = delegateWins
+            ? PostAssignmentAsync(client, ReleasePath(reviewCaseId), token, Guid.NewGuid())
+            : PostDelegateAsync(client, reviewCaseId, token);
+        HttpResponseMessage[] responses = await Task.WhenAll(winner, loser);
+
+        Assert.Equal(1, probe.Commits);
+        Assert.Equal(HttpStatusCode.Created, responses[0].StatusCode);
+        await AssertProblemAsync(
+            responses[1],
+            HttpStatusCode.Conflict,
+            ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict.Code);
+        Assert.Equal(2, await HistoryCountAsync(organizationId));
+        CaseRow row = await ReadCaseAsync(reviewCaseId);
+        Assert.Equal(ReviewCaseStatus.Open, row.Status);
+        Assert.Equal(delegateWins ? "colleague" : null, row.ActorId);
+        Assert.Equal(delegateWins ? 1 : 0, await CountOperationAsync(organizationId, ReviewCaseAssignmentOperation.Delegate));
+        Assert.Equal(delegateWins ? 0 : 1, await CountOperationAsync(organizationId, ReviewCaseAssignmentOperation.Release));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Delegate_and_resolve_leave_one_winner(bool delegateWins)
+    {
+        AssignmentRaceProbe probe = new(AssignmentRaceMode.WinnerThenLoserReads);
+        OrganizationId organizationId = OrganizationId.New();
+        using FinOpsDeskApiFactory factory = RaceFactory(probe, DelegationList(organizationId));
+        using HttpClient client = factory.CreateApiClient(TestAccessTokens.CreateForActor(organizationId.Value, "owner"));
+        Guid reviewCaseId = await OpenAsync(client, (await SeedInvoiceAsync(organizationId, "delegate-resolve-" + delegateWins)).Id.Value);
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await PostAssignmentAsync(client, AssignmentPath(reviewCaseId), await DetailTokenAsync(client, reviewCaseId), Guid.NewGuid())).StatusCode);
+        string token = await AssignmentTokenAsync(client, reviewCaseId);
+        string resolvePath = "/api/review-cases/" + reviewCaseId.ToString("D") + "/resolve";
+        probe.Arm();
+        Task<HttpResponseMessage> winner = delegateWins
+            ? PostDelegateAsync(client, reviewCaseId, token)
+            : PostCloseAsync(client, resolvePath, token, resolve: true);
+        await probe.WaitForCaseReadsAsync(1);
+        Task<HttpResponseMessage> loser = delegateWins
+            ? PostCloseAsync(client, resolvePath, token, resolve: true)
+            : PostDelegateAsync(client, reviewCaseId, token);
+        HttpResponseMessage[] responses = await Task.WhenAll(winner, loser);
+
+        Assert.Equal(1, probe.Commits);
+        CaseRow row = await ReadCaseAsync(reviewCaseId);
+        if (delegateWins)
+        {
+            Assert.Equal(HttpStatusCode.Created, responses[0].StatusCode);
+            await AssertProblemAsync(
+                responses[1],
+                HttpStatusCode.Conflict,
+                ReconciliationApplicationErrors.ReviewCaseConcurrencyConflict.Code);
+            Assert.Equal(ReviewCaseStatus.Open, row.Status);
+            Assert.Equal("colleague", row.ActorId);
+            Assert.Equal(1, await CountOperationAsync(organizationId, ReviewCaseAssignmentOperation.Delegate));
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.OK, responses[0].StatusCode);
+            await AssertProblemAsync(
+                responses[1],
+                HttpStatusCode.Conflict,
+                ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict.Code);
+            Assert.Equal(ReviewCaseStatus.Resolved, row.Status);
+            Assert.Equal("owner", row.ActorId);
+            Assert.Equal(0, await CountOperationAsync(organizationId, ReviewCaseAssignmentOperation.Delegate));
+        }
+    }
+
     public void Dispose()
     {
         _factory.Dispose();
     }
 
-    private FinOpsDeskApiFactory RaceFactory(AssignmentRaceProbe probe)
+    private static Dictionary<string, string?> DelegationList(OrganizationId organizationId)
+    {
+        return new Dictionary<string, string?>
+        {
+            ["DevelopmentDelegation:Organizations:" + organizationId.Value.ToString("D") + ":0"] = "colleague",
+        };
+    }
+
+    private async Task<int> CountOperationAsync(OrganizationId organizationId, ReviewCaseAssignmentOperation operation)
+    {
+        return await CountAsync(context => context.ReviewCaseAssignmentEntries.CountAsync(entry =>
+            entry.OrganizationId == organizationId && entry.Operation == operation));
+    }
+
+    private static Task<HttpResponseMessage> PostDelegateAsync(HttpClient client, Guid reviewCaseId, string token)
+    {
+        return PostRawAsync(
+            client,
+            "/api/review-cases/" + reviewCaseId.ToString("D") + "/assignment/delegate",
+            "{\"concurrencyToken\":" + JsonSerializer.Serialize(token) + ",\"recipientActorId\":\"colleague\"}",
+            Guid.NewGuid().ToString("D"));
+    }
+
+    private FinOpsDeskApiFactory RaceFactory(
+        AssignmentRaceProbe probe,
+        IReadOnlyDictionary<string, string?>? configurationOverrides = null)
     {
         return new FinOpsDeskApiFactory(
             _fixture.ConnectionString,
@@ -794,7 +908,8 @@ public sealed class ReviewCaseAssignmentEndpointTests : IDisposable
                 services.RemoveAll<IUnitOfWork>();
                 services.AddScoped<IUnitOfWork>(serviceProvider =>
                     new SignalingUnitOfWork(serviceProvider.GetRequiredService<ReconciliationDbContext>(), probe));
-            });
+            },
+            configurationOverrides: configurationOverrides);
     }
 
     private HttpClient Client(OrganizationId organizationId)

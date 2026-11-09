@@ -25,6 +25,7 @@ using FinOpsDesk.SharedKernel.Tenancy;
 
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -111,6 +112,42 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         Assert.Contains("allocations.reverse", approverPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("reconciliation.confirm", approverPermissions, StringComparison.Ordinal);
         Assert.DoesNotContain("allocations.create", approverPermissions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Cookie_operator_cannot_read_or_send_delegation_when_both_flags_are_enabled()
+    {
+        const string secret = "delegate-secret-recipient";
+        await using Host host = await Host.StartAsync(this, reads: true, writes: true);
+        ApplicationUser user = await host.RequireUserAsync();
+        Guid organizationId = await host.SelectedOrganizationIdAsync();
+        await host.GrantAsync(await host.MembershipIdAsync(user.Id, organizationId), OrganizationRole.Operator);
+        int history = await CountAssignmentHistoryAsync(organizationId);
+
+        HttpResponseMessage listed = await host.Client.GetAsync("/api/review-cases/delegation-recipients");
+        string listedBody = await ReadProblemAsync(
+            listed,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ReviewCaseDelegationUnavailable.Code);
+        Assert.DoesNotContain(secret, listedBody, StringComparison.Ordinal);
+
+        host.ReplaceConfiguration(AuthenticationCompositions.ConfigurationKey, AuthenticationCompositions.DevelopmentJwt);
+        HttpResponseMessage changed = await host.Client.GetAsync("/api/review-cases/delegation-recipients");
+        string changedBody = await ReadProblemAsync(
+            changed,
+            HttpStatusCode.Forbidden,
+            ReconciliationApplicationErrors.ReviewCaseDelegationUnavailable.Code);
+        Assert.DoesNotContain(secret, changedBody, StringComparison.Ordinal);
+
+        using HttpRequestMessage request = DelegateRequest(
+            "/api/review-cases/" + Guid.NewGuid().ToString("D") + "/assignment/delegate",
+            host.Csrf);
+        HttpResponseMessage delegated = await host.SendAsync(request);
+        string delegatedBody = await delegated.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, delegated.StatusCode);
+        Assert.DoesNotContain(secret, delegatedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("colleague", delegatedBody, StringComparison.Ordinal);
+        Assert.Equal(history, await CountAssignmentHistoryAsync(organizationId));
     }
 
     [Fact]
@@ -725,8 +762,12 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             AssignmentRequest("/api/review-cases/" + commentCase.Id.Value.ToString("D") + "/assignment", host.Csrf));
         HttpResponseMessage release = await host.SendAsync(
             AssignmentRequest("/api/review-cases/" + commentCase.Id.Value.ToString("D") + "/assignment/release", host.Csrf));
+        HttpResponseMessage delegated = await host.SendAsync(
+            DelegateRequest("/api/review-cases/" + commentCase.Id.Value.ToString("D") + "/assignment/delegate", host.Csrf));
         Assert.Equal(HttpStatusCode.Forbidden, claim.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, release.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, delegated.StatusCode);
+        Assert.DoesNotContain("delegate-secret-recipient", await delegated.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         Guid confirmedAllocationId;
         await using (ReconciliationDbContext context = _fixture.CreateContext())
         {
@@ -1044,6 +1085,13 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             audits);
     }
 
+    private async Task<int> CountAssignmentHistoryAsync(Guid organizationId)
+    {
+        await using ReconciliationDbContext context = _fixture.CreateContext();
+        return await context.ReviewCaseAssignmentEntries.CountAsync(entry =>
+            entry.OrganizationId == new OrganizationId(organizationId));
+    }
+
     private async Task AssertRejectedKeyAbsentAsync(Guid key)
     {
         await using ReconciliationDbContext context = _fixture.CreateContext();
@@ -1115,6 +1163,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             CommentRequest(Guid.Parse(reviewId), host.Csrf),
             AssignmentRequest("/api/review-cases/" + reviewId + "/assignment", host.Csrf),
             AssignmentRequest("/api/review-cases/" + reviewId + "/assignment/release", host.Csrf),
+            DelegateRequest("/api/review-cases/" + reviewId + "/assignment/delegate", host.Csrf),
         ];
         foreach (HttpRequestMessage request in requests)
         {
@@ -1248,6 +1297,20 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
         HttpRequestMessage request = new(HttpMethod.Post, path)
         {
             Content = new StringContent("{\"concurrencyToken\":\"AAAAAAAAAAA=\"}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
+        return request;
+    }
+
+    private static HttpRequestMessage DelegateRequest(string path, string csrf)
+    {
+        HttpRequestMessage request = new(HttpMethod.Post, path)
+        {
+            Content = new StringContent(
+                "{\"concurrencyToken\":\"AAAAAAAAAAA=\",\"recipientActorId\":\"delegate-secret-recipient\"}",
+                Encoding.UTF8,
+                "application/json"),
         };
         request.Headers.TryAddWithoutValidation(FinOpsDeskCsrf.HeaderName, csrf);
         request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString("D"));
@@ -1696,6 +1759,11 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
             State = factory.Services.GetRequiredService<AuthenticationCompositionState>();
         }
 
+        public void ReplaceConfiguration(string key, string? value)
+        {
+            _factory.Services.GetRequiredService<IConfiguration>()[key] = value;
+        }
+
         public static async Task<Host> StartAsync(
             FinancialWriteAuthorizationTests test,
             bool reads,
@@ -1743,6 +1811,7 @@ public sealed class FinancialWriteAuthorizationTests : IDisposable
                     ["Authentication:Oidc:ClientSecret"] = OidcProtocolStub.ClientSecret,
                     ["Authentication:Oidc:BrowserOrigin"] = "https://localhost",
                     ["Authentication:Oidc:RequireHttpsMetadata"] = "false",
+                    ["DevelopmentDelegation:Organizations:11111111-1111-1111-1111-111111111111:0"] = "delegate-secret-recipient",
                 },
                 financialReadAuthorizationEnabled: reads,
                 financialWriteAuthorizationEnabled: writes,

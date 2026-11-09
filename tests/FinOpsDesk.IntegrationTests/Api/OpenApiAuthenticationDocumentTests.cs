@@ -34,6 +34,9 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/summary", "get", "review-cases.read"),
         ("/api/review-cases/{id}", "get", "review-cases.read"),
         ("/api/review-cases/{id}/assignment", "get", "review-cases.assignment.read"),
+        ("/api/review-cases/delegation-recipients", "get", "review-cases.assignment.read"),
+        ("/api/allocation-disputes/summary", "get", "allocation-disputes.resolution.read"),
+        ("/api/allocation-disputes/queue", "get", "allocation-disputes.resolution.read"),
         ("/api/allocation-disputes", "get", "allocation-disputes.read"),
         ("/api/allocation-disputes/{disputeId}", "get", "allocation-disputes.read"),
         ("/api/allocation-disputes/{disputeId}/resolution", "get", "allocation-disputes.resolution.read"),
@@ -58,6 +61,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         ("/api/review-cases/{id}/comments", "post", "review-cases.comment"),
         ("/api/review-cases/{id}/assignment", "post", "review-cases.assign"),
         ("/api/review-cases/{id}/assignment/release", "post", "review-cases.assign"),
+        ("/api/review-cases/{id}/assignment/delegate", "post", "review-cases.assign"),
         ("/api/allocations/{allocationId}/disputes", "post", "allocation-disputes.register"),
         ("/api/allocation-disputes/{disputeId}/resolution", "post", "allocation-disputes.resolve"),
         ("/api/allocation-disputes/{disputeId}/correction", "post", "allocations.reverse"),
@@ -119,6 +123,10 @@ public sealed class OpenApiAuthenticationDocumentTests
                 Assert.Contains("reconciliation.actor.required", description, StringComparison.Ordinal);
                 AssertHandlerActorForbidden(operation);
             }
+            else if (path == "/api/review-cases/delegation-recipients" && method == "get")
+            {
+                AssertDelegationCatalogDenied(operation, description);
+            }
             else
             {
                 Assert.DoesNotContain("reconciliation.actor.required", description, StringComparison.Ordinal);
@@ -137,6 +145,7 @@ public sealed class OpenApiAuthenticationDocumentTests
         Assert.True(Parameter(comment, "Idempotency-Key").GetProperty("required").GetBoolean());
         Assert.True(Parameter(paths.GetProperty("/api/review-cases/{id}/assignment").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         Assert.True(Parameter(paths.GetProperty("/api/review-cases/{id}/assignment/release").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
+        Assert.True(Parameter(paths.GetProperty("/api/review-cases/{id}/assignment/delegate").GetProperty("post"), "Idempotency-Key").GetProperty("required").GetBoolean());
         AssertCommentTextSchema(comment);
         AssertDisputeStatementSchema(paths.GetProperty("/api/allocations/{allocationId}/disputes").GetProperty("post"));
         AssertResolutionSchema(paths.GetProperty("/api/allocation-disputes/{disputeId}/resolution").GetProperty("post"));
@@ -249,8 +258,15 @@ public sealed class OpenApiAuthenticationDocumentTests
             Assert.DoesNotContain("does not validate CSRF", description, StringComparison.Ordinal);
             Assert.False(HasParameter(operation, CsrfHeader));
             AssertEmptyStatus(operation, "401");
-            AssertEmptyStatus(operation, "403");
-            Assert.DoesNotContain("reconciliation.actor.required", StatusDescription(operation, "403"), StringComparison.Ordinal);
+            if (path == "/api/review-cases/delegation-recipients" && method == "get")
+            {
+                AssertDelegationCatalogDenied(operation, description);
+            }
+            else
+            {
+                AssertEmptyStatus(operation, "403");
+                Assert.DoesNotContain("reconciliation.actor.required", StatusDescription(operation, "403"), StringComparison.Ordinal);
+            }
             Assert.DoesNotContain("Financial authorization could not be completed", StatusDescription(operation, "401"), StringComparison.Ordinal);
         }
 
@@ -292,6 +308,7 @@ public sealed class OpenApiAuthenticationDocumentTests
             "/api/review-cases/{id}/comments",
             "/api/review-cases/{id}/assignment",
             "/api/review-cases/{id}/assignment/release",
+            "/api/review-cases/{id}/assignment/delegate",
             "/api/allocations/{allocationId}/disputes",
             "/api/allocation-disputes/{disputeId}/resolution",
             "/api/allocation-disputes/{disputeId}/correction",
@@ -396,6 +413,7 @@ public sealed class OpenApiAuthenticationDocumentTests
                 or "/api/review-cases/{id}/comments"
                 or "/api/review-cases/{id}/assignment"
                 or "/api/review-cases/{id}/assignment/release"
+                or "/api/review-cases/{id}/assignment/delegate"
                 or "/api/allocations/{allocationId}/disputes"
                 or "/api/allocation-disputes/{disputeId}/resolution"
                 or "/api/allocation-disputes/{disputeId}/correction";
@@ -414,6 +432,21 @@ public sealed class OpenApiAuthenticationDocumentTests
     {
         return operation.GetProperty("responses").GetProperty(status).GetProperty("description").GetString()
             ?? string.Empty;
+    }
+
+    private static void AssertDelegationCatalogDenied(JsonElement operation, string description)
+    {
+        Assert.DoesNotContain("reconciliation.actor.required", description, StringComparison.Ordinal);
+        Assert.Contains(
+            "reconciliation.review_case_assignment.delegation_unavailable",
+            description,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "reconciliation.review_case_assignment.delegation_unavailable",
+            StatusDescription(operation, "403"),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("reconciliation.actor.required", StatusDescription(operation, "403"), StringComparison.Ordinal);
+        Assert.True(operation.GetProperty("responses").GetProperty("403").GetProperty("content").TryGetProperty("application/problem+json", out _));
     }
 
     private static void AssertEmptyStatus(JsonElement operation, string status)

@@ -391,6 +391,48 @@ describe('authorization transitions', () => {
     expect(screen.getByText('All cases 1')).toBeInTheDocument();
   });
 
+  it('opens the dashboard from the operations link and keeps dispute counters out of cookie', async () => {
+    const user = userEvent.setup();
+    let disputeGets = 0;
+    server.use(
+      http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['review-cases.read'], [northOrg()]))),
+      http.get('/api/review-cases/summary', () => reviewSummary()),
+      http.get('/api/review-cases', () => HttpResponse.json({ items: [], page: 1, pageSize: 50, totalCount: 0 })),
+      http.get('/api/allocation-disputes/summary', () => {
+        disputeGets += 1;
+        return HttpResponse.json({ needsDecision: 1, needsCorrection: 1 });
+      }),
+    );
+
+    renderGate('/review-cases');
+
+    expect(await screen.findByRole('heading', { name: 'Review cases' })).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: 'Operations' }));
+    expect(await screen.findByRole('heading', { name: 'Operations' })).toBeInTheDocument();
+    expect(await screen.findByText('Open 1')).toBeInTheDocument();
+    expect(screen.queryByText(/Needs decision/)).not.toBeInTheDocument();
+    expect(disputeGets).toBe(0);
+  });
+
+  it('does not open the dashboard without review-cases.read', async () => {
+    let summaryGets = 0;
+    server.use(
+      http.get('/api/session', () => HttpResponse.json(workspaceBody(northId, 'North Ledger', ['invoices.read'], [northOrg()]))),
+      http.get('/api/review-cases/summary', () => {
+        summaryGets += 1;
+        return reviewSummary();
+      }),
+      http.get('/api/invoices', () => HttpResponse.json(invoiceList('INV-HOME'))),
+    );
+
+    renderGate('/dashboard');
+
+    expect(await screen.findByText('That page is not available.')).toBeInTheDocument();
+    await flush();
+    expect(summaryGets).toBe(0);
+    expect(screen.queryByRole('heading', { name: 'Operations' })).not.toBeInTheDocument();
+  });
+
   it('does not fetch review cases for a deep link without review-cases.read', async () => {
     let reviewGets = 0;
     let summaryGets = 0;

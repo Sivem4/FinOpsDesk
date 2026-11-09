@@ -60,6 +60,8 @@ internal static class ReviewCaseEndpoints
 
     private static readonly string[] AssignmentPropertyNames = ["concurrencyToken"];
 
+    private static readonly string[] DelegatePropertyNames = ["concurrencyToken", "recipientActorId"];
+
     public static RouteGroupBuilder MapReviewCaseEndpoints(this RouteGroupBuilder group)
     {
         ArgumentNullException.ThrowIfNull(group);
@@ -119,6 +121,20 @@ internal static class ReviewCaseEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .AddOpenApiOperationTransformer(DocumentSummaryOperation)
             .WithMetadata(FinancialEndpointClassification.Read("review-cases.read"));
+
+        group.MapGet("/review-cases/delegation-recipients", GetDelegationRecipientsAsync)
+            .WithName("GetReviewCaseDelegationRecipients")
+            .WithSummary("List development delegation recipients for the authenticated organization.")
+            .WithDescription(
+                TenantDescription
+                + " Requires review-cases.assignment.read. "
+                + "DevelopmentJwt returns the host-configured recipient ids for the server organization. "
+                + "A missing section, a missing organization, or an empty list returns no recipients. "
+                + "ProductionCookie is refused before that configuration is read. "
+                + "The response does not accept a client organization id.")
+            .Produces<ReviewCaseDelegationRecipientsResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .WithMetadata(FinancialEndpointClassification.Read("review-cases.assignment.read"));
 
         group.MapGet("/review-cases/{id}", GetAsync)
             .WithName("GetReviewCase")
@@ -253,6 +269,31 @@ internal static class ReviewCaseEndpoints
             .WithMetadata(FinancialEndpointClassification.Write(
                 "review-cases.assign",
                 FinancialWriteOperation.ReleaseReviewCase));
+
+        group.MapPost("/review-cases/{id}/assignment/delegate", DelegateAssignmentAsync)
+            .WithName("DelegateReviewCaseAssignment")
+            .WithSummary("Delegate an open review case from the current assignee to another recipient.")
+            .WithDescription(
+                TenantDescription
+                + " Only the current assignee of an open case can delegate it. "
+                + "The closed body contains concurrencyToken and recipientActorId. "
+                + "The recipient is trimmed, must differ from the sender, and is checked against the current organization list. "
+                + "A missing list, a foreign recipient, and an id that is not listed stop a new command. "
+                + "A matching historical delegation returns HTTP 200 after the recipient leaves the list. "
+                + "A new delegation returns HTTP 201 without Location and without the resulting concurrency token. "
+                + "The response records the sender, the recipient, and the delegation time.")
+            .Produces<ReviewCaseDelegationResponse>(StatusCodes.Status201Created, "application/json")
+            .Produces<ReviewCaseDelegationResponse>(StatusCodes.Status200OK, "application/json")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .AddOpenApiOperationTransformer(DocumentDelegateOperation)
+            .WithMetadata(FinancialEndpointClassification.Write(
+                "review-cases.assign",
+                FinancialWriteOperation.DelegateReviewCase));
 
         group.MapGet("/review-cases/{id}/assignment", GetAssignmentAsync)
             .WithName("GetReviewCaseAssignment")
@@ -565,6 +606,110 @@ internal static class ReviewCaseEndpoints
                     new ReleaseReviewCaseCommand(new ReviewCaseId(reviewCaseId), rowVersion, canonicalToken, idempotencyKey),
                     token),
             cancellationToken);
+    }
+
+    private static async Task<Results<JsonHttpResult<ReviewCaseDelegationResponse>, Ok<ReviewCaseDelegationResponse>, ProblemHttpResult>> DelegateAssignmentAsync(
+        string id,
+        HttpRequest httpRequest,
+        DelegateReviewCaseHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadAssignmentRouteId(id, out Guid reviewCaseId, out ProblemHttpResult? idProblem))
+        {
+            return idProblem!;
+        }
+
+        if (RejectUnexpectedAssignmentQuery(httpRequest) is ProblemHttpResult queryProblem)
+        {
+            return queryProblem;
+        }
+
+        if (!TryReadRequiredAssignmentIdempotencyKey(httpRequest, out Guid idempotencyKey, out ProblemHttpResult? keyProblem))
+        {
+            return keyProblem!;
+        }
+
+        JsonRead read = await TryReadJsonObjectAsync(
+            httpRequest,
+            DelegatePropertyNames,
+            cancellationToken,
+            ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
+        if (read.Problem is not null)
+        {
+            return read.Problem;
+        }
+
+        using (read.Document)
+        {
+            if (!TryReadAssignmentToken(read.Properties!, out byte[]? rowVersion, out string? canonicalToken)
+                || !TryReadRecipient(read.Properties!, out string? recipientActorId))
+            {
+                return Problem(ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
+            }
+
+            Result<ChangeReviewCaseDelegationResponse> result = await handler.Handle(
+                new DelegateReviewCaseCommand(
+                    new ReviewCaseId(reviewCaseId),
+                    rowVersion!,
+                    canonicalToken!,
+                    idempotencyKey,
+                    recipientActorId!),
+                cancellationToken);
+            if (result.IsFailure)
+            {
+                return Problem(result.Error);
+            }
+
+            return result.Value.Created
+                ? TypedResults.Json(result.Value.Delegation, statusCode: StatusCodes.Status201Created)
+                : TypedResults.Ok(result.Value.Delegation);
+        }
+    }
+
+    private static async Task<Results<Ok<ReviewCaseDelegationRecipientsResponse>, ProblemHttpResult>> GetDelegationRecipientsAsync(
+        HttpRequest httpRequest,
+        GetReviewCaseDelegationRecipientsHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (RejectUnexpectedAssignmentQuery(httpRequest) is ProblemHttpResult queryProblem)
+        {
+            return queryProblem;
+        }
+
+        Result<ReviewCaseDelegationRecipientsResponse> result = await handler.Handle(
+            new GetReviewCaseDelegationRecipientsQuery(),
+            cancellationToken);
+        if (result.IsFailure)
+        {
+            return Problem(result.Error);
+        }
+
+        return TypedResults.Ok(result.Value);
+    }
+
+    private static bool TryReadRecipient(Dictionary<string, JsonElement> properties, out string? recipientActorId)
+    {
+        recipientActorId = null;
+        if (!properties.TryGetValue("recipientActorId", out JsonElement element)
+            || element.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        string? value = element.GetString();
+        if (value is null)
+        {
+            return false;
+        }
+
+        string trimmed = value.Trim();
+        if (trimmed.Length == 0 || trimmed.Length > ReviewCaseAssignmentEntry.MaxActorIdLength)
+        {
+            return false;
+        }
+
+        recipientActorId = trimmed;
+        return true;
     }
 
     private static async Task<Results<JsonHttpResult<ReviewCaseAssignmentResponse>, Ok<ReviewCaseAssignmentResponse>, ProblemHttpResult>> ChangeAssignmentAsync(
@@ -2080,6 +2225,51 @@ internal static class ReviewCaseEndpoints
         return Task.CompletedTask;
     }
 
+    private static Task DocumentDelegateOperation(
+        OpenApiOperation operation,
+        OpenApiOperationTransformerContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(context);
+        cancellationToken.ThrowIfCancellationRequested();
+        operation.RequestBody = JsonBody(
+            "concurrencyToken is the Base64 rowversion read with the case. recipientActorId is trimmed and must name another person on the current organization list.",
+            new OpenApiSchema
+            {
+                Type = JsonSchemaType.Object,
+                AdditionalPropertiesAllowed = false,
+                Required = new HashSet<string> { "concurrencyToken", "recipientActorId" },
+                Properties = new Dictionary<string, IOpenApiSchema>
+                {
+                    ["concurrencyToken"] = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.String,
+                        Description = ConcurrencyTokenDescription,
+                    },
+                    ["recipientActorId"] = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.String,
+                        Description = "Normalized recipient id. The server checks it again for a new command.",
+                    },
+                },
+            });
+        operation.Parameters ??= [];
+        operation.Parameters.Add(new OpenApiParameter
+        {
+            Name = "Idempotency-Key",
+            In = ParameterLocation.Header,
+            Required = true,
+            Description = "Required. One non-empty UUID in D format with no surrounding whitespace. Claim, release, and delegate share this key.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "uuid",
+            },
+        });
+        return Task.CompletedTask;
+    }
+
     private static Task DocumentAssignmentReadOperation(
         OpenApiOperation operation,
         OpenApiOperationTransformerContext context,
@@ -2164,9 +2354,15 @@ internal static class ReviewCaseEndpoints
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssigned.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssignee.Code
             || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyPayloadConflict.Code
-            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict.Code)
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict.Code
+            || error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentDelegateeUnavailable.Code)
         {
             return StatusCodes.Status409Conflict;
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseDelegationUnavailable.Code)
+        {
+            return StatusCodes.Status403Forbidden;
         }
 
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseInconsistentLinkedMoney.Code)
@@ -2285,6 +2481,16 @@ internal static class ReviewCaseEndpoints
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssignee.Code)
         {
             return "The assignment belongs to a different actor.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentDelegateeUnavailable.Code)
+        {
+            return "The recipient cannot take this review case.";
+        }
+
+        if (error.Code == ReconciliationApplicationErrors.ReviewCaseDelegationUnavailable.Code)
+        {
+            return "Delegation recipients are not available.";
         }
 
         if (error.Code == ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyPayloadConflict.Code)

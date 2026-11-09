@@ -16,6 +16,7 @@ public sealed class ClaimReviewCaseHandler
         IReviewCaseAssignmentLookup assignmentLookup,
         IReviewCaseAssignmentWriter assignmentWriter,
         IReviewCaseAssignmentConflict assignmentConflict,
+        IReviewCaseDelegationDirectory delegationDirectory,
         IUnitOfWork unitOfWork,
         TimeProvider timeProvider)
     {
@@ -26,6 +27,7 @@ public sealed class ClaimReviewCaseHandler
             assignmentLookup,
             assignmentWriter,
             assignmentConflict,
+            delegationDirectory,
             unitOfWork,
             timeProvider);
     }
@@ -36,13 +38,14 @@ public sealed class ClaimReviewCaseHandler
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        return _command.ExecuteAsync(
+        return ReviewCaseAssignmentCommand.MapAssignmentAsync(_command.ExecuteAsync(
             ReviewCaseAssignmentOperation.Claim,
             command.ReviewCaseId,
             command.RowVersion,
             command.CanonicalConcurrencyToken,
             command.IdempotencyKey,
-            cancellationToken);
+            recipientActorId: null,
+            cancellationToken));
     }
 }
 
@@ -57,6 +60,7 @@ public sealed class ReleaseReviewCaseHandler
         IReviewCaseAssignmentLookup assignmentLookup,
         IReviewCaseAssignmentWriter assignmentWriter,
         IReviewCaseAssignmentConflict assignmentConflict,
+        IReviewCaseDelegationDirectory delegationDirectory,
         IUnitOfWork unitOfWork,
         TimeProvider timeProvider)
     {
@@ -67,6 +71,7 @@ public sealed class ReleaseReviewCaseHandler
             assignmentLookup,
             assignmentWriter,
             assignmentConflict,
+            delegationDirectory,
             unitOfWork,
             timeProvider);
     }
@@ -77,13 +82,87 @@ public sealed class ReleaseReviewCaseHandler
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        return _command.ExecuteAsync(
+        return ReviewCaseAssignmentCommand.MapAssignmentAsync(_command.ExecuteAsync(
             ReviewCaseAssignmentOperation.Release,
             command.ReviewCaseId,
             command.RowVersion,
             command.CanonicalConcurrencyToken,
             command.IdempotencyKey,
-            cancellationToken);
+            recipientActorId: null,
+            cancellationToken));
+    }
+}
+
+public sealed class DelegateReviewCaseHandler
+{
+    private readonly ReviewCaseAssignmentCommand _command;
+
+    public DelegateReviewCaseHandler(
+        ICurrentOrganizationContext currentOrganizationContext,
+        ICurrentActorAttribution currentActorAttribution,
+        IReviewCaseRepository reviewCaseRepository,
+        IReviewCaseAssignmentLookup assignmentLookup,
+        IReviewCaseAssignmentWriter assignmentWriter,
+        IReviewCaseAssignmentConflict assignmentConflict,
+        IReviewCaseDelegationDirectory delegationDirectory,
+        IUnitOfWork unitOfWork,
+        TimeProvider timeProvider)
+    {
+        _command = new ReviewCaseAssignmentCommand(
+            currentOrganizationContext,
+            currentActorAttribution,
+            reviewCaseRepository,
+            assignmentLookup,
+            assignmentWriter,
+            assignmentConflict,
+            delegationDirectory,
+            unitOfWork,
+            timeProvider);
+    }
+
+    public Task<Result<ChangeReviewCaseDelegationResponse>> Handle(
+        DelegateReviewCaseCommand command,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        return ReviewCaseAssignmentCommand.MapDelegationAsync(_command.ExecuteAsync(
+            ReviewCaseAssignmentOperation.Delegate,
+            command.ReviewCaseId,
+            command.RowVersion,
+            command.CanonicalConcurrencyToken,
+            command.IdempotencyKey,
+            command.RecipientActorId,
+            cancellationToken));
+    }
+}
+
+public sealed class GetReviewCaseDelegationRecipientsHandler
+{
+    private readonly IReviewCaseDelegationDirectory _delegationDirectory;
+
+    public GetReviewCaseDelegationRecipientsHandler(IReviewCaseDelegationDirectory delegationDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(delegationDirectory);
+
+        _delegationDirectory = delegationDirectory;
+    }
+
+    public Task<Result<ReviewCaseDelegationRecipientsResponse>> Handle(
+        GetReviewCaseDelegationRecipientsQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_delegationDirectory.ReadCurrentOrganization() is not ReviewCaseDelegationDirectoryRead.Available available)
+        {
+            return Task.FromResult(Result<ReviewCaseDelegationRecipientsResponse>.Failure(
+                ReconciliationApplicationErrors.ReviewCaseDelegationUnavailable));
+        }
+
+        return Task.FromResult(Result<ReviewCaseDelegationRecipientsResponse>.Success(
+            new ReviewCaseDelegationRecipientsResponse(available.ActorIds)));
     }
 }
 
@@ -135,6 +214,7 @@ internal sealed class ReviewCaseAssignmentCommand
     private readonly IReviewCaseAssignmentLookup _assignmentLookup;
     private readonly IReviewCaseAssignmentWriter _assignmentWriter;
     private readonly IReviewCaseAssignmentConflict _assignmentConflict;
+    private readonly IReviewCaseDelegationDirectory _delegationDirectory;
     private readonly IUnitOfWork _unitOfWork;
     private readonly TimeProvider _timeProvider;
 
@@ -145,6 +225,7 @@ internal sealed class ReviewCaseAssignmentCommand
         IReviewCaseAssignmentLookup assignmentLookup,
         IReviewCaseAssignmentWriter assignmentWriter,
         IReviewCaseAssignmentConflict assignmentConflict,
+        IReviewCaseDelegationDirectory delegationDirectory,
         IUnitOfWork unitOfWork,
         TimeProvider timeProvider)
     {
@@ -154,6 +235,7 @@ internal sealed class ReviewCaseAssignmentCommand
         ArgumentNullException.ThrowIfNull(assignmentLookup);
         ArgumentNullException.ThrowIfNull(assignmentWriter);
         ArgumentNullException.ThrowIfNull(assignmentConflict);
+        ArgumentNullException.ThrowIfNull(delegationDirectory);
         ArgumentNullException.ThrowIfNull(unitOfWork);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
@@ -163,29 +245,67 @@ internal sealed class ReviewCaseAssignmentCommand
         _assignmentLookup = assignmentLookup;
         _assignmentWriter = assignmentWriter;
         _assignmentConflict = assignmentConflict;
+        _delegationDirectory = delegationDirectory;
         _unitOfWork = unitOfWork;
         _timeProvider = timeProvider;
     }
 
-    public async Task<Result<ChangeReviewCaseAssignmentResponse>> ExecuteAsync(
+    internal static async Task<Result<ChangeReviewCaseAssignmentResponse>> MapAssignmentAsync(
+        Task<Result<ReviewCaseAssignmentExecution>> execution)
+    {
+        Result<ReviewCaseAssignmentExecution> result = await execution;
+        if (result.IsFailure)
+        {
+            return Result<ChangeReviewCaseAssignmentResponse>.Failure(result.Error);
+        }
+
+        return Result<ChangeReviewCaseAssignmentResponse>.Success(
+            new ChangeReviewCaseAssignmentResponse(ToResponse(result.Value.Entry), result.Value.Created));
+    }
+
+    internal static async Task<Result<ChangeReviewCaseDelegationResponse>> MapDelegationAsync(
+        Task<Result<ReviewCaseAssignmentExecution>> execution)
+    {
+        Result<ReviewCaseAssignmentExecution> result = await execution;
+        if (result.IsFailure)
+        {
+            return Result<ChangeReviewCaseDelegationResponse>.Failure(result.Error);
+        }
+
+        ReviewCaseAssignmentEntry entry = result.Value.Entry;
+        return Result<ChangeReviewCaseDelegationResponse>.Success(
+            new ChangeReviewCaseDelegationResponse(
+                new ReviewCaseDelegationResponse(
+                    entry.ReviewCaseId.Value,
+                    "delegate",
+                    ActorSourceName(entry.ActorSource),
+                    entry.ActorId,
+                    entry.RecipientActorId!,
+                    entry.RecordedAt),
+                result.Value.Created));
+    }
+
+    public async Task<Result<ReviewCaseAssignmentExecution>> ExecuteAsync(
         ReviewCaseAssignmentOperation operation,
         ReviewCaseId reviewCaseId,
         byte[] rowVersion,
         string canonicalConcurrencyToken,
         Guid idempotencyKey,
+        string? recipientActorId,
         CancellationToken cancellationToken)
     {
         if (reviewCaseId is null
             || idempotencyKey == Guid.Empty
-            || !IsCanonical(rowVersion, canonicalConcurrencyToken))
+            || !IsCanonical(rowVersion, canonicalConcurrencyToken)
+            || !IsRecipientShape(operation, recipientActorId))
         {
-            return Result<ChangeReviewCaseAssignmentResponse>.Failure(
+            return Result<ReviewCaseAssignmentExecution>.Failure(
                 ReconciliationApplicationErrors.ReviewCaseAssignmentInvalidRequest);
         }
 
         if (!_currentActorAttribution.TryGet(out ReviewCaseActorSource actorSource, out string actorId))
         {
-            return Result<ChangeReviewCaseAssignmentResponse>.Failure(
+            return Result<ReviewCaseAssignmentExecution>.Failure(
                 ReconciliationApplicationErrors.ActorRequired);
         }
 
@@ -196,7 +316,14 @@ internal sealed class ReviewCaseAssignmentCommand
             cancellationToken);
         if (stored is not null)
         {
-            return Classify(stored, reviewCaseId, operation, actorSource, actorId, canonicalConcurrencyToken);
+            return Classify(
+                stored,
+                reviewCaseId,
+                operation,
+                actorSource,
+                actorId,
+                canonicalConcurrencyToken,
+                recipientActorId);
         }
 
         ReviewCase? reviewCase = await _reviewCaseRepository.GetByIdAsync(
@@ -205,7 +332,7 @@ internal sealed class ReviewCaseAssignmentCommand
             cancellationToken);
         if (reviewCase is null)
         {
-            return Result<ChangeReviewCaseAssignmentResponse>.Failure(
+            return Result<ReviewCaseAssignmentExecution>.Failure(
                 ReconciliationApplicationErrors.ReviewCaseNotFound);
         }
 
@@ -220,16 +347,39 @@ internal sealed class ReviewCaseAssignmentCommand
                 actorSource,
                 actorId,
                 canonicalConcurrencyToken,
+                recipientActorId,
                 cancellationToken);
         }
 
         DateTimeOffset now = _timeProvider.GetUtcNow();
-        ReviewCaseAssignmentRejection? rejection = operation == ReviewCaseAssignmentOperation.Claim
-            ? reviewCase.Claim(actorSource, actorId, now)
-            : reviewCase.Release(actorSource, actorId);
+        if (operation == ReviewCaseAssignmentOperation.Delegate)
+        {
+            ReviewCaseAssignmentRejection? gate = DelegationGate(
+                reviewCase,
+                organizationId,
+                actorSource,
+                actorId,
+                recipientActorId!);
+            if (gate is not null)
+            {
+                return Result<ReviewCaseAssignmentExecution>.Failure(ErrorFor(gate.Value));
+            }
+        }
+
+        ReviewCaseAssignmentRejection? rejection = operation switch
+        {
+            ReviewCaseAssignmentOperation.Claim => reviewCase.Claim(actorSource, actorId, now),
+            ReviewCaseAssignmentOperation.Release => reviewCase.Release(actorSource, actorId),
+            ReviewCaseAssignmentOperation.Delegate => reviewCase.Delegate(
+                actorSource,
+                actorId,
+                recipientActorId!,
+                now),
+            _ => throw new InvalidOperationException("Assignment operation is not defined."),
+        };
         if (rejection is not null)
         {
-            return Result<ChangeReviewCaseAssignmentResponse>.Failure(ErrorFor(rejection.Value));
+            return Result<ReviewCaseAssignmentExecution>.Failure(ErrorFor(rejection.Value));
         }
 
         ReviewCaseAssignmentEntry entry = ReviewCaseAssignmentEntry.Create(
@@ -242,7 +392,8 @@ internal sealed class ReviewCaseAssignmentCommand
             canonicalConcurrencyToken,
             idempotencyKey,
             now,
-            operation == ReviewCaseAssignmentOperation.Claim ? now : null);
+            operation == ReviewCaseAssignmentOperation.Release ? null : now,
+            operation == ReviewCaseAssignmentOperation.Delegate ? recipientActorId : null);
         _assignmentWriter.Add(entry);
         _reviewCaseRepository.ExpectRowVersion(reviewCase, rowVersion);
         try
@@ -259,6 +410,7 @@ internal sealed class ReviewCaseAssignmentCommand
                 actorSource,
                 actorId,
                 canonicalConcurrencyToken,
+                recipientActorId,
                 cancellationToken);
         }
         catch (ConcurrencyConflictException)
@@ -271,11 +423,12 @@ internal sealed class ReviewCaseAssignmentCommand
                 actorSource,
                 actorId,
                 canonicalConcurrencyToken,
+                recipientActorId,
                 cancellationToken);
         }
 
-        return Result<ChangeReviewCaseAssignmentResponse>.Success(
-            new ChangeReviewCaseAssignmentResponse(ToResponse(entry), Created: true));
+        return Result<ReviewCaseAssignmentExecution>.Success(
+            new ReviewCaseAssignmentExecution(entry, Created: true));
     }
 
     internal static ReviewCaseAssigneeResponse? AssigneeOf(ReviewCase reviewCase)
@@ -293,7 +446,7 @@ internal sealed class ReviewCaseAssignmentCommand
             reviewCase.AssignedAt!.Value);
     }
 
-    private async Task<Result<ChangeReviewCaseAssignmentResponse>> RecoverAsync(
+    private async Task<Result<ReviewCaseAssignmentExecution>> RecoverAsync(
         OrganizationId organizationId,
         Guid idempotencyKey,
         ReviewCaseId reviewCaseId,
@@ -301,6 +454,7 @@ internal sealed class ReviewCaseAssignmentCommand
         ReviewCaseActorSource actorSource,
         string actorId,
         string canonicalConcurrencyToken,
+        string? recipientActorId,
         CancellationToken cancellationToken)
     {
         ReviewCaseAssignmentEntry? winner = await _assignmentLookup.FindByIdempotencyKeyAsync(
@@ -309,29 +463,43 @@ internal sealed class ReviewCaseAssignmentCommand
             cancellationToken);
         if (winner is null)
         {
-            return Result<ChangeReviewCaseAssignmentResponse>.Failure(
+            return Result<ReviewCaseAssignmentExecution>.Failure(
                 ReconciliationApplicationErrors.ReviewCaseAssignmentConcurrencyConflict);
         }
 
-        return Classify(winner, reviewCaseId, operation, actorSource, actorId, canonicalConcurrencyToken);
+        return Classify(
+            winner,
+            reviewCaseId,
+            operation,
+            actorSource,
+            actorId,
+            canonicalConcurrencyToken,
+            recipientActorId);
     }
 
-    private static Result<ChangeReviewCaseAssignmentResponse> Classify(
+    private static Result<ReviewCaseAssignmentExecution> Classify(
         ReviewCaseAssignmentEntry stored,
         ReviewCaseId reviewCaseId,
         ReviewCaseAssignmentOperation operation,
         ReviewCaseActorSource actorSource,
         string actorId,
-        string canonicalConcurrencyToken)
+        string canonicalConcurrencyToken,
+        string? recipientActorId)
     {
-        if (!stored.Matches(reviewCaseId, operation, actorSource, actorId, canonicalConcurrencyToken))
+        if (!stored.Matches(
+            reviewCaseId,
+            operation,
+            actorSource,
+            actorId,
+            canonicalConcurrencyToken,
+            recipientActorId))
         {
-            return Result<ChangeReviewCaseAssignmentResponse>.Failure(
+            return Result<ReviewCaseAssignmentExecution>.Failure(
                 ReconciliationApplicationErrors.ReviewCaseAssignmentIdempotencyPayloadConflict);
         }
 
-        return Result<ChangeReviewCaseAssignmentResponse>.Success(
-            new ChangeReviewCaseAssignmentResponse(ToResponse(stored), Created: false));
+        return Result<ReviewCaseAssignmentExecution>.Success(
+            new ReviewCaseAssignmentExecution(stored, Created: false));
     }
 
     private static ReviewCaseAssignmentResponse ToResponse(ReviewCaseAssignmentEntry entry)
@@ -351,7 +519,13 @@ internal sealed class ReviewCaseAssignmentCommand
 
     internal static string OperationName(ReviewCaseAssignmentOperation operation)
     {
-        return operation == ReviewCaseAssignmentOperation.Claim ? "claim" : "release";
+        return operation switch
+        {
+            ReviewCaseAssignmentOperation.Claim => "claim",
+            ReviewCaseAssignmentOperation.Release => "release",
+            ReviewCaseAssignmentOperation.Delegate => "delegate",
+            _ => throw new InvalidOperationException("Assignment operation is not defined."),
+        };
     }
 
     internal static string ActorSourceName(ReviewCaseActorSource source)
@@ -387,7 +561,54 @@ internal sealed class ReviewCaseAssignmentCommand
                 ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssigned,
             ReviewCaseAssignmentRejection.NotAssignee =>
                 ReconciliationApplicationErrors.ReviewCaseAssignmentNotAssignee,
+            ReviewCaseAssignmentRejection.DelegateeUnavailable =>
+                ReconciliationApplicationErrors.ReviewCaseAssignmentDelegateeUnavailable,
             _ => throw new InvalidOperationException("Assignment rejection is not defined."),
         };
+    }
+
+    private ReviewCaseAssignmentRejection? DelegationGate(
+        ReviewCase reviewCase,
+        OrganizationId organizationId,
+        ReviewCaseActorSource actorSource,
+        string actorId,
+        string recipientActorId)
+    {
+        if (reviewCase.Status != ReviewCaseStatus.Open)
+        {
+            return ReviewCaseAssignmentRejection.Terminal;
+        }
+
+        if (reviewCase.AssignedActorSource is null)
+        {
+            return ReviewCaseAssignmentRejection.NotAssigned;
+        }
+
+        if (reviewCase.AssignedActorSource != actorSource
+            || !string.Equals(reviewCase.AssignedActorId, actorId, StringComparison.Ordinal))
+        {
+            return ReviewCaseAssignmentRejection.NotAssignee;
+        }
+
+        if (string.Equals(actorId, recipientActorId, StringComparison.Ordinal)
+            || !_delegationDirectory.Allows(organizationId, recipientActorId))
+        {
+            return ReviewCaseAssignmentRejection.DelegateeUnavailable;
+        }
+
+        return null;
+    }
+
+    private static bool IsRecipientShape(ReviewCaseAssignmentOperation operation, string? recipientActorId)
+    {
+        if (operation != ReviewCaseAssignmentOperation.Delegate)
+        {
+            return recipientActorId is null;
+        }
+
+        return recipientActorId is not null
+            && recipientActorId.Length > 0
+            && recipientActorId.Length <= ReviewCaseAssignmentEntry.MaxActorIdLength
+            && recipientActorId == recipientActorId.Trim();
     }
 }

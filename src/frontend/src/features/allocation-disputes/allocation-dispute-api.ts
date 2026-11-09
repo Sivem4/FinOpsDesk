@@ -51,6 +51,7 @@ export interface AllocationDisputeAddress {
   listValid: boolean;
   page: number | null;
   allocationId: string | null;
+  queue: 'needs-decision' | 'needs-correction' | null;
   selectedValues: readonly string[];
   selectedState: 'absent' | 'valid' | 'invalid';
 }
@@ -67,10 +68,17 @@ export function readAllocationDisputeAddress(params: URLSearchParams): Allocatio
   const page = readPage(params);
   const allocation = readGuidParameter(params, 'allocationId');
   const selected = readGuidParameter(params, 'selected');
+  const queueValues = params.getAll('queue');
+  const queue = queueValues.length === 0
+    ? null
+    : queueValues.length === 1 && (queueValues[0] === 'needs-decision' || queueValues[0] === 'needs-correction')
+      ? queueValues[0]
+      : 'invalid';
   return {
-    listValid: page !== 'invalid' && allocation.state !== 'invalid',
+    listValid: page !== 'invalid' && allocation.state !== 'invalid' && queue !== 'invalid',
     page: page === 'invalid' ? null : page,
     allocationId: allocation.state === 'valid' ? allocation.value : null,
+    queue: queue === 'invalid' ? null : queue,
     selectedValues: selected.state === 'absent' ? [] : selected.values,
     selectedState: selected.state === 'valid' ? 'valid' : selected.state,
   };
@@ -330,6 +338,10 @@ function isDotNetWhiteSpace(code: number): boolean {
     || code === 0x3000;
 }
 
+export function isAllocationDisputeTimestamp(value: unknown): value is string {
+  return isDisputeTimestamp(value);
+}
+
 function isDisputeTimestamp(value: unknown): value is string {
   if (typeof value !== 'string') {
     return false;
@@ -439,6 +451,10 @@ export interface AllocationDisputeResolutionState {
 
 export function allocationDisputeResolutionQueryKey(epoch: number, disputeId: string) {
   return ['allocation-disputes', 'resolution', epoch, disputeId.toLowerCase()] as const;
+}
+
+export function allocationDisputeDetailQueryKey(epoch: number, disputeId: string) {
+  return ['allocation-disputes', 'detail', epoch, disputeId] as const;
 }
 
 export function normalizeAllocationDisputeResolutionReason(value: string): string | null {

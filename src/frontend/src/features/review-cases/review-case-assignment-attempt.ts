@@ -11,7 +11,7 @@ import {
   startedAssignmentReadCount,
   type ReviewCaseAssignee,
 } from './review-case-assignment-api';
-import { serializeReviewCaseAssignmentBody } from './review-case-assignment-request';
+import { serializeReviewCaseAssignmentBody, serializeReviewCaseDelegationBody } from './review-case-assignment-request';
 import { startedReviewCaseDetailReadCount, readReviewCaseConcurrencyToken } from './review-case-api';
 import {
   developmentActorId,
@@ -34,6 +34,7 @@ const domainConflictCodes = [
   'reconciliation.review_case_assignment.already_assigned',
   'reconciliation.review_case_assignment.not_assigned',
   'reconciliation.review_case_assignment.not_assignee',
+  'reconciliation.review_case_assignment.delegatee_unavailable',
 ] as const;
 const payloadConflictCode = 'reconciliation.review_case_assignment.idempotency_payload_conflict';
 const concurrencyConflictCode = 'reconciliation.review_case_assignment.concurrency_conflict';
@@ -177,7 +178,8 @@ export class ReviewCaseAssignmentConcurrencyUncheckedError extends Error {
 
 export interface ReviewCaseAssignmentAttempt {
   schemaVersion: 1;
-  operation: 'ReviewCaseClaim' | 'ReviewCaseRelease';
+  operation: 'ReviewCaseClaim' | 'ReviewCaseRelease' | 'ReviewCaseDelegate';
+  recipientActorId?: string;
   organizationId: string;
   actorSource: 'developmentJwt';
   actorId: string;
@@ -203,7 +205,7 @@ export interface ReviewCaseAssignmentClick {
 
 export interface VerifiedReviewCaseAssignment {
   caseId: string;
-  operation: 'claim' | 'release';
+  operation: 'claim' | 'release' | 'delegate';
   assignee: ReviewCaseAssignee | null;
   recordedAt: string;
   created: boolean;
@@ -308,8 +310,9 @@ export function reviewCaseAssignmentAction(
 }
 
 export function beginReviewCaseAssignmentAttempt(
-  operation: 'claim' | 'release',
+  operation: 'claim' | 'release' | 'delegate',
   click: ReviewCaseAssignmentClick,
+  recipientActorId?: string,
 ): ReviewCaseAssignmentAttempt {
   rejectDevelopmentCookie();
   if (submissionInFlight) {
@@ -328,7 +331,15 @@ export function beginReviewCaseAssignmentAttempt(
   const session = sessionStore.getSnapshot();
   requireOrganization(session);
   requireActor(session);
-  if (reviewCaseAssignmentAction(session, click) !== operation) {
+  const normalizedRecipient = recipientActorId?.trim() ?? '';
+  if (operation === 'delegate') {
+    if (reviewCaseAssignmentAction(session, click) !== 'release'
+      || normalizedRecipient.length === 0
+      || normalizedRecipient.length > 256
+      || normalizedRecipient === developmentActorId(session.token)) {
+      throw new ReviewCaseAssignmentNotReadyError();
+    }
+  } else if (reviewCaseAssignmentAction(session, click) !== operation) {
     throw new ReviewCaseAssignmentNotReadyError();
   }
 
@@ -339,13 +350,20 @@ export function beginReviewCaseAssignmentAttempt(
 
   const attempt: ReviewCaseAssignmentAttempt = {
     schemaVersion,
-    operation: operation === 'claim' ? 'ReviewCaseClaim' : 'ReviewCaseRelease',
+    operation: operation === 'claim'
+      ? 'ReviewCaseClaim'
+      : operation === 'release'
+        ? 'ReviewCaseRelease'
+        : 'ReviewCaseDelegate',
     organizationId: developmentOrganizationId(session.token) ?? '',
     actorSource,
     actorId: developmentActorId(session.token) ?? '',
     caseId: click.caseId.toLowerCase(),
     idempotencyKey,
-    requestBody: serializeReviewCaseAssignmentBody(click.assignmentToken),
+    requestBody: operation === 'delegate'
+      ? serializeReviewCaseDelegationBody(click.assignmentToken, normalizedRecipient)
+      : serializeReviewCaseAssignmentBody(click.assignmentToken),
+    recipientActorId: operation === 'delegate' ? normalizedRecipient : undefined,
     lifecycle: 'ready',
     uncertaintyLocked: false,
   };
@@ -402,7 +420,9 @@ export async function submitReviewCaseAssignmentAttempt(signal?: AbortSignal): P
 
     const path = prepared.operation === 'ReviewCaseClaim'
       ? `/api/review-cases/${prepared.caseId}/assignment`
-      : `/api/review-cases/${prepared.caseId}/assignment/release`;
+      : prepared.operation === 'ReviewCaseRelease'
+        ? `/api/review-cases/${prepared.caseId}/assignment/release`
+        : `/api/review-cases/${prepared.caseId}/assignment/delegate`;
     let response: Response;
     try {
       response = await fetch(path, {
@@ -649,12 +669,42 @@ function rememberUnknown(attempt: ReviewCaseAssignmentAttempt, epoch: number): v
   }
 }
 
+function mapDelegate(
+  value: unknown,
+  response: Response,
+  attempt: ReviewCaseAssignmentAttempt,
+  epoch: number,
+): Omit<VerifiedReviewCaseAssignment, 'cleanup'> {
+  if (!isRecord(value)
+    || value.operation !== 'delegate'
+    || value.reviewCaseId !== attempt.caseId
+    || value.actorId !== attempt.actorId
+    || value.recipientActorId !== attempt.recipientActorId
+    || typeof value.recordedAt !== 'string'
+    || (response.status !== 200 && response.status !== 201)) {
+    throw new UnreadableReviewCaseAssignmentError();
+  }
+
+  return {
+    caseId: attempt.caseId,
+    operation: 'delegate',
+    assignee: null,
+    recordedAt: value.recordedAt,
+    created: response.status === 201,
+    epoch,
+  };
+}
+
 function mapVerified(
   value: unknown,
   response: Response,
   attempt: ReviewCaseAssignmentAttempt,
   epoch: number,
 ): Omit<VerifiedReviewCaseAssignment, 'cleanup'> {
+  if (attempt.operation === 'ReviewCaseDelegate') {
+    return mapDelegate(value, response, attempt, epoch);
+  }
+
   const operation = attempt.operation === 'ReviewCaseClaim' ? 'claim' : 'release';
   let command: ReturnType<typeof readVerifiedReviewCaseAssignment>;
   try {
@@ -843,7 +893,7 @@ function readStoredAttempt():
 function parseAttempt(value: unknown): ReviewCaseAssignmentAttempt | null {
   if (!isRecord(value)
     || value.schemaVersion !== schemaVersion
-    || (value.operation !== 'ReviewCaseClaim' && value.operation !== 'ReviewCaseRelease')
+    || (value.operation !== 'ReviewCaseClaim' && value.operation !== 'ReviewCaseRelease' && value.operation !== 'ReviewCaseDelegate')
     || value.actorSource !== actorSource
     || typeof value.actorId !== 'string'
     || typeof value.requestBody !== 'string'
@@ -862,9 +912,18 @@ function parseAttempt(value: unknown): ReviewCaseAssignmentAttempt | null {
     return null;
   }
 
+  if (value.operation === 'ReviewCaseDelegate') {
+    if (typeof value.recipientActorId !== 'string' || !isStoredActorId(value.recipientActorId)) {
+      return null;
+    }
+  } else if (value.recipientActorId !== undefined) {
+    return null;
+  }
+
   return {
     schemaVersion,
     operation: value.operation,
+    recipientActorId: value.operation === 'ReviewCaseDelegate' ? value.recipientActorId : undefined,
     organizationId: value.organizationId.toLowerCase(),
     actorSource,
     actorId: value.actorId,
@@ -879,7 +938,18 @@ function parseAttempt(value: unknown): ReviewCaseAssignmentAttempt | null {
 function storedBodyMatches(attempt: ReviewCaseAssignmentAttempt): boolean {
   try {
     const parsed: unknown = JSON.parse(attempt.requestBody);
-    if (!isRecord(parsed) || Object.keys(parsed).length !== 1 || typeof parsed.concurrencyToken !== 'string') {
+    if (!isRecord(parsed) || typeof parsed.concurrencyToken !== 'string') {
+      return false;
+    }
+
+    if (attempt.operation === 'ReviewCaseDelegate') {
+      return Object.keys(parsed).length === 2
+        && parsed.recipientActorId === attempt.recipientActorId
+        && readReviewCaseConcurrencyToken(parsed.concurrencyToken) !== null
+        && attempt.requestBody === serializeReviewCaseDelegationBody(parsed.concurrencyToken, String(parsed.recipientActorId));
+    }
+
+    if (Object.keys(parsed).length !== 1) {
       return false;
     }
 

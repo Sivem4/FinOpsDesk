@@ -13,6 +13,7 @@ import { cookieNavLinks } from '../../shared/auth/cookie-navigation';
 import { AppShell } from '../../shared/ui/AppShell';
 import { fakeJwt } from '../../test/jwt';
 import { server } from '../../test/server';
+import { OperationsDashboardPage } from '../operations/OperationsDashboardPage';
 import { AllocationDisputePage } from './AllocationDisputePage';
 
 const allocationA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -430,6 +431,96 @@ describe('allocation dispute screen', () => {
     expect(await screen.findByText('counterparty challenge')).toBeInTheDocument();
     expect(screen.getByText('The selected allocation dispute address is not valid. The list can still be read.')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Allocation dispute registration' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the dashboard queue through selection, paging, and back, then leaves it explicitly', async () => {
+    const urls: string[] = [];
+    server.use(
+      http.get('/api/review-cases/summary', () => text(
+        '{"totalCount":1,"openCount":1,"resolvedCount":0,"dismissedCount":0,"openCompetingMatchCount":1,"openNeedsInvestigationCount":0}',
+      )),
+      http.get('/api/allocation-disputes/summary', () => text('{"needsDecision":1,"needsCorrection":2}')),
+      http.get('/api/allocation-disputes/queue', ({ request }) => {
+        urls.push(request.url);
+        const page = Number(new URL(request.url).searchParams.get('page'));
+        const item = page === 2
+          ? registration({ disputeId: disputeB, statement: 'queue-page-2' })
+          : registration({ disputeId: disputeA, statement: 'queue-page-1' });
+        return text(listDocument([item], '51', page));
+      }),
+      http.get('/api/allocation-disputes', ({ request }) => {
+        urls.push(request.url);
+        return text(listDocument([registration({ statement: 'register-row' })]));
+      }),
+      http.get('/api/allocation-disputes/:disputeId/resolution', ({ params }) => HttpResponse.json({
+        disputeId: String(params.disputeId),
+        decision: null,
+      })),
+      http.get('/api/allocation-disputes/:disputeId/correction', ({ params }) => HttpResponse.json({
+        disputeId: String(params.disputeId),
+        correction: null,
+      })),
+      http.get('/api/allocations/:allocationId/reversal-context', () => HttpResponse.json({
+        allocationId: allocationA,
+        invoiceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        bankTransactionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        invoiceNumber: 'INV-1',
+        reference: null,
+        amount: { amount: 10.25, currency: 'PLN' },
+        status: 'confirmed',
+        confirmedAt: '2026-11-08T08:00:00Z',
+        reversedAt: null,
+        reversalReason: null,
+      })),
+      http.get('/api/allocation-disputes/:disputeId', ({ request }) => {
+        urls.push(request.url);
+        return text(disputeDocument({ disputeId: new URL(request.url).pathname.split('/').at(-1) }));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = createMemoryRouter(
+      [
+        { path: '/dashboard', element: <OperationsDashboardPage /> },
+        { path: '/allocation-disputes', element: <AllocationDisputePage /> },
+      ],
+      { initialEntries: ['/dashboard'] },
+    );
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('link', { name: 'Disputes that can be corrected' }));
+    expect(await screen.findByText('queue-page-1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Show allocation dispute ${disputeA}` }));
+    expect(await screen.findByText('counterparty challenge')).toBeInTheDocument();
+    expect(router.state.location.search).toContain('queue=needs-correction');
+    expect(router.state.location.search).toContain(`selected=${disputeA}`);
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(router.state.location.search).toContain('page=2'));
+    expect(router.state.location.search).toContain('queue=needs-correction');
+    expect(await screen.findByText('queue-page-2')).toBeInTheDocument();
+    await router.navigate(-1);
+    await waitFor(() => expect(router.state.location.search).toContain('page=1'));
+    expect(router.state.location.search).toContain('queue=needs-correction');
+    expect(router.state.location.search).toContain(`selected=${disputeA}`);
+    expect(urls.filter((url) => url.includes('/queue?queue=needs-correction&page=1'))).not.toHaveLength(0);
+    expect(urls.filter((url) => url.includes('/queue?queue=needs-correction&page=2'))).toHaveLength(1);
+    expect(urls.some((url) => url.includes('/api/allocation-disputes?'))).toBe(false);
+
+    await user.type(screen.getByLabelText('Allocation id'), allocationA);
+    await user.click(screen.getByRole('button', { name: 'Apply filter' }));
+    await waitFor(() => expect(router.state.location.search).not.toContain('queue='));
+    expect(router.state.location.search).toContain(`allocationId=${allocationA}`);
+    await waitFor(() => expect(urls.some((url) => !url.includes('/queue') && url.includes(`allocationId=${allocationA}`))).toBe(true));
+
+    await router.navigate(-1);
+    await waitFor(() => expect(router.state.location.search).toContain('queue=needs-correction'));
+    await user.click(await screen.findByRole('button', { name: 'Show the full register' }));
+    await waitFor(() => expect(router.state.location.search).not.toContain('queue='));
+    expect(await screen.findByText('register-row')).toBeInTheDocument();
   });
 
   it('does not mount the screen or request disputes for a cookie session', async () => {

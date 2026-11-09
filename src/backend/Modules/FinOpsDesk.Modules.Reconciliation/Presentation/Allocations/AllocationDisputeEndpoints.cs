@@ -33,7 +33,7 @@ internal static class AllocationDisputeEndpoints
                 + "It does not include the organization id, the idempotency key, the current allocation state, or a resolution. "
                 + "After reversal the stored registration remains. A join to the allocation is possible and is not used, because this read shows the registration rather than later financial state. "
                 + "Optional allocationId filters stored rows and does not check that the allocation exists. A foreign or unknown allocation id returns an empty page. "
-                + "page, pageSize, and allocationId may each appear once. An unknown query name is rejected. "
+                + "page, pageSize, and allocationId may each appear once. An unknown query name, including queue, is rejected. "
                 + "Page defaults to 1 and page size defaults to 50, with a maximum of 100. The zero-based offset is calculated as a 64-bit value and must fit in a 32-bit integer. "
                 + "Ordering is RecordedAt ascending, then dispute id ascending. totalCount is a 64-bit count. "
                 + "The count and the page are separate statements, so a dispute committed between them can make totalCount differ from items. "
