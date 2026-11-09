@@ -51,6 +51,17 @@ public sealed record GetAllocationDisputeQueueQuery(
     int Page,
     int PageSize);
 
+public sealed record AllocationDisputeQueueCursorResponse(
+    IReadOnlyList<AllocationDisputeResponse> Items,
+    int PageSize,
+    string? NextCursor,
+    string? PreviousCursor);
+
+public sealed record GetAllocationDisputeQueueCursorQuery(
+    AllocationDisputeQueue Queue,
+    int PageSize,
+    AllocationDisputeQueueCursor? Cursor);
+
 public interface IAllocationDisputeQueries
 {
     Task<Result<AllocationDisputeListResponse>> ListAsync(
@@ -74,6 +85,13 @@ public interface IAllocationDisputeQueries
         AllocationDisputeQueue queue,
         int page,
         int pageSize,
+        CancellationToken cancellationToken);
+
+    Task<Result<AllocationDisputeQueueCursorResponse>> ListQueueCursorAsync(
+        OrganizationId organizationId,
+        AllocationDisputeQueue queue,
+        int pageSize,
+        AllocationDisputeQueueCursor? cursor,
         CancellationToken cancellationToken);
 }
 

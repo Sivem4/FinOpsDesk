@@ -671,6 +671,29 @@ public sealed class OpenApiAuthenticationDocumentTests
             detail.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema"));
         Assert.False(detailSchema.GetProperty("properties").TryGetProperty("idempotencyKey", out _));
         Assert.False(detailSchema.GetProperty("properties").TryGetProperty("organizationId", out _));
+
+        JsonElement queue = root.GetProperty("paths").GetProperty("/api/allocation-disputes/queue").GetProperty("get");
+        string[] queueNames = queue.GetProperty("parameters").EnumerateArray()
+            .Select(item => item.GetProperty("name").GetString() ?? string.Empty)
+            .ToArray();
+        Assert.Equal(["queue", "page", "pageSize", "pagination", "cursor"], queueNames);
+        Assert.Contains("allocation-disputes.resolution.read", queue.GetProperty("description").GetString(), StringComparison.Ordinal);
+        JsonElement oneOf = queue.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("oneOf");
+        JsonElement offsetSchema = ResolveSchema(root, oneOf[0]);
+        JsonElement cursorSchema = ResolveSchema(root, oneOf[1]);
+        Assert.Equal("int64", offsetSchema.GetProperty("properties").GetProperty("totalCount").GetProperty("format").GetString());
+        Assert.False(offsetSchema.GetProperty("properties").TryGetProperty("nextCursor", out _));
+        JsonElement cursorRequired = cursorSchema.GetProperty("required");
+        string[] requiredNames = cursorRequired.EnumerateArray().Select(item => item.GetString() ?? string.Empty).ToArray();
+        Assert.Contains("items", requiredNames);
+        Assert.Contains("pageSize", requiredNames);
+        Assert.Contains("nextCursor", requiredNames);
+        Assert.Contains("previousCursor", requiredNames);
+        Assert.False(cursorSchema.GetProperty("properties").TryGetProperty("totalCount", out _));
+        Assert.False(cursorSchema.GetProperty("properties").TryGetProperty("page", out _));
+        JsonElement nextCursor = cursorSchema.GetProperty("properties").GetProperty("nextCursor");
+        Assert.Contains("null", nextCursor.GetProperty("type").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("string", nextCursor.GetProperty("type").EnumerateArray().Select(item => item.GetString()));
     }
 
     private static JsonElement ResolveSchema(JsonElement root, JsonElement schema)

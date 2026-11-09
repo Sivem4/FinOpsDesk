@@ -124,6 +124,7 @@ public static class ReconciliationModule
         services.AddScoped<GetAllocationDisputeHandler>();
         services.AddScoped<GetAllocationDisputeWorkSummaryHandler>();
         services.AddScoped<GetAllocationDisputeQueueHandler>();
+        services.AddScoped<GetAllocationDisputeQueueCursorHandler>();
         services.AddScoped<AllocationDisputeResolutionStore>();
         services.AddScoped<IAllocationDisputeResolutionLookup>(
             serviceProvider => serviceProvider.GetRequiredService<AllocationDisputeResolutionStore>());

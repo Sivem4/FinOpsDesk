@@ -7,7 +7,7 @@ import { ApiError } from '../../shared/api/errors';
 import { browserAuthMode } from '../../shared/auth/auth-mode';
 import { useSession } from '../../shared/auth/session';
 import { clearSummaryCountsForAccessDenial, getReviewCaseSummary } from '../review-cases/review-case-summary-api';
-import { getAllocationDisputeWorkSummary } from '../allocation-disputes/allocation-dispute-work-api';
+import { getAllocationDisputeWorkSummary, allocationDisputeWorkSummaryFreshMs, allocationDisputeWorkSummaryQueryKey } from '../allocation-disputes/allocation-dispute-work-api';
 
 export function OperationsDashboardPage() {
   const session = useSession();
@@ -76,8 +76,9 @@ function ReviewSection({
 
 function DisputeSection({ epoch }: { epoch: number }) {
   const summary = useQuery({
-    queryKey: ['allocation-disputes', 'work-summary', epoch],
+    queryKey: allocationDisputeWorkSummaryQueryKey(epoch),
     queryFn: ({ signal }) => getAllocationDisputeWorkSummary(signal),
+    staleTime: allocationDisputeWorkSummaryFreshMs,
   });
 
   return (

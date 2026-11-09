@@ -161,9 +161,126 @@ internal sealed class AllocationDisputeQueries : IAllocationDisputeQueries
             new AllocationDisputeListResponse(items, page, pageSize, totalCount));
     }
 
+    public async Task<Result<AllocationDisputeQueueCursorResponse>> ListQueueCursorAsync(
+        OrganizationId organizationId,
+        AllocationDisputeQueue queue,
+        int pageSize,
+        AllocationDisputeQueueCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(organizationId);
+
+        if (!AllocationDisputeListPagination.IsValidPageSize(pageSize))
+        {
+            throw new InvalidOperationException("Allocation dispute pagination was not validated.");
+        }
+
+        if (!Enum.IsDefined(queue))
+        {
+            throw new InvalidOperationException("Allocation dispute queue was not validated.");
+        }
+
+        if (cursor is not null && (cursor.Queue != queue || !Enum.IsDefined(cursor.Direction)))
+        {
+            throw new InvalidOperationException("Allocation dispute cursor was not validated.");
+        }
+
+        bool forward = cursor is null || cursor.Direction == AllocationDisputeQueueCursorDirection.Forward;
+        IQueryable<AllocationDispute> source = cursor is null
+            ? _dbContext.AllocationDisputes
+            : KeysetSource(cursor, forward);
+        IQueryable<AllocationDispute> disputes = queue == AllocationDisputeQueue.NeedsDecision
+            ? NeedsDecision(organizationId, source)
+            : NeedsCorrection(organizationId, source);
+
+        IOrderedQueryable<AllocationDispute> ordered = forward
+            ? disputes.OrderBy(dispute => dispute.RecordedAt).ThenBy(dispute => dispute.Id)
+            : disputes.OrderByDescending(dispute => dispute.RecordedAt).ThenByDescending(dispute => dispute.Id);
+        List<StoredDispute> fetched = await ordered
+            .Take(pageSize + 1)
+            .Select(dispute => new StoredDispute(
+                dispute.Id,
+                dispute.AllocationId,
+                dispute.Statement,
+                dispute.ActorSource,
+                dispute.ActorId,
+                dispute.RecordedAt))
+            .ToListAsync(cancellationToken);
+        bool hasExtra = fetched.Count == pageSize + 1;
+        if (hasExtra)
+        {
+            fetched.RemoveAt(fetched.Count - 1);
+        }
+
+        if (!forward)
+        {
+            fetched.Reverse();
+        }
+
+        AllocationDisputeResponse[] items = new AllocationDisputeResponse[fetched.Count];
+        for (int index = 0; index < fetched.Count; index++)
+        {
+            items[index] = ToResponse(fetched[index]);
+        }
+
+        string? nextCursor = null;
+        string? previousCursor = null;
+        if (fetched.Count == 0)
+        {
+            if (forward && cursor is not null)
+            {
+                previousCursor = Encode(queue, AllocationDisputeQueueCursorDirection.Backward, cursor.RecordedAt, cursor.DisputeId);
+            }
+        }
+        else
+        {
+            StoredDispute first = fetched[0];
+            StoredDispute last = fetched[^1];
+            if (forward)
+            {
+                if (hasExtra)
+                {
+                    nextCursor = Encode(queue, AllocationDisputeQueueCursorDirection.Forward, last.RecordedAt, last.Id.Value);
+                }
+
+                if (cursor is not null)
+                {
+                    previousCursor = Encode(queue, AllocationDisputeQueueCursorDirection.Backward, first.RecordedAt, first.Id.Value);
+                }
+            }
+            else
+            {
+                nextCursor = Encode(queue, AllocationDisputeQueueCursorDirection.Forward, last.RecordedAt, last.Id.Value);
+                if (hasExtra)
+                {
+                    previousCursor = Encode(queue, AllocationDisputeQueueCursorDirection.Backward, first.RecordedAt, first.Id.Value);
+                }
+            }
+        }
+
+        return Result<AllocationDisputeQueueCursorResponse>.Success(
+            new AllocationDisputeQueueCursorResponse(items, pageSize, nextCursor, previousCursor));
+    }
+
+    private static string Encode(
+        AllocationDisputeQueue queue,
+        AllocationDisputeQueueCursorDirection direction,
+        DateTimeOffset recordedAt,
+        Guid disputeId)
+    {
+        return AllocationDisputeQueueCursor.Encode(direction, queue, recordedAt, disputeId);
+    }
+
     private IQueryable<AllocationDispute> NeedsDecision(OrganizationId organizationId)
     {
-        return _dbContext.AllocationDisputes
+        return NeedsDecision(organizationId, _dbContext.AllocationDisputes);
+    }
+
+    private IQueryable<AllocationDispute> NeedsDecision(
+        OrganizationId organizationId,
+        IQueryable<AllocationDispute> source)
+    {
+        return source
             .AsNoTracking()
             .Where(dispute => dispute.OrganizationId == organizationId)
             .Where(dispute => !_dbContext.AllocationDisputeResolutions.Any(resolution =>
@@ -173,7 +290,14 @@ internal sealed class AllocationDisputeQueries : IAllocationDisputeQueries
 
     private IQueryable<AllocationDispute> NeedsCorrection(OrganizationId organizationId)
     {
-        return _dbContext.AllocationDisputes
+        return NeedsCorrection(organizationId, _dbContext.AllocationDisputes);
+    }
+
+    private IQueryable<AllocationDispute> NeedsCorrection(
+        OrganizationId organizationId,
+        IQueryable<AllocationDispute> source)
+    {
+        return source
             .AsNoTracking()
             .Where(dispute => dispute.OrganizationId == organizationId)
             .Where(dispute => _dbContext.AllocationDisputeResolutions.Any(resolution =>
@@ -187,6 +311,28 @@ internal sealed class AllocationDisputeQueries : IAllocationDisputeQueries
                 allocation.OrganizationId == dispute.OrganizationId
                 && allocation.Id == dispute.AllocationId
                 && allocation.Status == AllocationStatus.Confirmed));
+    }
+
+    private IQueryable<AllocationDispute> KeysetSource(AllocationDisputeQueueCursor cursor, bool forward)
+    {
+        DateTimeOffset boundaryAt = cursor.RecordedAt;
+        Guid boundaryId = cursor.DisputeId;
+        if (forward)
+        {
+            return _dbContext.AllocationDisputes.FromSqlInterpolated($"""
+                SELECT [d].*
+                FROM [reconciliation].[AllocationDisputes] AS [d]
+                WHERE [d].[RecordedAt] > {boundaryAt}
+                    OR ([d].[RecordedAt] = {boundaryAt} AND [d].[Id] > {boundaryId})
+                """);
+        }
+
+        return _dbContext.AllocationDisputes.FromSqlInterpolated($"""
+            SELECT [d].*
+            FROM [reconciliation].[AllocationDisputes] AS [d]
+            WHERE [d].[RecordedAt] < {boundaryAt}
+                OR ([d].[RecordedAt] = {boundaryAt} AND [d].[Id] < {boundaryId})
+            """);
     }
 
     private static AllocationDisputeResponse ToResponse(StoredDispute row)

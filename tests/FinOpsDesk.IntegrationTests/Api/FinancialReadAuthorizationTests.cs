@@ -740,10 +740,20 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
         using HttpResponseMessage correction = await client.GetAsync(correctionPath);
         string correctionBody = await correction.Content.ReadAsStringAsync();
         Assert.Equal(statusCode, correction.StatusCode);
+        const string queueOffset = "/api/allocation-disputes/queue?queue=needs-decision&page=1&pageSize=1";
+        const string queueCursor = "/api/allocation-disputes/queue?queue=needs-decision&pagination=cursor&pageSize=1";
+        using HttpResponseMessage queueOffsetResponse = await client.GetAsync(queueOffset);
+        string queueOffsetBody = await queueOffsetResponse.Content.ReadAsStringAsync();
+        Assert.Equal(statusCode, queueOffsetResponse.StatusCode);
+        using HttpResponseMessage queueCursorResponse = await client.GetAsync(queueCursor);
+        string queueCursorBody = await queueCursorResponse.Content.ReadAsStringAsync();
+        Assert.Equal(statusCode, queueCursorResponse.StatusCode);
         if (statusCode == HttpStatusCode.OK)
         {
             Assert.Contains("counterparty challenge", listBody, StringComparison.Ordinal);
             Assert.Contains("counterparty challenge", detailBody, StringComparison.Ordinal);
+            Assert.Contains("counterparty challenge", queueOffsetBody, StringComparison.Ordinal);
+            Assert.Contains("counterparty challenge", queueCursorBody, StringComparison.Ordinal);
             Assert.DoesNotContain("idempotencyKey", listBody, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("idempotencyKey", detailBody, StringComparison.OrdinalIgnoreCase);
             using JsonDocument resolutionDocument = JsonDocument.Parse(resolutionBody);
@@ -759,6 +769,8 @@ public sealed class FinancialReadAuthorizationTests : IDisposable
 
         Assert.DoesNotContain("counterparty challenge", listBody, StringComparison.Ordinal);
         Assert.DoesNotContain("counterparty challenge", detailBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("counterparty challenge", queueOffsetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("counterparty challenge", queueCursorBody, StringComparison.Ordinal);
     }
 
     private FinOpsDeskApiFactory CreateFactory(

@@ -191,6 +191,37 @@ describe('allocation dispute address', () => {
     expect(address.selectedState).toBe('invalid');
     expect(address.selectedValues).toEqual(['', disputeId]);
   });
+
+  it('uses a cursor when a queue has no page and keeps an explicit page on the offset queue', () => {
+    expect(readAllocationDisputeAddress(new URLSearchParams('queue=needs-decision'))).toMatchObject({
+      listValid: true,
+      mode: 'queue-cursor',
+      page: null,
+      cursor: null,
+      queue: 'needs-decision',
+    });
+    expect(readAllocationDisputeAddress(new URLSearchParams('queue=needs-correction&page=1'))).toMatchObject({
+      listValid: true,
+      mode: 'queue-offset',
+      page: 1,
+      cursor: null,
+    });
+    expect(readAllocationDisputeAddress(new URLSearchParams('queue=needs-decision&page=1&cursor=abc')).listValid)
+      .toBe(false);
+    const invalidCursor = readAllocationDisputeAddress(new URLSearchParams(
+      'queue=needs-decision&cursor=!!!&selected=cccccccc-cccc-4ccc-8ccc-cccccccccccc&selected=dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    ));
+    expect(invalidCursor).toMatchObject({
+      listValid: false,
+      queue: 'needs-decision',
+      cursorInAddress: true,
+      selectedValues: [
+        'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      ],
+    });
+    expect(readAllocationDisputeAddress(new URLSearchParams('cursor=abc')).listValid).toBe(false);
+  });
 });
 
 function read(body: string): unknown {
