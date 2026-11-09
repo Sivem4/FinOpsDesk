@@ -394,7 +394,9 @@ Phase 8U closes the phase. `DevelopmentJwt` can delegate an open assigned review
 
 Status: Planned.
 
-Phase 3C already limits import upload size. This phase adds further operability and hardening.
+Phase 3C already limits import upload size. This phase adds further operability and hardening. The phase stays Planned until 9A, 9B, and 9C are all delivered.
+
+Phase 9A adds the host request summary and readiness probe. One Information event, `EventId` 9101 in `FinOpsDesk.Api.Requests`, records the server request id, a safe Problem Details trace id or JSON null, the HTTP method, a route template or the labels `ready`, `oidc-callback`, or `unmatched`, the completion status, the elapsed milliseconds, and `completed`, `cancelled`, or `incomplete`. `problemTraceId` is copied only when the whole value is the server request id or a lowercase W3C id, and the Problem Details document stays unchanged. `oidc-callback` applies only to the effective callback of the active OpenID Connect composition. `X-Request-Id` carries the server `TraceIdentifier`. `GET /ready` checks the configured SQL Server with one `SELECT 1` on a separate SqlClient pool and does not replace `GET /health`. A result that arrives after the probe budget, and an expected driver or timeout failure, are not ready. Unexpected probe failures stay on the existing error path. The host does not map test-only observability routes. Query-plan notes, indexes, keyset pagination, rate limits, and the security review remain in the later increments. See ADR 0042.
 
 Add:
 

@@ -1,5 +1,8 @@
+using System.Text.Json;
+
 using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.Api.Authorization;
+using FinOpsDesk.Api.Observability;
 using FinOpsDesk.Api.OpenApi;
 using FinOpsDesk.Api.Security;
 using FinOpsDesk.Modules.Access;
@@ -8,10 +11,30 @@ using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Presentation;
 
+using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.Options;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi(OpenApiAuthenticationTransformer.Configure);
-builder.Services.AddProblemDetails();
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = context =>
+    {
+        JsonSerializerOptions serializer = context.HttpContext.RequestServices
+            .GetRequiredService<IOptions<JsonOptions>>()
+            .Value
+            .SerializerOptions;
+        string key = serializer.PropertyNamingPolicy?.ConvertName("traceId") ?? "traceId";
+        string? accepted = null;
+        if (context.ProblemDetails.Extensions.TryGetValue(key, out object? raw) && raw is string traceId)
+        {
+            accepted = RequestLog.AcceptProblemTraceId(traceId, context.HttpContext.TraceIdentifier);
+        }
+
+        context.HttpContext.Items[RequestLog.ProblemTraceIdItemKey] = accepted;
+    };
+});
 builder.Services.AddExceptionHandler<FinOpsDesk.Api.Authorization.FinancialCommitAuthorizationExceptionHandler>();
 builder.Services.AddHealthChecks();
 builder.Services.AddFinOpsDeskAuthentication(builder.Configuration, builder.Environment);
@@ -32,11 +55,16 @@ if (string.IsNullOrWhiteSpace(connectionString))
 builder.Services.AddAccessModule(connectionString);
 builder.Services.AddReconciliationModule(connectionString);
 builder.Services.AddScoped<IFinancialCommitGuard, FinOpsDesk.Api.Authorization.FinancialCommitGuard>();
+builder.Services.AddSingleton<IDatabaseReadinessProbe, DatabaseReadinessProbe>();
 
 var app = builder.Build();
 
+app.UseMiddleware<RequestCompletionLogMiddleware>();
 app.UseExceptionHandler();
 app.UseHttpsRedirection();
+app.UseRouting();
+app.UseMiddleware<RequestRouteCaptureMiddleware>();
+app.UseMiddleware<ReadinessMiddleware>();
 app.UseAuthentication();
 app.UseMiddleware<FinancialAnonymousRouteGuardMiddleware>();
 app.UseAuthorization();

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 
 namespace FinOpsDesk.Api.Authentication;
@@ -53,6 +54,12 @@ internal sealed class OidcAuthenticationSettingsValidator
         {
             return ValidateOptionsResult.Fail(
                 "Authentication:Oidc:CallbackPath must start with '/'.");
+        }
+
+        if (new PathString(options.CallbackPath).Equals(new PathString("/ready")))
+        {
+            return ValidateOptionsResult.Fail(
+                "Authentication:Oidc:CallbackPath must not match the readiness path /ready.");
         }
 
         return ValidateOptionsResult.Success;
