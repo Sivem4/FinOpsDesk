@@ -11,6 +11,7 @@ const catalog: readonly CookieNavLink[] = [
   { to: '/bank-transactions', label: 'Bank transactions', capability: 'bank-transactions.read' },
   { to: '/reconciliation', label: 'Reconciliation', capability: 'reconciliation.read' },
   { to: '/allocations', label: 'Allocation history', capability: 'allocations.read' },
+  { to: '/dashboard', label: 'Operations', capability: 'review-cases.read' },
   { to: '/review-cases', label: 'Review cases', capability: 'review-cases.read' },
 ];
 

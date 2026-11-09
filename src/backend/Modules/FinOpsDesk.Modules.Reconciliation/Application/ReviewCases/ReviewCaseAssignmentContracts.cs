@@ -15,7 +15,34 @@ public sealed record ReleaseReviewCaseCommand(
     string CanonicalConcurrencyToken,
     Guid IdempotencyKey);
 
+public sealed record DelegateReviewCaseCommand(
+    ReviewCaseId ReviewCaseId,
+    byte[] RowVersion,
+    string CanonicalConcurrencyToken,
+    Guid IdempotencyKey,
+    string RecipientActorId);
+
 public sealed record GetReviewCaseAssignmentQuery(ReviewCaseId ReviewCaseId);
+
+public sealed record GetReviewCaseDelegationRecipientsQuery;
+
+public sealed record ReviewCaseDelegationRecipientsResponse(IReadOnlyList<string> ActorIds);
+
+public sealed record ReviewCaseDelegationResponse(
+    Guid ReviewCaseId,
+    string Operation,
+    string ActorSource,
+    string ActorId,
+    string RecipientActorId,
+    DateTimeOffset RecordedAt);
+
+public sealed record ChangeReviewCaseDelegationResponse(
+    ReviewCaseDelegationResponse Delegation,
+    bool Created);
+
+internal sealed record ReviewCaseAssignmentExecution(
+    ReviewCaseAssignmentEntry Entry,
+    bool Created);
 
 public sealed record ReviewCaseAssigneeResponse(
     string ActorSource,
@@ -53,4 +80,25 @@ public interface IReviewCaseAssignmentWriter
 public interface IReviewCaseAssignmentConflict
 {
     bool IsIdempotencyKeyConflict(Exception exception);
+}
+
+public abstract record ReviewCaseDelegationDirectoryRead
+{
+    private ReviewCaseDelegationDirectoryRead()
+    {
+    }
+
+    public sealed record Unavailable : ReviewCaseDelegationDirectoryRead
+    {
+        public static Unavailable Instance { get; } = new();
+    }
+
+    public sealed record Available(IReadOnlyList<string> ActorIds) : ReviewCaseDelegationDirectoryRead;
+}
+
+public interface IReviewCaseDelegationDirectory
+{
+    ReviewCaseDelegationDirectoryRead ReadCurrentOrganization();
+
+    bool Allows(OrganizationId organizationId, string normalizedRecipientActorId);
 }

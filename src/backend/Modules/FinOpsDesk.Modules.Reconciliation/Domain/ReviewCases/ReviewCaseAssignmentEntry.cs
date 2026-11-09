@@ -28,6 +28,8 @@ public sealed class ReviewCaseAssignmentEntry
 
     public DateTimeOffset? AssignedAt { get; }
 
+    public string? RecipientActorId { get; }
+
 #pragma warning disable CS8618
     private ReviewCaseAssignmentEntry()
     {
@@ -44,7 +46,8 @@ public sealed class ReviewCaseAssignmentEntry
         string requestConcurrencyToken,
         Guid idempotencyKey,
         DateTimeOffset recordedAt,
-        DateTimeOffset? assignedAt)
+        DateTimeOffset? assignedAt,
+        string? recipientActorId)
     {
         Id = id;
         OrganizationId = organizationId;
@@ -56,6 +59,7 @@ public sealed class ReviewCaseAssignmentEntry
         IdempotencyKey = idempotencyKey;
         RecordedAt = recordedAt;
         AssignedAt = assignedAt;
+        RecipientActorId = recipientActorId;
     }
 
     public static ReviewCaseAssignmentEntry Create(
@@ -68,7 +72,8 @@ public sealed class ReviewCaseAssignmentEntry
         string requestConcurrencyToken,
         Guid idempotencyKey,
         DateTimeOffset recordedAt,
-        DateTimeOffset? assignedAt)
+        DateTimeOffset? assignedAt,
+        string? recipientActorId = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(organizationId);
@@ -119,10 +124,41 @@ public sealed class ReviewCaseAssignmentEntry
             {
                 throw new ArgumentException("A claim records the assignment time.", nameof(assignedAt));
             }
+
+            if (recipientActorId is not null)
+            {
+                throw new ArgumentException("A claim does not record a recipient.", nameof(recipientActorId));
+            }
         }
-        else if (assignedAt is not null)
+        else if (operation == ReviewCaseAssignmentOperation.Release)
         {
-            throw new ArgumentException("A release does not record an assignment time.", nameof(assignedAt));
+            if (assignedAt is not null)
+            {
+                throw new ArgumentException("A release does not record an assignment time.", nameof(assignedAt));
+            }
+
+            if (recipientActorId is not null)
+            {
+                throw new ArgumentException("A release does not record a recipient.", nameof(recipientActorId));
+            }
+        }
+        else
+        {
+            if (assignedAt is null || assignedAt.Value == default)
+            {
+                throw new ArgumentException("A delegation records the assignment time.", nameof(assignedAt));
+            }
+
+            if (recipientActorId is null
+                || recipientActorId.Length == 0
+                || recipientActorId.Length > MaxActorIdLength
+                || recipientActorId != recipientActorId.Trim()
+                || string.Equals(recipientActorId, actorId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    "A delegation records a different trimmed recipient of at most 256 characters.",
+                    nameof(recipientActorId));
+            }
         }
 
         return new ReviewCaseAssignmentEntry(
@@ -135,7 +171,8 @@ public sealed class ReviewCaseAssignmentEntry
             requestConcurrencyToken,
             idempotencyKey,
             recordedAt,
-            assignedAt);
+            assignedAt,
+            recipientActorId);
     }
 
     public bool Matches(
@@ -143,7 +180,8 @@ public sealed class ReviewCaseAssignmentEntry
         ReviewCaseAssignmentOperation operation,
         ReviewCaseActorSource actorSource,
         string actorId,
-        string requestConcurrencyToken)
+        string requestConcurrencyToken,
+        string? recipientActorId = null)
     {
         ArgumentNullException.ThrowIfNull(reviewCaseId);
         ArgumentNullException.ThrowIfNull(actorId);
@@ -153,6 +191,7 @@ public sealed class ReviewCaseAssignmentEntry
             && Operation == operation
             && ActorSource == actorSource
             && string.Equals(ActorId, actorId, StringComparison.Ordinal)
-            && string.Equals(RequestConcurrencyToken, requestConcurrencyToken, StringComparison.Ordinal);
+            && string.Equals(RequestConcurrencyToken, requestConcurrencyToken, StringComparison.Ordinal)
+            && string.Equals(RecipientActorId, recipientActorId, StringComparison.Ordinal);
     }
 }

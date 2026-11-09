@@ -5,6 +5,7 @@ using FinOpsDesk.Api.Security;
 using FinOpsDesk.Modules.Access;
 using FinOpsDesk.Modules.Reconciliation;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
+using FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Presentation;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,6 +20,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentOrganizationContext, HttpContextCurrentOrganizationContext>();
 builder.Services.AddScoped<ICurrentActorContext, HttpContextCurrentActorContext>();
 builder.Services.AddScoped<ICurrentActorAttribution, HttpContextCurrentActorAttribution>();
+builder.Services.AddScoped<IReviewCaseDelegationDirectory, ConfigurationReviewCaseDelegationDirectory>();
 
 string? connectionString = builder.Configuration.GetConnectionString("FinOpsDesk");
 if (string.IsNullOrWhiteSpace(connectionString))

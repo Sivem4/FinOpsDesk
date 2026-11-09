@@ -12,6 +12,7 @@ import {
   resetReviewCaseAssignmentAttemptStateForTests,
   reviewCaseAssignmentAttemptStorageKey,
   ReviewCaseAssignmentActorMismatchError,
+  ReviewCaseAssignmentAttemptBlockedError,
   ReviewCaseAssignmentActorRequiredError,
   UnresolvedReviewCaseAssignmentError,
   ReviewCaseAssignmentCommandNotSentError,
@@ -252,6 +253,42 @@ describe('review case assignment attempt', () => {
     expect(sessionStorage.getItem(reviewCaseAssignmentAttemptStorageKey)).toBeNull();
     expect(assignmentReadFloorForTests()).toEqual({ detailSequence: 0, assignmentSequence: 0 });
   });
+
+  it('keeps a schema version 1 claim and blocks every new assignment command while it is unresolved', async () => {
+    signIn();
+    const legacy = {
+      schemaVersion: 1,
+      operation: 'ReviewCaseClaim',
+      organizationId: '11111111-1111-1111-1111-111111111111',
+      actorSource: 'developmentJwt',
+      actorId: 'operator-1',
+      caseId,
+      idempotencyKey: '22222222-2222-4222-8222-222222222222',
+      requestBody: JSON.stringify({ concurrencyToken: token }),
+      lifecycle: 'ready',
+      uncertaintyLocked: false,
+    };
+    sessionStorage.setItem(reviewCaseAssignmentAttemptStorageKey, JSON.stringify(legacy));
+    let body = '';
+    let key = '';
+    server.use(http.post(`/api/review-cases/${caseId}/assignment`, async ({ request }) => {
+      body = await request.text();
+      key = request.headers.get('Idempotency-Key') ?? '';
+      return HttpResponse.json(claimBody(), { status: 201 });
+    }));
+    expect(() => beginReviewCaseAssignmentAttempt('delegate', delegateClick(), 'colleague'))
+      .toThrow(UnresolvedReviewCaseAssignmentError);
+    await submitReviewCaseAssignmentAttempt();
+    expect(key).toBe(legacy.idempotencyKey);
+    expect(body).toBe(legacy.requestBody);
+    expect(sessionStorage.getItem(reviewCaseAssignmentAttemptStorageKey)).toBeNull();
+
+    sessionStorage.setItem(reviewCaseAssignmentAttemptStorageKey, JSON.stringify({
+      ...legacy,
+      recipientActorId: 'colleague',
+    }));
+    await expect(submitReviewCaseAssignmentAttempt()).rejects.toBeInstanceOf(ReviewCaseAssignmentAttemptBlockedError);
+  });
 });
 
 function signIn(subject = 'operator-1'): void {
@@ -273,6 +310,13 @@ function jwt(subject: string | null): string {
 
 function encode(value: object): string {
   return btoa(JSON.stringify(value)).replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function delegateClick(): ReviewCaseAssignmentClick {
+  return {
+    ...click(),
+    assignee: { actorSource: 'developmentJwt', actorId: 'operator-1', assignedAt },
+  };
 }
 
 function click(): ReviewCaseAssignmentClick {

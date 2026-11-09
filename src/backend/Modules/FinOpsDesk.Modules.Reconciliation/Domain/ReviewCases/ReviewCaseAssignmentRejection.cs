@@ -6,4 +6,5 @@ public enum ReviewCaseAssignmentRejection
     AlreadyAssigned = 2,
     NotAssigned = 3,
     NotAssignee = 4,
+    DelegateeUnavailable = 5,
 }

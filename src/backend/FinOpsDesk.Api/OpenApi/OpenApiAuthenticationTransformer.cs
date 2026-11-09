@@ -100,7 +100,7 @@ internal static class OpenApiAuthenticationTransformer
 
         if (classification is not null)
         {
-            ApplyFinancialOperation(operation, state, classification, csrf);
+            ApplyFinancialOperation(operation, state, classification, csrf, path, context.Description.HttpMethod);
             return Task.CompletedTask;
         }
 
@@ -135,19 +135,30 @@ internal static class OpenApiAuthenticationTransformer
         OpenApiOperation operation,
         AuthenticationCompositionState state,
         FinancialEndpointClassification classification,
-        bool csrf)
+        bool csrf,
+        string path,
+        string? method)
     {
         bool allowlisted = ProductionFinancialWriteActivation.IsActivated(classification);
         bool excludedWrite = classification.Kind == FinancialEndpointClassification.OperationKind.Write
             && !allowlisted;
         bool commitGuard = state.UsesProductionCookie && allowlisted;
+        bool delegationCatalog = path.Equals("/api/review-cases/delegation-recipients", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase);
         bool handlerProblem = HasProblemContent(operation, "403")
+            && !delegationCatalog
             && !(state.UsesProductionCookie && excludedWrite);
         string description = FinancialDescription(state, classification, allowlisted, excludedWrite);
         if (handlerProblem)
         {
             description +=
                 " A missing or invalid server actor returns 403 application/problem+json with code reconciliation.actor.required, including an identical replay.";
+        }
+
+        if (delegationCatalog)
+        {
+            description +=
+                " ProductionCookie returns 403 application/problem+json with code reconciliation.review_case_assignment.delegation_unavailable before recipient configuration is read.";
         }
 
         AppendDescription(operation, description);
@@ -179,7 +190,14 @@ internal static class OpenApiAuthenticationTransformer
                 " A FinancialCommitGuard denial can return application/problem+json titled \"Financial authorization could not be completed.\"";
         }
 
-        DescribeStatus(operation, "403", forbidden, preserveProblem: handlerProblem);
+        if (delegationCatalog)
+        {
+            forbidden =
+                "application/problem+json with code reconciliation.review_case_assignment.delegation_unavailable. This denial is the delegation catalog refusal.";
+        }
+
+        DescribeStatus(operation, "403", forbidden, preserveProblem: handlerProblem || delegationCatalog);
+
         if (!csrf || excludedWrite)
         {
             return;

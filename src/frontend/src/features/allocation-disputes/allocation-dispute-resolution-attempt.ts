@@ -635,6 +635,9 @@ export async function refreshAllocationDisputeResolution(epoch: number, disputeI
     queryFn: ({ signal }) => loadAllocationDisputeResolution(disputeId, epoch, signal),
     staleTime: 0,
   });
+  await queryClient.invalidateQueries({ queryKey: ['allocation-disputes', 'work-summary', epoch] });
+  await queryClient.invalidateQueries({ queryKey: ['allocation-disputes', 'queue', epoch, 'needs-decision'] });
+  await queryClient.invalidateQueries({ queryKey: ['allocation-disputes', 'queue', epoch, 'needs-correction'] });
 }
 
 export function resetAllocationDisputeResolutionAttemptStateForTests(): void {

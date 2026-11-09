@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 
+import { resetAllocationDisputeCorrectionAttemptStateForTests } from '../features/allocation-disputes/allocation-dispute-correction-attempt';
 import { resetAllocationDisputeResolutionAttemptStateForTests } from '../features/allocation-disputes/allocation-dispute-resolution-attempt';
 import { resetReversalAttemptStateForTests } from '../features/allocations/reversal-attempt';
 import { resetReviewCaseAssignmentAttemptStateForTests } from '../features/review-cases/review-case-assignment-attempt';
@@ -34,6 +35,7 @@ afterEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   resetAllocationAttemptStateForTests();
+  resetAllocationDisputeCorrectionAttemptStateForTests();
   resetAllocationDisputeResolutionAttemptStateForTests();
   resetReversalAttemptStateForTests();
   resetReviewCaseCommentAttemptStateForTests();

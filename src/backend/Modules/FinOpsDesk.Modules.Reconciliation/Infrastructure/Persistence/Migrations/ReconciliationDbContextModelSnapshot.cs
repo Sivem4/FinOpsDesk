@@ -763,6 +763,10 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("RecipientActorId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
                     b.Property<DateTimeOffset>("RecordedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -790,11 +794,13 @@ namespace FinOpsDesk.Modules.Reconciliation.Infrastructure.Persistence.Migration
 
                             t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_ActorSource", "[ActorSource] IN (1, 2)");
 
-                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_AssignedAt", "(([Operation] = 1 AND [AssignedAt] IS NOT NULL) OR ([Operation] = 2 AND [AssignedAt] IS NULL))");
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_AssignedAt", "(([Operation] IN (1, 3) AND [AssignedAt] IS NOT NULL) OR ([Operation] = 2 AND [AssignedAt] IS NULL))");
 
                             t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_IdempotencyKey", "[IdempotencyKey] <> '00000000-0000-0000-0000-000000000000'");
 
-                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_Operation", "[Operation] IN (1, 2)");
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_Operation", "[Operation] IN (1, 2, 3)");
+
+                            t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_RecipientActorId", "(([Operation] IN (1, 2) AND [RecipientActorId] IS NULL) OR ([Operation] = 3 AND [RecipientActorId] IS NOT NULL AND [RecipientActorId] COLLATE Latin1_General_100_BIN2 <> [ActorId] COLLATE Latin1_General_100_BIN2 AND DATALENGTH([RecipientActorId]) = DATALENGTH(LTRIM(RTRIM([RecipientActorId]))) AND DATALENGTH([RecipientActorId]) BETWEEN 2 AND 512))");
 
                             t.HasCheckConstraint("CK_ReviewCaseAssignmentEntries_RequestConcurrencyToken", "DATALENGTH([RequestConcurrencyToken]) = DATALENGTH(LTRIM(RTRIM([RequestConcurrencyToken]))) AND DATALENGTH([RequestConcurrencyToken]) = 24");
                         });

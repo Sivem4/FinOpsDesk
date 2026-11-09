@@ -109,7 +109,9 @@ public static class ReconciliationModule
         services.AddScoped<IReviewCaseAssignmentConflict, ReviewCaseAssignmentConflict>();
         services.AddScoped<ClaimReviewCaseHandler>();
         services.AddScoped<ReleaseReviewCaseHandler>();
+        services.AddScoped<DelegateReviewCaseHandler>();
         services.AddScoped<GetReviewCaseAssignmentHandler>();
+        services.AddScoped<GetReviewCaseDelegationRecipientsHandler>();
         services.AddScoped<AllocationDisputeStore>();
         services.AddScoped<IAllocationDisputeLookup>(
             serviceProvider => serviceProvider.GetRequiredService<AllocationDisputeStore>());
@@ -120,6 +122,8 @@ public static class ReconciliationModule
         services.AddScoped<IAllocationDisputeQueries, AllocationDisputeQueries>();
         services.AddScoped<GetAllocationDisputesHandler>();
         services.AddScoped<GetAllocationDisputeHandler>();
+        services.AddScoped<GetAllocationDisputeWorkSummaryHandler>();
+        services.AddScoped<GetAllocationDisputeQueueHandler>();
         services.AddScoped<AllocationDisputeResolutionStore>();
         services.AddScoped<IAllocationDisputeResolutionLookup>(
             serviceProvider => serviceProvider.GetRequiredService<AllocationDisputeResolutionStore>());

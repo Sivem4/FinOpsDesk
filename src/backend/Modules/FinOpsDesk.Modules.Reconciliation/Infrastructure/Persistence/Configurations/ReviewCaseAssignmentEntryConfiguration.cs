@@ -24,12 +24,14 @@ internal sealed class ReviewCaseAssignmentEntryConfiguration : IEntityTypeConfig
 
     internal const string AssignedAtCheckName = "CK_ReviewCaseAssignmentEntries_AssignedAt";
 
+    internal const string RecipientActorIdCheckName = "CK_ReviewCaseAssignmentEntries_RecipientActorId";
+
     internal static readonly string IdempotencyKeyCheckSql =
         "[IdempotencyKey] <> '00000000-0000-0000-0000-000000000000'";
 
     internal static readonly string OperationCheckSql =
         "[Operation] IN ("
-        + $"{(int)ReviewCaseAssignmentOperation.Claim}, {(int)ReviewCaseAssignmentOperation.Release})";
+        + $"{(int)ReviewCaseAssignmentOperation.Claim}, {(int)ReviewCaseAssignmentOperation.Release}, {(int)ReviewCaseAssignmentOperation.Delegate})";
 
     internal static readonly string ActorSourceCheckSql =
         "[ActorSource] IN ("
@@ -45,9 +47,17 @@ internal sealed class ReviewCaseAssignmentEntryConfiguration : IEntityTypeConfig
         + (ReviewCaseAssignmentEntry.CanonicalTokenLength * 2);
 
     internal static readonly string AssignedAtCheckSql =
-        "(([Operation] = "
-        + $"{(int)ReviewCaseAssignmentOperation.Claim} AND [AssignedAt] IS NOT NULL) OR ([Operation] = "
+        "(([Operation] IN ("
+        + $"{(int)ReviewCaseAssignmentOperation.Claim}, {(int)ReviewCaseAssignmentOperation.Delegate}) AND [AssignedAt] IS NOT NULL) OR ([Operation] = "
         + $"{(int)ReviewCaseAssignmentOperation.Release} AND [AssignedAt] IS NULL))";
+
+    internal static readonly string RecipientActorIdCheckSql =
+        "(([Operation] IN ("
+        + $"{(int)ReviewCaseAssignmentOperation.Claim}, {(int)ReviewCaseAssignmentOperation.Release}) AND [RecipientActorId] IS NULL) OR ([Operation] = "
+        + $"{(int)ReviewCaseAssignmentOperation.Delegate} AND [RecipientActorId] IS NOT NULL AND [RecipientActorId] COLLATE Latin1_General_100_BIN2 <> [ActorId] COLLATE Latin1_General_100_BIN2 "
+        + "AND DATALENGTH([RecipientActorId]) = DATALENGTH(LTRIM(RTRIM([RecipientActorId]))) AND DATALENGTH([RecipientActorId]) BETWEEN 2 AND "
+        + (ReviewCaseAssignmentEntry.MaxActorIdLength * 2)
+        + "))";
 
     public void Configure(EntityTypeBuilder<ReviewCaseAssignmentEntry> builder)
     {
@@ -61,6 +71,7 @@ internal sealed class ReviewCaseAssignmentEntryConfiguration : IEntityTypeConfig
             table.HasCheckConstraint(ActorIdCheckName, ActorIdCheckSql);
             table.HasCheckConstraint(TokenCheckName, TokenCheckSql);
             table.HasCheckConstraint(AssignedAtCheckName, AssignedAtCheckSql);
+            table.HasCheckConstraint(RecipientActorIdCheckName, RecipientActorIdCheckSql);
         });
 
         builder.HasKey(entry => entry.Id);
@@ -94,6 +105,9 @@ internal sealed class ReviewCaseAssignmentEntryConfiguration : IEntityTypeConfig
 
         builder.Property(entry => entry.AssignedAt)
             .HasColumnType("datetimeoffset");
+
+        builder.Property(entry => entry.RecipientActorId)
+            .HasMaxLength(ReviewCaseAssignmentEntry.MaxActorIdLength);
 
         builder.HasIndex(entry => new
         {

@@ -15,6 +15,9 @@ export function invalidateVerifiedReversal(result: VerifiedReversal): void {
     ['bank-transactions', epoch],
     ['matches', epoch],
     ['allocations', 'context', epoch, result.invoiceId, result.bankTransactionId],
+    ['allocations', 'reversal-context', epoch, result.allocationId],
+    ['allocation-disputes', 'work-summary', epoch],
+    ['allocation-disputes', 'queue', epoch, 'needs-correction'],
   ] as const;
 
   for (const queryKey of keys) {

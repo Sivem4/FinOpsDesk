@@ -254,6 +254,47 @@ public sealed class ReviewCase
         return null;
     }
 
+    public ReviewCaseAssignmentRejection? Delegate(
+        ReviewCaseActorSource source,
+        string actorId,
+        string recipientActorId,
+        DateTimeOffset assignedAt)
+    {
+        if (Status != ReviewCaseStatus.Open)
+        {
+            return ReviewCaseAssignmentRejection.Terminal;
+        }
+
+        if (!HasAssignment)
+        {
+            return ReviewCaseAssignmentRejection.NotAssigned;
+        }
+
+        if (!Enum.IsDefined(source))
+        {
+            throw new ArgumentOutOfRangeException(nameof(source), "Actor source is not defined.");
+        }
+
+        string normalizedSender = NormalizeActorId(actorId);
+        string normalizedRecipient = NormalizeActorId(recipientActorId);
+        if (AssignedActorSource != source
+            || !string.Equals(AssignedActorId, normalizedSender, StringComparison.Ordinal))
+        {
+            return ReviewCaseAssignmentRejection.NotAssignee;
+        }
+
+        if (string.Equals(normalizedSender, normalizedRecipient, StringComparison.Ordinal))
+        {
+            return ReviewCaseAssignmentRejection.DelegateeUnavailable;
+        }
+
+        DateTimeOffset normalizedAssignedAt = RequireAssignedAt(assignedAt);
+        AssignedActorSource = source;
+        AssignedActorId = normalizedRecipient;
+        AssignedAt = normalizedAssignedAt;
+        return null;
+    }
+
     internal static string? NormalizeNote(string? note)
     {
         if (string.IsNullOrWhiteSpace(note))

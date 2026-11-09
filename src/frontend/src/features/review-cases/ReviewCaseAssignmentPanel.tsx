@@ -1,7 +1,8 @@
-import { Alert, Button, Stack, Typography } from '@mui/material';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { Alert, Button, Stack, TextField, Typography } from '@mui/material';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { authenticationHeaders } from '../../shared/api/authentication';
 import { sessionStore } from '../../shared/api/session-store';
 import { useSession } from '../../shared/auth/session';
 import {
@@ -268,7 +269,7 @@ export function ReviewCaseAssignmentSection({
       && sessionStore.getSnapshot().epoch === epoch;
   }
 
-  function send(operation: 'claim' | 'release'): void {
+  function send(operation: 'claim' | 'release' | 'delegate', recipientActorId?: string): void {
     if (sending) {
       return;
     }
@@ -282,7 +283,7 @@ export function ReviewCaseAssignmentSection({
         throw new ReviewCaseAssignmentNotReadyError();
       }
 
-      beginReviewCaseAssignmentAttempt(operation, snapshot);
+      beginReviewCaseAssignmentAttempt(operation, snapshot, recipientActorId);
     } catch (caught) {
       setSending(false);
       setError(caught);
@@ -344,7 +345,10 @@ export function ReviewCaseAssignmentSection({
         <Button type="button" disabled={sending} onClick={() => send('claim')}>Claim this case</Button>
       ) : null}
       {action === 'release' ? (
-        <Button type="button" disabled={sending} onClick={() => send('release')}>Release this assignment</Button>
+        <Stack spacing={1}>
+          <Button type="button" disabled={sending} onClick={() => send('release')}>Release this assignment</Button>
+          <DelegateControl disabled={sending} onDelegate={(recipientActorId) => send('delegate', recipientActorId)} />
+        </Stack>
       ) : null}
       <Button type="button" disabled={refreshing || sending} onClick={refresh}>Refresh the case and assignment</Button>
       {error !== null ? <Alert severity="warning">{failureMessage(error)}</Alert> : null}
@@ -387,7 +391,11 @@ function StoredAssignment({
   onReplayConfirmed: (result: VerifiedReviewCaseAssignment, selectionGeneration: number) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const operation = attempt.operation === 'ReviewCaseClaim' ? 'Claim' : 'Release';
+  const operation = attempt.operation === 'ReviewCaseClaim'
+    ? 'Claim'
+    : attempt.operation === 'ReviewCaseRelease'
+      ? 'Release'
+      : 'Delegate';
   const replayLabel = attempt.lifecycle === 'ready'
     ? `Send the stored ${operation.toLowerCase()}`
     : `Send the same ${operation.toLowerCase()} again`;
@@ -708,4 +716,46 @@ function failureMessage(error: unknown): string {
   }
 
   return 'The assignment command could not be completed.';
+}
+
+function DelegateControl({
+  disabled,
+  onDelegate,
+}: {
+  disabled: boolean;
+  onDelegate: (recipientActorId: string) => void;
+}) {
+  const [recipient, setRecipient] = useState('');
+  const recipients = useQuery({
+    queryKey: ['review-cases', 'delegation-recipients', sessionStore.getSnapshot().epoch],
+    queryFn: async ({ signal }) => {
+      const response = await fetch('/api/review-cases/delegation-recipients', {
+        headers: {
+          Accept: 'application/json',
+          ...authenticationHeaders(sessionStore.getSnapshot(), 'GET'),
+        },
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error('Delegation recipients could not be read.');
+      }
+
+      const body = await response.json() as { actorIds?: unknown };
+      return Array.isArray(body.actorIds) ? body.actorIds.filter((item): item is string => typeof item === 'string') : [];
+    },
+  });
+
+  return (
+    <Stack direction="row" spacing={1}>
+      <TextField
+        label="Recipient"
+        value={recipient}
+        onChange={(event) => setRecipient(event.target.value)}
+        helperText={recipients.data?.join(', ') || 'No configured recipients'}
+      />
+      <Button type="button" disabled={disabled || recipient.trim().length === 0} onClick={() => onDelegate(recipient)}>
+        Delegate this case
+      </Button>
+    </Stack>
+  );
 }
