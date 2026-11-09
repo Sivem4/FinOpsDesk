@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="..\..\src\backend\FinOpsDesk.Api\appsettings.json" Link="host-appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\src\backend\FinOpsDesk.Api\appsettings.Development.json" Link="host-appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\backend\FinOpsDesk.Api\FinOpsDesk.Api.csproj" />
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Access\FinOpsDesk.Modules.Access.csproj" />
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />

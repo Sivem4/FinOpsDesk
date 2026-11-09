@@ -38,6 +38,10 @@ It owns:
 - global HTTP error handling;
 - configuration and observability wiring.
 
+`GET /health` stays an anonymous process check and does not open SQL Server. `GET /ready` is a separate anonymous readiness probe. It runs after HTTPS redirection and before authentication, compares the path with `StringComparison.Ordinal`, and executes one `SELECT 1` through a SqlClient connection string that does not share the module connection pool. After that call returns, client cancellation is checked before budget expiry. A late successful result is HTTP 503 while the client remains connected. Expected driver failures and timeouts are HTTP 503 `{"status":"not-ready"}`. Unexpected probe failures and response write failures use the existing error handler. HTTP 200 `{"status":"ready"}` and the not-ready response use `Cache-Control: no-store`. The probe does not migrate, write, or prove financial correctness. See ADR 0042.
+
+The host writes one `FinOpsDesk.Api.Requests` event, `EventId` 9101, when a request leaves the outer completion middleware. `X-Request-Id` is the server `TraceIdentifier` and is the correlation key. `problemTraceId` copies the Problem Details `traceId` only when the entire value is the server request id or a full lowercase W3C id. The Problem Details document is left unchanged. The `oidc-callback` label is used only for the effective callback path of the active OpenID Connect composition. The event is not a financial audit. See ADR 0042.
+
 It must not contain business rules.
 
 ### FinOpsDesk.SharedKernel

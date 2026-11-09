@@ -141,3 +141,7 @@ Create or update an architecture decision record when a decision:
 - changes security, data ownership, or deployment architecture.
 
 Documentation should describe current reality and explicitly label future plans.
+
+## Operational logs
+
+The host request summary is event 9101 from `RequestLog.Write`. Its structured state has exactly the seven fields defined in ADR 0042, and both the state `ToString()` value and the log message are `HTTP request completed.`. Copy `problemTraceId` only when the entire value is the server request id or a lowercase W3C id, and do not rewrite Problem Details to make it fit. Do not put request or response bodies, raw paths, query values, tokens, financial amounts, actor or organization identifiers, or exception text into that event. Console logging uses the JSON formatter with scopes excluded. That setting does not sanitize framework, Entity Framework, or exception logs.
