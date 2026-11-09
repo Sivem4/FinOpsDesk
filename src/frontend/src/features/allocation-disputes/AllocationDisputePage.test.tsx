@@ -13,8 +13,14 @@ import { cookieNavLinks } from '../../shared/auth/cookie-navigation';
 import { AppShell } from '../../shared/ui/AppShell';
 import { fakeJwt } from '../../test/jwt';
 import { server } from '../../test/server';
+import { invalidateVerifiedReversal } from '../allocations/reversal-completion';
 import { OperationsDashboardPage } from '../operations/OperationsDashboardPage';
+import { refreshAllocationDisputeLists } from './allocation-dispute-attempt';
 import { AllocationDisputePage } from './AllocationDisputePage';
+import {
+  allocationDisputeQueueQueryKey,
+  allocationDisputeWorkSummaryQueryKey,
+} from './allocation-dispute-work-api';
 
 const allocationA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const allocationB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -442,11 +448,11 @@ describe('allocation dispute screen', () => {
       http.get('/api/allocation-disputes/summary', () => text('{"needsDecision":1,"needsCorrection":2}')),
       http.get('/api/allocation-disputes/queue', ({ request }) => {
         urls.push(request.url);
-        const page = Number(new URL(request.url).searchParams.get('page'));
-        const item = page === 2
-          ? registration({ disputeId: disputeB, statement: 'queue-page-2' })
-          : registration({ disputeId: disputeA, statement: 'queue-page-1' });
-        return text(listDocument([item], '51', page));
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        const item = cursor === null
+          ? registration({ disputeId: disputeA, statement: 'queue-page-1' })
+          : registration({ disputeId: disputeB, statement: 'queue-page-2' });
+        return text(cursorDocument([item], cursor === null ? 'next-page' : null, cursor === null ? null : 'previous-page'));
       }),
       http.get('/api/allocation-disputes', ({ request }) => {
         urls.push(request.url);
@@ -499,15 +505,16 @@ describe('allocation dispute screen', () => {
     expect(router.state.location.search).toContain('queue=needs-correction');
     expect(router.state.location.search).toContain(`selected=${disputeA}`);
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    await waitFor(() => expect(router.state.location.search).toContain('page=2'));
+    await waitFor(() => expect(router.state.location.search).toContain('cursor=next-page'));
     expect(router.state.location.search).toContain('queue=needs-correction');
+    expect(router.state.location.search).not.toContain('page=');
     expect(await screen.findByText('queue-page-2')).toBeInTheDocument();
     await router.navigate(-1);
-    await waitFor(() => expect(router.state.location.search).toContain('page=1'));
+    await waitFor(() => expect(router.state.location.search).not.toContain('cursor='));
     expect(router.state.location.search).toContain('queue=needs-correction');
     expect(router.state.location.search).toContain(`selected=${disputeA}`);
-    expect(urls.filter((url) => url.includes('/queue?queue=needs-correction&page=1'))).not.toHaveLength(0);
-    expect(urls.filter((url) => url.includes('/queue?queue=needs-correction&page=2'))).toHaveLength(1);
+    expect(urls.filter((url) => url.includes('pagination=cursor') && !url.includes('cursor='))).not.toHaveLength(0);
+    expect(urls.filter((url) => url.includes('cursor=next-page'))).toHaveLength(1);
     expect(urls.some((url) => url.includes('/api/allocation-disputes?'))).toBe(false);
 
     await user.type(screen.getByLabelText('Allocation id'), allocationA);
@@ -569,6 +576,310 @@ describe('allocation dispute screen', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(hits).toEqual([]);
   });
+
+  it('counts a cold cursor entry once and does not count again when the cursor changes', async () => {
+    let summaryCount = 0;
+    let queueCount = 0;
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => {
+        summaryCount += 1;
+        return text('{"needsDecision":9223372036854775807,"needsCorrection":1}');
+      }),
+      http.get('/api/allocation-disputes/queue', ({ request }) => {
+        queueCount += 1;
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return text(cursorDocument(
+          [registration({ statement: cursor === null ? 'first-row' : 'second-row' })],
+          cursor === null ? 'page-two' : null,
+          cursor === null ? null : 'page-one',
+        ));
+      }),
+    );
+    const user = userEvent.setup();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-09T12:00:00.000Z'));
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const epoch = sessionStore.getSnapshot().epoch;
+    queryClient.setQueryData(allocationDisputeWorkSummaryQueryKey(epoch), {
+      needsDecision: '1',
+      needsCorrection: '1',
+    });
+    await queryClient.invalidateQueries({ queryKey: allocationDisputeWorkSummaryQueryKey(epoch) });
+    renderPage('/allocation-disputes?queue=needs-decision');
+    expect(await screen.findByText('first-row')).toBeInTheDocument();
+    expect(await screen.findByText('Dispute count 9223372036854775807')).toBeInTheDocument();
+    expect(summaryCount).toBe(1);
+    expect(queueCount).toBe(1);
+    vi.setSystemTime(new Date('2026-11-09T12:00:31.000Z'));
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('second-row')).toBeInTheDocument();
+    expect(summaryCount).toBe(1);
+    expect(queueCount).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it('skips a fresh summary from the dashboard and reads it when the entry is stale or a new epoch', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-09T12:00:00.000Z'));
+    let summaryCount = 0;
+    let queueCount = 0;
+    server.use(
+      http.get('/api/review-cases/summary', () => text(
+        '{"totalCount":1,"openCount":1,"resolvedCount":0,"dismissedCount":0,"openCompetingMatchCount":1,"openNeedsInvestigationCount":0}',
+      )),
+      http.get('/api/allocation-disputes/summary', () => {
+        summaryCount += 1;
+        return text('{"needsDecision":3,"needsCorrection":4}');
+      }),
+      http.get('/api/allocation-disputes/queue', () => {
+        queueCount += 1;
+        return text(cursorDocument([registration({ statement: 'fresh-row' })], null, null));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = createMemoryRouter(
+      [
+        { path: '/dashboard', element: <OperationsDashboardPage /> },
+        { path: '/allocation-disputes', element: <AllocationDisputePage /> },
+      ],
+      { initialEntries: ['/dashboard'] },
+    );
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Needs decision 3')).toBeInTheDocument();
+    expect(summaryCount).toBe(1);
+    await user.click(screen.getByRole('link', { name: 'Disputes without a decision' }));
+    expect(await screen.findByText('fresh-row')).toBeInTheDocument();
+    expect(summaryCount).toBe(1);
+    expect(queueCount).toBe(1);
+    await router.navigate('/dashboard');
+    vi.setSystemTime(new Date('2026-11-09T12:00:31.000Z'));
+    await user.click(await screen.findByRole('link', { name: 'Disputes without a decision' }));
+    await waitFor(() => expect(summaryCount).toBe(2));
+    expect(queueCount).toBe(2);
+    const staleEpoch = sessionStore.getSnapshot().epoch;
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    queryClient.setQueryData(allocationDisputeWorkSummaryQueryKey(staleEpoch), {
+      needsDecision: '9',
+      needsCorrection: '9',
+    });
+    await router.navigate('/allocation-disputes?queue=needs-decision');
+    await waitFor(() => expect(summaryCount).toBe(3));
+    expect(queueCount).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it('refetches one summary after an error on the next entry and not on a cursor change', async () => {
+    let summaryCount = 0;
+    let queueCount = 0;
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => {
+        summaryCount += 1;
+        return summaryCount === 1
+          ? HttpResponse.json({ title: 'Unavailable' }, { status: 500 })
+          : text('{"needsDecision":2,"needsCorrection":1}');
+      }),
+      http.get('/api/allocation-disputes/queue', ({ request }) => {
+        queueCount += 1;
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return text(cursorDocument(
+          [registration({ statement: cursor === null ? 'visible-row' : 'later-row' })],
+          cursor === null ? 'later' : null,
+          null,
+        ));
+      }),
+    );
+    const user = userEvent.setup();
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const first = renderPage('/allocation-disputes?queue=needs-decision');
+    expect(await screen.findByText('visible-row')).toBeInTheDocument();
+    expect(screen.getByText('Dispute count is unavailable.')).toBeInTheDocument();
+    expect(summaryCount).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('later-row')).toBeInTheDocument();
+    expect(summaryCount).toBe(1);
+    expect(queueCount).toBe(2);
+    first.unmount();
+    renderPage('/allocation-disputes?queue=needs-decision');
+    expect(await screen.findByText('Dispute count 2')).toBeInTheDocument();
+    expect(summaryCount).toBe(2);
+  });
+
+  it('invalidates every cached page of the active epoch and refetches the visible page once', async () => {
+    let summaryCount = 0;
+    let queueCount = 0;
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => {
+        summaryCount += 1;
+        return text('{"needsDecision":1,"needsCorrection":1}');
+      }),
+      http.get('/api/allocation-disputes/queue', () => {
+        queueCount += 1;
+        return text(cursorDocument([registration({ statement: 'active-row' })], 'page-two', null));
+      }),
+    );
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage('/allocation-disputes?queue=needs-decision');
+    expect(await screen.findByText('active-row')).toBeInTheDocument();
+    const epoch = sessionStore.getSnapshot().epoch;
+    const hidden = allocationDisputeQueueQueryKey(epoch, 'needs-decision', { mode: 'cursor', cursor: 'page-two' });
+    const otherEpoch = allocationDisputeQueueQueryKey(epoch + 1, 'needs-decision', { mode: 'cursor', cursor: null });
+    const otherVariant = allocationDisputeQueueQueryKey(epoch, 'needs-correction', { mode: 'cursor', cursor: 'kept' });
+    queryClient.setQueryData(hidden, { kind: 'cursor' });
+    queryClient.setQueryData(otherEpoch, { kind: 'cursor' });
+    queryClient.setQueryData(otherVariant, { kind: 'cursor' });
+    await refreshAllocationDisputeLists(epoch);
+    await waitFor(() => expect(summaryCount).toBe(2));
+    expect(queueCount).toBe(2);
+    expect(queryClient.getQueryState(hidden)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherEpoch)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(otherVariant)?.isInvalidated).toBe(false);
+    queryClient.setQueryData(otherVariant, { kind: 'cursor' });
+    invalidateVerifiedReversal({
+      allocationId: allocationA,
+      invoiceId: allocationB,
+      bankTransactionId: disputeC,
+      amount: '10.00' as never,
+      currency: 'PLN',
+      reason: 'stored',
+      reversedAt: '2026-11-09T12:00:00Z',
+      replayed: true,
+      epoch,
+    });
+    await waitFor(() => expect(queryClient.getQueryState(otherVariant)?.isInvalidated).toBe(true));
+    expect(queryClient.getQueryState(otherEpoch)?.isInvalidated).toBe(false);
+  });
+
+  it('returns from an empty cursor page to the start and keeps the selected dispute', async () => {
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => text('{"needsDecision":1,"needsCorrection":0}')),
+      http.get('/api/allocation-disputes/queue', ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        return text(cursorDocument(
+          cursor === null ? [registration({ statement: 'start-row' })] : [],
+          null,
+          null,
+        ));
+      }),
+      http.get('/api/allocation-disputes/:disputeId', () => text(disputeDocument())),
+    );
+    const user = userEvent.setup();
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = createMemoryRouter(
+      [{ path: '/allocation-disputes', element: <AllocationDisputePage /> }],
+      { initialEntries: [`/allocation-disputes?queue=needs-decision&cursor=away&selected=${disputeA}`] },
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('This page has no stored allocation disputes.')).toBeInTheDocument();
+    expect(await screen.findByText('counterparty challenge')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back to start' }));
+    expect(await screen.findByText('start-row')).toBeInTheDocument();
+    expect(screen.getByText('counterparty challenge')).toBeInTheDocument();
+    expect(router.state.location.search).toContain('queue=needs-decision');
+    expect(router.state.location.search).toContain(`selected=${disputeA}`);
+    expect(router.state.location.search).not.toContain('cursor=');
+    expect(router.state.location.search).not.toContain('page=');
+  });
+
+  it('keeps back to start available while the cursor page is loading', async () => {
+    const gate = deferred<void>();
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => text('{"needsDecision":1,"needsCorrection":0}')),
+      http.get('/api/allocation-disputes/queue', async () => {
+        await gate.promise;
+        return text(cursorDocument([registration({ statement: 'late-row' })], null, null));
+      }),
+    );
+    const user = userEvent.setup();
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = createMemoryRouter(
+      [{ path: '/allocation-disputes', element: <AllocationDisputePage /> }],
+      { initialEntries: [`/allocation-disputes?queue=needs-decision&cursor=away&selected=${disputeA}&selected=${disputeB}`] },
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Loading allocation disputes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to start' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Back to start' }));
+    expect(router.state.location.search).toContain('queue=needs-decision');
+    expect(router.state.location.search).toContain(`selected=${disputeA}`);
+    expect(router.state.location.search).toContain(`selected=${disputeB}`);
+    expect(router.state.location.search).not.toContain('cursor=');
+    expect(router.state.location.search).not.toContain('page=');
+    gate.resolve();
+  });
+
+  it('returns from an invalid cursor address to the first page and keeps every selected value', async () => {
+    const urls: string[] = [];
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => text('{"needsDecision":1,"needsCorrection":0}')),
+      http.get('/api/allocation-disputes/queue', ({ request }) => {
+        urls.push(request.url);
+        return text(cursorDocument([registration({ statement: 'start-row' })], null, null));
+      }),
+    );
+    const user = userEvent.setup();
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    const router = createMemoryRouter(
+      [{ path: '/allocation-disputes', element: <AllocationDisputePage /> }],
+      { initialEntries: [`/allocation-disputes?queue=needs-correction&cursor=!!!&page=4&selected=${disputeA}&selected=${disputeB}`] },
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('This allocation dispute address can’t be opened.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to start' })).toBeEnabled();
+    expect(urls).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Back to start' }));
+    expect(await screen.findByText('start-row')).toBeInTheDocument();
+    expect(router.state.location.search).toContain('queue=needs-correction');
+    expect(router.state.location.search).toContain(`selected=${disputeA}`);
+    expect(router.state.location.search).toContain(`selected=${disputeB}`);
+    expect(router.state.location.search).not.toContain('cursor=');
+    expect(router.state.location.search).not.toContain('page=');
+    expect(urls).toHaveLength(1);
+  });
+
+  it('keeps an explicit page on the offset queue and does not read the summary', async () => {
+    let summaryCount = 0;
+    const urls: string[] = [];
+    server.use(
+      http.get('/api/allocation-disputes/summary', () => {
+        summaryCount += 1;
+        return text('{"needsDecision":1,"needsCorrection":1}');
+      }),
+      http.get('/api/allocation-disputes/queue', ({ request }) => {
+        urls.push(request.url);
+        const page = Number(new URL(request.url).searchParams.get('page'));
+        return text(listDocument([
+          registration({ statement: page === 2 ? 'offset-two' : 'offset-one' }),
+        ], '60', page));
+      }),
+    );
+    const user = userEvent.setup();
+    sessionStore.rotate(fakeJwt(), 4_000_000_000, null);
+    renderPage('/allocation-disputes?queue=needs-decision&page=1');
+    expect(await screen.findByText('offset-one')).toBeInTheDocument();
+    expect(screen.getByText('Dispute count 60')).toBeInTheDocument();
+    expect(summaryCount).toBe(0);
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('offset-two')).toBeInTheDocument();
+    expect(summaryCount).toBe(0);
+    expect(urls.every((url) => url.includes('page=') && !url.includes('pagination=cursor'))).toBe(true);
+  });
 });
 
 function renderPage(path: string) {
@@ -600,6 +911,14 @@ function text(body: string) {
 
 function listDocument(items: Record<string, unknown>[], totalCount = String(items.length), page = 1): string {
   return `{"items":${JSON.stringify(items)},"page":${page},"pageSize":50,"totalCount":${totalCount}}`;
+}
+
+function cursorDocument(
+  items: Record<string, unknown>[],
+  nextCursor: string | null,
+  previousCursor: string | null,
+): string {
+  return JSON.stringify({ items, pageSize: 50, nextCursor, previousCursor });
 }
 
 function disputeDocument(overrides: Record<string, unknown> = {}): string {

@@ -151,3 +151,48 @@ public sealed class GetAllocationDisputeQueueHandler
             cancellationToken);
     }
 }
+
+public sealed class GetAllocationDisputeQueueCursorHandler
+{
+    private readonly ICurrentOrganizationContext _currentOrganizationContext;
+    private readonly IAllocationDisputeQueries _queries;
+
+    public GetAllocationDisputeQueueCursorHandler(
+        ICurrentOrganizationContext currentOrganizationContext,
+        IAllocationDisputeQueries queries)
+    {
+        ArgumentNullException.ThrowIfNull(currentOrganizationContext);
+        ArgumentNullException.ThrowIfNull(queries);
+
+        _currentOrganizationContext = currentOrganizationContext;
+        _queries = queries;
+    }
+
+    public Task<Result<AllocationDisputeQueueCursorResponse>> Handle(
+        GetAllocationDisputeQueueCursorQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (!Enum.IsDefined(query.Queue)
+            || (query.Cursor is not null
+                && (!Enum.IsDefined(query.Cursor.Direction) || query.Cursor.Queue != query.Queue)))
+        {
+            return Task.FromResult(Result<AllocationDisputeQueueCursorResponse>.Failure(
+                ReconciliationApplicationErrors.AllocationDisputeInvalidRequest));
+        }
+
+        if (!AllocationDisputeListPagination.IsValidPageSize(query.PageSize))
+        {
+            return Task.FromResult(Result<AllocationDisputeQueueCursorResponse>.Failure(
+                ReconciliationApplicationErrors.AllocationDisputeInvalidPagination));
+        }
+
+        return _queries.ListQueueCursorAsync(
+            _currentOrganizationContext.OrganizationId,
+            query.Queue,
+            query.PageSize,
+            query.Cursor,
+            cancellationToken);
+    }
+}

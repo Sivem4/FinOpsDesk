@@ -24,4 +24,9 @@ internal static class AllocationDisputeListPagination
         long offset = ((long)page - 1L) * pageSize;
         return offset <= int.MaxValue;
     }
+
+    public static bool IsValidPageSize(int pageSize)
+    {
+        return pageSize >= MinimumPageSize && pageSize <= MaximumPageSize;
+    }
 }

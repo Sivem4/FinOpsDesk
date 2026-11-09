@@ -23,6 +23,8 @@ const invalidDetail = 'The allocation dispute could not be read.';
 const invalidRegistration = 'The allocation dispute registration could not be read.';
 const invalidResolution = 'The allocation dispute decision could not be read.';
 const listKeys = ['items', 'page', 'pageSize', 'totalCount'];
+const cursorKeys = ['items', 'pageSize', 'nextCursor', 'previousCursor'];
+const cursorToken = /^[A-Za-z0-9_-]{1,64}$/;
 const disputeKeys = ['disputeId', 'allocationId', 'statement', 'actorSource', 'actorId', 'recordedAt'];
 const resolutionStateKeys = ['disputeId', 'decision'];
 const resolutionDecisionKeys = ['disputeId', 'outcome', 'reason', 'actorSource', 'actorId', 'decidedAt'];
@@ -49,11 +51,21 @@ export interface AllocationDisputeList {
 
 export interface AllocationDisputeAddress {
   listValid: boolean;
+  mode: 'register' | 'queue-offset' | 'queue-cursor';
   page: number | null;
+  cursor: string | null;
+  cursorInAddress: boolean;
   allocationId: string | null;
   queue: 'needs-decision' | 'needs-correction' | null;
   selectedValues: readonly string[];
   selectedState: 'absent' | 'valid' | 'invalid';
+}
+
+export interface AllocationDisputeQueueCursorPage {
+  items: AllocationDisputeRecord[];
+  pageSize: number;
+  nextCursor: string | null;
+  previousCursor: string | null;
 }
 
 export function isExactGuid(value: string): boolean {
@@ -65,7 +77,6 @@ export function allocationDisputeIdsMatch(left: string, right: string): boolean 
 }
 
 export function readAllocationDisputeAddress(params: URLSearchParams): AllocationDisputeAddress {
-  const page = readPage(params);
   const allocation = readGuidParameter(params, 'allocationId');
   const selected = readGuidParameter(params, 'selected');
   const queueValues = params.getAll('queue');
@@ -74,9 +85,31 @@ export function readAllocationDisputeAddress(params: URLSearchParams): Allocatio
     : queueValues.length === 1 && (queueValues[0] === 'needs-decision' || queueValues[0] === 'needs-correction')
       ? queueValues[0]
       : 'invalid';
+  const pageValues = params.getAll('page');
+  const cursorValues = params.getAll('cursor');
+  const cursor = cursorValues.length === 1 ? cursorValues[0] ?? '' : null;
+  const cursorInAddress = cursorValues.length > 0;
+  const cursorValid = cursorValues.length === 0 || (cursor !== null && cursorToken.test(cursor));
+  const page = pageValues.length === 0 ? (queue === null || queue === 'invalid' ? 1 : null) : readExplicitPage(pageValues);
+  const mode = queue === null || queue === 'invalid'
+    ? 'register'
+    : pageValues.length === 0
+      ? 'queue-cursor'
+      : 'queue-offset';
+  const mixed = (mode === 'queue-cursor' && pageValues.length > 0)
+    || (mode !== 'queue-cursor' && cursorValues.length > 0)
+    || (mode === 'register' && queue === null && cursorValues.length > 0);
+  const listValid = page !== 'invalid'
+    && allocation.state !== 'invalid'
+    && queue !== 'invalid'
+    && cursorValid
+    && !mixed;
   return {
-    listValid: page !== 'invalid' && allocation.state !== 'invalid' && queue !== 'invalid',
-    page: page === 'invalid' ? null : page,
+    listValid,
+    mode: listValid ? mode : 'register',
+    page: page === 'invalid' || mode === 'queue-cursor' ? null : page,
+    cursor: listValid && mode === 'queue-cursor' ? cursor : null,
+    cursorInAddress,
     allocationId: allocation.state === 'valid' ? allocation.value : null,
     queue: queue === 'invalid' ? null : queue,
     selectedValues: selected.state === 'absent' ? [] : selected.values,
@@ -172,6 +205,36 @@ export function mapAllocationDisputeList(
   };
 }
 
+export function mapAllocationDisputeQueueCursor(body: unknown): AllocationDisputeQueueCursorPage {
+  if (!isRecord(body) || !hasExactKeys(body, cursorKeys) || !Array.isArray(body.items)) {
+    throw new UnexpectedResponseError(invalidList);
+  }
+
+  const pageSize = readEcho(body.pageSize, 'pageSize', 1, 100);
+  if (pageSize !== allocationDisputePageSize) {
+    throw new UnexpectedResponseError(invalidList);
+  }
+
+  return {
+    items: body.items.map((item) => readDispute(item, invalidList)),
+    pageSize,
+    nextCursor: readCursor(body.nextCursor),
+    previousCursor: readCursor(body.previousCursor),
+  };
+}
+
+function readCursor(value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== 'string' || !cursorToken.test(value)) {
+    throw new UnexpectedResponseError(invalidList);
+  }
+
+  return value;
+}
+
 export function mapAllocationDispute(body: unknown, requestedDisputeId: string): AllocationDisputeRecord {
   if (!isExactGuid(requestedDisputeId)) {
     throw new UnexpectedResponseError(invalidDetail);
@@ -198,8 +261,7 @@ export function mapRegisteredAllocationDispute(
   return record;
 }
 
-function readPage(params: URLSearchParams): number | 'invalid' {
-  const values = params.getAll('page');
+function readExplicitPage(values: string[]): number | 'invalid' {
   if (values.length === 0) {
     return 1;
   }
