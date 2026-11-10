@@ -1,0 +1,122 @@
+name: finopsdesk-local
+
+services:
+  sql:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/sql.Dockerfile
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+    volumes:
+      - sql_data:/var/opt/mssql
+    secrets:
+      - source: sql_password
+        target: sql_password
+    healthcheck:
+      test: ["CMD", "/opt/finopsdesk/sql-ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 30s
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/migrate.Dockerfile
+    platform: linux/amd64
+    depends_on:
+      sql:
+        condition: service_healthy
+    secrets:
+      - source: sql_password
+        target: sql_password
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/api.Dockerfile
+    platform: linux/amd64
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: https://+:8443
+      Authentication__Composition: DevelopmentJwt
+      Authentication__JwtBearer__Authority: ""
+      Authentication__JwtBearer__Issuer: https://finopsdesk.local
+      Authentication__JwtBearer__Audience: finopsdesk-api
+      ASPNETCORE_Kestrel__Certificates__Default__Path: /run/secrets/api.crt
+      ASPNETCORE_Kestrel__Certificates__Default__KeyPath: /run/secrets/api.key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    secrets:
+      - source: sql_password
+        target: sql_password
+      - source: jwt_signing_key
+        target: jwt_signing_key
+      - source: api_certificate
+        target: api.crt
+      - source: api_private_key
+        target: api.key
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--output",
+          "/dev/null",
+          "--cacert",
+          "/run/secrets/api.crt",
+          "https://api:8443/health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 10s
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/web.Dockerfile
+    platform: linux/amd64
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
+    environment:
+      FINOPSDESK_E2E_API_ORIGIN: https://api:8443
+      NODE_EXTRA_CA_CERTS: /run/secrets/api.crt
+    ports:
+      - "${FINOPSDESK_WEB_PUBLISH:-127.0.0.1:5173:5173}"
+    depends_on:
+      api:
+        condition: service_healthy
+    secrets:
+      - source: api_certificate
+        target: api.crt
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5173/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+secrets:
+  sql_password:
+    file: ${USERPROFILE}/.finopsdesk/compose/sql-password.txt
+  jwt_signing_key:
+    file: ${USERPROFILE}/.finopsdesk/compose/jwt-signing-key.txt
+  api_certificate:
+    file: ${USERPROFILE}/.finopsdesk/compose/api.crt
+  api_private_key:
+    file: ${USERPROFILE}/.finopsdesk/compose/api.key
+
+volumes:
+  sql_data:

@@ -1,7 +1,11 @@
 <Solution>
   <Folder Name="/src/" />
+  <Folder Name="/scripts/">
+    <Project Path="scripts/compose-prepare/ComposePrepare.csproj" />
+  </Folder>
   <Folder Name="/src/backend/">
     <Project Path="src/backend/FinOpsDesk.AccessBootstrap/FinOpsDesk.AccessBootstrap.csproj" />
+    <Project Path="src/backend/FinOpsDesk.ComposeMigrate/FinOpsDesk.ComposeMigrate.csproj" />
     <Project Path="src/backend/FinOpsDesk.Api/FinOpsDesk.Api.csproj" />
     <Project Path="src/backend/FinOpsDesk.SharedKernel/FinOpsDesk.SharedKernel.csproj" />
   </Folder>

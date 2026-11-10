@@ -415,15 +415,20 @@ Add:
 
 ## Phase 10: Optional infrastructure
 
-Status: Optional / Not started.
+Status: Optional / Not started for the broker, durable jobs, SignalR, and Redis.
 
 Only after a demonstrated trigger:
 
 - outbox and message broker;
 - durable background jobs;
 - SignalR;
-- Redis;
-- full Docker Compose.
+- Redis.
+
+### Phase 10A: Local Compose runtime
+
+Status: Planned.
+
+Phase 10A adds the local Compose project `finopsdesk-local`: the Vite development server, one API, SQL Server, and an explicit migrator. The browser uses `DevelopmentJwt` against that one API. Rate-limit budgets stay process-local, and Redis is not part of this phase. The stack stays Planned until the documented smoke has passed, including the migrator authentication gate, the invoice import, and the restart that keeps that invoice. See ADR 0045.
 
 ## Phase 11: Optional AI feature
 

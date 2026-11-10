@@ -1,0 +1,4 @@
+deploy/compose/*.sh text eol=lf
+deploy/compose/*.Dockerfile text eol=lf
+deploy/compose/*.yaml text eol=lf
+.dockerignore text eol=lf

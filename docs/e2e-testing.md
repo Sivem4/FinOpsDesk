@@ -48,6 +48,8 @@ A Release build uses `tests/FinOpsDesk.E2ETests/bin/Release/net10.0/playwright.p
 
 The Playwright browsers are installed outside the repository, under the user profile. Do not commit them.
 
+The local Compose stack in `deploy/compose/compose.yaml` is not this harness. Chromium continues to start its own API, Vite, and disposable `FinOpsDesk_E2E_<guid>` database. A Compose smoke does not replace `dotnet test` of this project.
+
 ## Pull request gate
 
 `.github/workflows/e2e-ci.yml` has one job, `Chromium browser security`. The runner is `ubuntu-24.04` because Microsoft.Playwright 1.64.1 treats that release as an officially supported Chromium host. The job timeout is 30 minutes. Permissions are `contents: read`. Concurrency cancels a superseded run of this workflow only.
