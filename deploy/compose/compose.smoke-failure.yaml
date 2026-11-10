@@ -1,0 +1,9 @@
+services:
+  migrate:
+    secrets: !override
+      - source: sql_password_invalid
+        target: sql_password
+
+secrets:
+  sql_password_invalid:
+    file: ${FINOPSDESK_SMOKE_INVALID_SQL_PASSWORD_FILE:?Set FINOPSDESK_SMOKE_INVALID_SQL_PASSWORD_FILE to a file outside the repository.}

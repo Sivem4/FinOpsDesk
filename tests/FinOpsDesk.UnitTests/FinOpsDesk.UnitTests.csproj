@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Access\FinOpsDesk.Modules.Access.csproj" />
     <ProjectReference Include="..\..\src\backend\Modules\FinOpsDesk.Modules.Reconciliation\FinOpsDesk.Modules.Reconciliation.csproj" />
     <ProjectReference Include="..\..\src\backend\FinOpsDesk.SharedKernel\FinOpsDesk.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\scripts\compose-prepare\ComposePrepare.csproj" />
   </ItemGroup>
 
 </Project>

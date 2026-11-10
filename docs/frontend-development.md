@@ -203,6 +203,58 @@ Each refresh belongs to one financial result. A newer confirmed, rejected, uncer
 
 `npm run dev` still proxies `/api` and `/health` to `https://localhost:7257`. A local end-to-end run can set `FINOPSDESK_E2E_API_ORIGIN` for that one Vite process. The variable is not a `VITE_` variable, so it is not compiled into the browser bundle. Leave it unset for ordinary development. The journey, the disposable database, and the run commands are documented in `docs/e2e-testing.md`. Ordinary `npm test` stays on Vitest and jsdom.
 
+## Docker Compose
+
+The ordinary LocalDB path above stays the development default. Compose is a separate local stack for one Vite development server, one API, and SQL Server. It does not replace `scripts\dev-frontend.ps1`, and it does not change rate limits, financial flags, or the Chromium harness in `docs/e2e-testing.md`.
+
+Prepare the secret set once. The script writes only under `%USERPROFILE%\.finopsdesk\compose\` and does not print secret values. A later run keeps a valid set byte for byte. A partial or invalid set is refused, and no file is overwritten or deleted.
+
+```powershell
+scripts\compose-prepare.ps1
+```
+
+The files are `sql-password.txt`, `jwt-signing-key.txt`, `api.crt`, and `api.key`. The certificate is a PEM document with SAN `DNS:api`. The private key is PEM PKCS#8. The directory ACL grants the current operator and does not inherit broader access. Before creating the directory, changing that ACL, or writing, the script resolves existing path elements, including junctions, symlinks, and any secret file that is already present. A resolved path inside the repository, or a redirect that cannot be resolved, is refused before any of those changes. When none of the four files exist and the resolved path is outside the repository, the script applies that ACL before the first secret byte. A failed create deletes only files created by that attempt. A partial set is still refused without changing the files that were already there. Compose mounts each `file` secret as a bind mount. Do not set Compose `uid`, `gid`, or `mode` for those files. `sql`, `migrate`, and `api` receive the SQL password. Only `api` receives the JWT signing key and the private key. `web` receives only `api.crt` through `NODE_EXTRA_CA_CERTS`.
+
+Start the daily project `finopsdesk-local` with one command:
+
+```powershell
+docker compose -f D:\Projects\FinOpsDesk\deploy\compose\compose.yaml up --wait --wait-timeout 600 --build
+```
+
+`--wait-timeout 600` limits how long Compose waits for healthy dependencies and for the migrator to exit. Image builds can take longer than that before the wait starts. The browser address is `http://127.0.0.1:5173`. `FINOPSDESK_WEB_PUBLISH` is the complete published-port mapping. Compose does not append another container port. The daily value is `127.0.0.1:5173:5173`. API and SQL listen only on the Compose network. Vite runs `npm run dev` with `--host 0.0.0.0 --port 5173 --strictPort` and proxies to `https://api:8443` through `FINOPSDESK_E2E_API_ORIGIN`, with `secure: true`.
+
+Read the signing key into the shell without printing it, then use the existing token script. The issuer is `https://finopsdesk.local` and the audience is `finopsdesk-api`. The default lifetime is 60 minutes.
+
+```powershell
+$env:Authentication__JwtBearer__Authority = ''
+$env:Authentication__JwtBearer__Issuer = 'https://finopsdesk.local'
+$env:Authentication__JwtBearer__Audience = 'finopsdesk-api'
+$env:Authentication__JwtBearer__SigningKey = [System.IO.File]::ReadAllText("$env:USERPROFILE\.finopsdesk\compose\jwt-signing-key.txt")
+$organizationId = [guid]::NewGuid()
+scripts\dev-token.ps1 -Subject operator-1 -OrganizationId $organizationId
+```
+
+Paste the token into **Development access token**. The register is `GET /api/invoices` for that `org_id`. A production frontend build still selects the cookie session and does not include this screen.
+
+`FinOpsDesk.ComposeMigrate` runs as its own process in the pinned ASP.NET image. The published `runtimeconfig.json` requires `Microsoft.AspNetCore.App` 10.0.0. The process applies the existing Reconciliation migrations and then the Access migrations, and exits 0 only when both contexts have no pending migrations. The API host still does not migrate at startup. Both services connect as `sa` with `Encrypt=True;TrustServerCertificate=True` to catalog `FinOpsDesk_Compose`. The SQL volume name is prefixed by the Compose project name.
+
+Startup order is a healthy `sql`, a completed `migrate`, a healthy `api`, and a healthy `web`. The SQL probe runs `SELECT 1` through `sqlcmd` with `SQLCMDPASSWORD` and without `-P`. The API probe calls `https://api:8443/health` with `curl --cacert` and the public PEM, whose SAN matches `api`. The Vite probe requests `http://127.0.0.1:5173/` inside the web container. `GET /ready` still means only that the API opened SQL. The migrator is the schema proof.
+
+The build context excludes `.env` and `.env.*` in the repository root and in subdirectories. Runtime settings such as `ACCEPT_EULA`, `ASPNETCORE_*`, `Authentication__*`, `FINOPSDESK_E2E_API_ORIGIN`, `NODE_EXTRA_CA_CERTS`, and the Kestrel certificate paths stay in the Compose file. `!override` requires Docker Compose 2.24.4 or newer.
+
+On the first Docker run, confirm Linux `amd64` containers, Compose 2.24.4 or newer, `service_completed_successfully`, and `--wait-timeout`. Also confirm the image command `/opt/mssql/bin/sqlservr`, `/opt/mssql/bin/launch_sqlservr.sh`, `/opt/mssql-tools18/bin/sqlcmd`, and that user `mssql` can read the SQL secret and write `/var/opt/mssql`. Do not print file contents. `Config.Env` and service logs must not contain the password or the signing key.
+
+A smoke project uses a new name `finopsdesk-smoke-<guid>`, its own volume, and `FINOPSDESK_WEB_PUBLISH=127.0.0.1:5174:5173`. Render `docker compose config` and check the single published port and the secret paths, not the secret values. The failure overlay `deploy/compose/compose.smoke-failure.yaml` replaces the migrator secret with `!override` and keeps the target `sql_password`. `web` receives only the public PEM. During that attempt `sql` and `api` keep the valid SQL password file. With no API or web process running, the failed password must leave SQL healthy, the migrator non-zero, and `api` and `web` without a start timestamp. Status `created` with `StartedAt` and `FinishedAt` of `0001-01-01T00:00:00Z` meets that gate. Status `exited` with a real `StartedAt` does not. `/opt/finopsdesk/sql-histories` must print `absent`.
+
+The same project then starts without the overlay. The browser shows the token field, `/api/invoices` without a token is 401, the authorized organization starts empty, and one CSV import is visible there:
+
+```text
+ExternalId,InvoiceNumber,Amount,Currency
+compose-smoke-1,INV-COMPOSE-1,10.00,PLN
+```
+
+Use form field `sourceSystem` with value `compose`. A second token with another `org_id` sees an empty register. Inside the network, `/health` and `/ready` succeed. `docker compose down` without `-v` keeps the volume. The next `up --wait` finishes the migrator successfully and the same invoice remains. Remove the volume only for that smoke project, after the evidence is recorded. See ADR 0045.
+
 ## Checks
 
 From `src/frontend`:

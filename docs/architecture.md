@@ -269,6 +269,10 @@ The React application has two browser modes. Development serves `DevelopmentJwt`
 
 Future machine-to-machine endpoints may use a separate JWT bearer scheme with narrow scopes.
 
+## Local Compose runtime
+
+Phase 10A runs one development stack: Vite in development mode, one API, SQL Server, and `FinOpsDesk.ComposeMigrate`. The browser enters through the Vite origin and uses `DevelopmentJwt`. The API and SQL ports are not published. The migrator is a separate process. Its final image is the pinned ASP.NET runtime because its `runtimeconfig.json` requires `Microsoft.AspNetCore.App`. It does not reference the API and it does not receive the JWT signing key. It applies the Reconciliation migrations and then the Access migrations before the API starts. The API host still does not migrate during startup. Catalog `FinOpsDesk_Compose` lives on the project-scoped SQL volume. `/ready` remains a SQL connectivity probe. A completed migrator is the schema evidence. One API keeps the Phase 9C budgets process-local. This stack does not add Redis, a shared Data Protection key ring, or a second API instance. See ADR 0045.
+
 ## Infrastructure triggers
 
 RabbitMQ or another broker is considered only when a reliable event must be consumed by an independently deployed process. An outbox is introduced before broker publication.
