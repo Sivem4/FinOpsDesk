@@ -110,7 +110,8 @@ public sealed class ImportCsvHandlerTests
             store,
             reader,
             new FixedTimeProvider(),
-            NullLogger<ImportCsvHandler>.Instance);
+            NullLogger<ImportCsvHandler>.Instance,
+            NoFinancialHandlerObservation.Instance);
     }
 
     private static ImportCsvCommand Command(string csv)

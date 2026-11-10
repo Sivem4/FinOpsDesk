@@ -401,6 +401,21 @@ function ErrorState({
     return <Alert severity="warning">Matching is not available for this organization.</Alert>;
   }
 
+  if (error instanceof ApiError && error.status === 429 && error.code === 'finopsdesk.rate_limit.exceeded') {
+    const wait = error.retryAfterSeconds === null
+      ? 'This screen was asked to wait before loading matches again.'
+      : `This screen was asked to wait about ${error.retryAfterSeconds} seconds before loading matches again.`;
+
+    return (
+      <Alert
+        severity="warning"
+        action={<Button color="inherit" onClick={onRetry} disabled={retrying}>Try again</Button>}
+      >
+        {wait} Refresh when you want to try again.
+      </Alert>
+    );
+  }
+
   if (error instanceof NetworkError) {
     return (
       <Alert

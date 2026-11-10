@@ -19,6 +19,7 @@ public sealed class ExecuteBatchExactMatchesHandler
     private readonly IAllocationIdempotencyLookup _idempotencyLookup;
     private readonly IBatchExecutionOwner _owner;
     private readonly TimeProvider _timeProvider;
+    private readonly IFinancialHandlerObservation _observation;
 
     public ExecuteBatchExactMatchesHandler(
         ICurrentOrganizationContext currentOrganizationContext,
@@ -27,7 +28,8 @@ public sealed class ExecuteBatchExactMatchesHandler
         IExactMatchCandidateQueries candidateQueries,
         IAllocationIdempotencyLookup idempotencyLookup,
         IBatchExecutionOwner owner,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IFinancialHandlerObservation observation)
     {
         ArgumentNullException.ThrowIfNull(currentOrganizationContext);
         ArgumentNullException.ThrowIfNull(currentActorContext);
@@ -36,6 +38,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         ArgumentNullException.ThrowIfNull(idempotencyLookup);
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentNullException.ThrowIfNull(observation);
 
         _currentOrganizationContext = currentOrganizationContext;
         _currentActorContext = currentActorContext;
@@ -44,6 +47,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         _idempotencyLookup = idempotencyLookup;
         _owner = owner;
         _timeProvider = timeProvider;
+        _observation = observation;
     }
 
     public async Task<Result<ExecuteBatchExactMatchesResponse>> Handle(
@@ -51,6 +55,7 @@ public sealed class ExecuteBatchExactMatchesHandler
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        _observation.OnExecute();
         cancellationToken.ThrowIfCancellationRequested();
 
         if (!_currentActorContext.TryGetActorId(out string actorId))

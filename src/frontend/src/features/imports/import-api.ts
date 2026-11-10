@@ -6,7 +6,7 @@ import {
   UnexpectedResponseError,
   UnknownImportOutcomeError,
 } from '../../shared/api/errors';
-import { toApiError } from '../../shared/api/problem';
+import { rateLimitCode, toApiError } from '../../shared/api/problem';
 import { sessionStore } from '../../shared/api/session-store';
 import { readSafeInt } from '../../shared/money/money';
 import type { ImportFormValues } from './import-form';
@@ -99,6 +99,10 @@ export async function postImport(
   try {
     text = await response.text();
   } catch {
+    if (response.status === 429) {
+      throw transportOutcome(epoch);
+    }
+
     if (!response.ok) {
       throw toApiError(response.status, '');
     }
@@ -110,6 +114,16 @@ export async function postImport(
   assertCurrentEpoch(epoch);
 
   if (!response.ok) {
+    if (response.status === 429) {
+      const error = toApiError(response.status, text, response.headers.get('Retry-After'));
+
+      if (error.code === rateLimitCode) {
+        throw error;
+      }
+
+      throw new UnknownImportOutcomeError();
+    }
+
     throw toApiError(response.status, text);
   }
 

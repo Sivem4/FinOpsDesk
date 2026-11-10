@@ -1,3 +1,4 @@
+using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Allocations;
 using FinOpsDesk.Modules.Reconciliation.Application.BankTransactions;
@@ -146,6 +147,7 @@ public static class ReconciliationModule
         services.AddScoped<GetAllocationDisputeCorrectionHandler>();
         services.AddScoped<IUnitOfWork>(
             serviceProvider => serviceProvider.GetRequiredService<ReconciliationDbContext>());
+        services.TryAddSingleton<IFinancialHandlerObservation, NoFinancialHandlerObservation>();
         services.AddSingleton<IImportFileReader, CsvHelperImportFileReader>();
         services.AddScoped<ICsvImportStore, CsvImportStore>();
         services.AddScoped<ImportCsvHandler>();

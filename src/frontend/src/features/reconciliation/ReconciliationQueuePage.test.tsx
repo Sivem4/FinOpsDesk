@@ -426,6 +426,42 @@ describe('reconciliation work queue', () => {
   });
 });
 
+  it('refreshes a rate-limited exact or smart view only when asked', async () => {
+    const user = userEvent.setup();
+    let exactCalls = 0;
+    let smartCalls = 0;
+    server.use(
+      http.get('/api/matches', () => {
+        exactCalls += 1;
+        const retryAfter = exactCalls === 1 ? '4' : exactCalls === 2 ? null : 'soon';
+        return HttpResponse.json(
+          { title: 'Too many requests.', status: 429, code: 'finopsdesk.rate_limit.exceeded' },
+          { status: 429, headers: retryAfter === null ? undefined : { 'Retry-After': retryAfter } },
+        );
+      }),
+      http.get('/api/matches/smart', () => {
+        smartCalls += 1;
+        return HttpResponse.json(
+          { title: 'Too many requests.', status: 429, code: 'finopsdesk.rate_limit.exceeded' },
+          { status: 429 },
+        );
+      }),
+    );
+    renderQueue();
+
+    expect(await screen.findByText(/wait about 4 seconds/)).toBeVisible();
+    expect(exactCalls).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(/asked to wait before loading matches again/)).toBeVisible();
+    expect(screen.queryByText(/4 seconds/)).not.toBeInTheDocument();
+    expect(exactCalls).toBe(2);
+
+    await user.click(screen.getByRole('button', { name: 'Smart' }));
+    expect(await screen.findByText(/asked to wait before loading matches again/)).toBeVisible();
+    expect(smartCalls).toBe(1);
+    expect(exactCalls).toBe(2);
+  });
+
 function renderQueue() {
   sessionStore.rotate('memory-token', Math.floor(Date.now() / 1000) + 3600, null);
   return render(

@@ -21,31 +21,36 @@ public sealed class ImportCsvHandler
     private readonly IImportFileReader _fileReader;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ImportCsvHandler> _logger;
+    private readonly IFinancialHandlerObservation _observation;
 
     public ImportCsvHandler(
         ICurrentOrganizationContext currentOrganizationContext,
         ICsvImportStore importStore,
         IImportFileReader fileReader,
         TimeProvider timeProvider,
-        ILogger<ImportCsvHandler> logger)
+        ILogger<ImportCsvHandler> logger,
+        IFinancialHandlerObservation observation)
     {
         ArgumentNullException.ThrowIfNull(currentOrganizationContext);
         ArgumentNullException.ThrowIfNull(importStore);
         ArgumentNullException.ThrowIfNull(fileReader);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(observation);
 
         _currentOrganizationContext = currentOrganizationContext;
         _importStore = importStore;
         _fileReader = fileReader;
         _timeProvider = timeProvider;
         _logger = logger;
+        _observation = observation;
     }
 
     public async Task<Result<ImportCsvResponse>> Handle(
         ImportCsvCommand command,
         CancellationToken cancellationToken)
     {
+        _observation.OnImport();
         ArgumentNullException.ThrowIfNull(command);
 
         if (!Enum.IsDefined(command.ImportType))

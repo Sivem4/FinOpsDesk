@@ -7,13 +7,22 @@ export class ApiError extends Error {
 
   readonly detail: string;
 
-  constructor(status: number, code: string | null, title: string, detail: string) {
+  readonly retryAfterSeconds: number | null;
+
+  constructor(
+    status: number,
+    code: string | null,
+    title: string,
+    detail: string,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(title);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.title = title;
     this.detail = detail;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 

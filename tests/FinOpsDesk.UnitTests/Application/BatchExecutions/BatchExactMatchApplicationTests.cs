@@ -574,6 +574,7 @@ public sealed class BatchExactMatchApplicationTests
         services.AddSingleton<IBatchExecutionStore>(store ?? new RecordingStore());
         services.AddSingleton<IBatchExactMatchItemExecutor>(executor ?? new RecordingExecutor());
         services.AddSingleton(time ?? TimeProvider.System);
+        services.AddSingleton<IFinancialHandlerObservation>(NoFinancialHandlerObservation.Instance);
         services.AddSingleton<PreviewBatchExactMatchesHandler>();
         services.AddSingleton<ExecuteBatchExactMatchesHandler>();
         return services.BuildServiceProvider();
