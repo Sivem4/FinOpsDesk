@@ -1,6 +1,7 @@
 using System.Text;
 
 using FinOpsDesk.Modules.Reconciliation;
+using FinOpsDesk.Modules.Reconciliation.Application;
 using FinOpsDesk.Modules.Reconciliation.Application.Abstractions;
 using FinOpsDesk.Modules.Reconciliation.Application.Imports;
 using FinOpsDesk.Modules.Reconciliation.Domain;
@@ -451,7 +452,8 @@ public sealed class CsvImportWorkflowTests
                 store,
                 _provider.GetRequiredService<IImportFileReader>(),
                 TimeProvider.System,
-                NullLogger<ImportCsvHandler>.Instance);
+                NullLogger<ImportCsvHandler>.Instance,
+                NoFinancialHandlerObservation.Instance);
         }
 
         public async Task<ImportCsvResponse> ImportAsync(ImportType importType, string csv)

@@ -894,6 +894,82 @@ function seedMatches(epoch: number) {
   queryClient.setQueryData(['matches', epoch, 'smart'], { algorithmVersion: 'smart-1' });
 }
 
+  it('keeps a rejected import attempt for a manual retry and blocks it after the session changes', async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    server.use(http.post('/api/imports/invoices', async ({ request }) => {
+      const form = await request.formData();
+      const uploaded = form.get('file');
+      calls.push(uploaded instanceof File ? await uploaded.text() : '');
+      if (calls.length === 1) {
+        return HttpResponse.json(
+          { title: 'Too many requests.', status: 429, code: 'finopsdesk.rate_limit.exceeded' },
+          { status: 429, headers: { 'Retry-After': '4' } },
+        );
+      }
+
+      return importResult({ replayed: true });
+    }));
+    renderWorkspace();
+    await submitFile(user, new File(['file-a'], 'a.csv', { type: 'text/csv' }), 'SAP');
+
+    expect(await screen.findByText(/rejected before the import ran/)).toBeInTheDocument();
+    expect(screen.getByText(/about 4 seconds/)).toBeInTheDocument();
+    expect(calls).toEqual(['file-a']);
+    await user.upload(screen.getByLabelText('CSV file'), new File(['file-b'], 'b.csv', { type: 'text/csv' }));
+    await user.click(screen.getByRole('button', { name: 'Send the same file again' }));
+    expect(await screen.findByText(/Nothing was added again/)).toBeInTheDocument();
+    expect(calls).toEqual(['file-a', 'file-a']);
+  });
+
+  it('keeps the unknown-result warning when a later attempt is rejected before import', async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    server.use(http.post('/api/imports/invoices', () => {
+      calls += 1;
+      if (calls === 1) {
+        return HttpResponse.error();
+      }
+
+      return HttpResponse.json(
+        { title: 'Too many requests.', status: 429, code: 'finopsdesk.rate_limit.exceeded' },
+        { status: 429, headers: { 'Retry-After': 'nope' } },
+      );
+    }));
+    renderWorkspace();
+    await submitFile(user, sampleFile());
+    expect(await screen.findByText(/We don’t know whether this file was saved/)).toBeInTheDocument();
+    expect(calls).toBe(1);
+
+    await user.click(screen.getByRole('button', { name: 'Send the same file again' }));
+    expect(await screen.findByText(/rejected before the import ran/)).toBeInTheDocument();
+    expect(screen.getByText(/We don’t know whether this file was saved/)).toBeInTheDocument();
+    expect(screen.queryByText(/seconds/)).not.toBeInTheDocument();
+    expect(calls).toBe(2);
+  });
+
+  it('treats a foreign or unreadable rate limit as an unknown import result', async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    server.use(http.post('/api/imports/invoices', () => {
+      calls += 1;
+      return new HttpResponse('not-json', { status: 429, headers: { 'Retry-After': 'yesterday' } });
+    }));
+    renderWorkspace();
+    await submitFile(user, sampleFile());
+
+    expect(await screen.findByText(/We don’t know whether this file was saved/)).toBeInTheDocument();
+    expect(screen.queryByText(/rejected before the import ran/)).not.toBeInTheDocument();
+    expect(calls).toBe(1);
+    const epoch = sessionStore.getSnapshot().epoch;
+    sessionStore.rotate('replacement-token', Math.floor(Date.now() / 1000) + 3600, null);
+    expect(sessionStore.getSnapshot().epoch).not.toBe(epoch);
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Send the same file again' })).not.toBeInTheDocument();
+    });
+    expect(calls).toBe(1);
+  });
+
 function renderWorkspace() {
   sessionStore.rotate('memory-token', Math.floor(Date.now() / 1000) + 3600, null);
   const epoch = sessionStore.getSnapshot().epoch;

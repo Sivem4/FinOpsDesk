@@ -4,6 +4,7 @@ using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.Api.Authorization;
 using FinOpsDesk.Api.Observability;
 using FinOpsDesk.Api.OpenApi;
+using FinOpsDesk.Api.RateLimiting;
 using FinOpsDesk.Api.Security;
 using FinOpsDesk.Modules.Access;
 using FinOpsDesk.Modules.Reconciliation;
@@ -12,6 +13,7 @@ using FinOpsDesk.Modules.Reconciliation.Application.ReviewCases;
 using FinOpsDesk.Modules.Reconciliation.Presentation;
 
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -56,8 +58,34 @@ builder.Services.AddAccessModule(connectionString);
 builder.Services.AddReconciliationModule(connectionString);
 builder.Services.AddScoped<IFinancialCommitGuard, FinOpsDesk.Api.Authorization.FinancialCommitGuard>();
 builder.Services.AddSingleton<IDatabaseReadinessProbe, DatabaseReadinessProbe>();
+builder.Services.AddSingleton(static services =>
+    RateLimitBudgetConfiguration.Create(services.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<IOrganizationRateLimitPartitioner, ConfiguredOrganizationRateLimitPartitioner>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = RateLimitRejection.WriteAsync;
+    options.AddPolicy(
+        OrganizationRateLimitPolicies.MatchingReads,
+        httpContext => httpContext.RequestServices
+            .GetRequiredService<IOrganizationRateLimitPartitioner>()
+            .Partition(httpContext, OrganizationRateLimitPolicies.MatchingReads));
+    options.AddPolicy(
+        OrganizationRateLimitPolicies.MatchingExecute,
+        httpContext => httpContext.RequestServices
+            .GetRequiredService<IOrganizationRateLimitPartitioner>()
+            .Partition(httpContext, OrganizationRateLimitPolicies.MatchingExecute));
+    options.AddPolicy(
+        OrganizationRateLimitPolicies.Imports,
+        httpContext => httpContext.RequestServices
+            .GetRequiredService<IOrganizationRateLimitPartitioner>()
+            .Partition(httpContext, OrganizationRateLimitPolicies.Imports));
+});
 
 var app = builder.Build();
+
+// One validated instance, created before the server listens.
+app.Services.GetRequiredService<RateLimitBudgetOptions>();
 
 app.UseMiddleware<RequestCompletionLogMiddleware>();
 app.UseExceptionHandler();
@@ -84,6 +112,9 @@ if (composition.UsesProductionCookie)
     app.MapFinOpsDeskBrowserSession();
 }
 
+app.UseMiddleware<ConfirmedOrganizationRateLimitMiddleware>();
+app.UseRateLimiter();
+
 var reconciliation = app.MapGroup("/api")
     .RequireAuthorization(FinOpsDeskAuthorizationPolicies.TenantMember);
 if (composition.UsesProductionCookie)
@@ -91,6 +122,7 @@ if (composition.UsesProductionCookie)
     reconciliation.WithMetadata(new ProductionCsrfMetadata());
 }
 
+OrganizationRateLimitPolicies.Apply(reconciliation);
 reconciliation.MapReconciliationEndpoints();
 if (FinancialClassificationProbeEndpoints.IsEnabled(app.Configuration))
 {

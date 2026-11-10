@@ -41,6 +41,7 @@ interface ImportAttempt {
   sourceSystem: string;
   file: File;
   epoch: number;
+  uncertain: boolean;
 }
 
 const errorPageSize = 25;
@@ -61,6 +62,7 @@ export function ImportWorkspacePage() {
   const attemptRef = useRef<ImportAttempt | null>(null);
   const [operationEpoch, setOperationEpoch] = useState<number | null>(null);
   const [errorPage, setErrorPage] = useState(0);
+  const [attemptUncertain, setAttemptUncertain] = useState(false);
   const [showRequirements, setShowRequirements] = useState(false);
   const form = useForm<ImportFormValues>({
     resolver: zodResolver(importFormSchema),
@@ -98,6 +100,17 @@ export function ImportWorkspacePage() {
           }
         },
       );
+    },
+    onError: (error) => {
+      const attempt = attemptRef.current;
+
+      if (
+        attempt
+        && (error instanceof UnknownImportOutcomeError || error instanceof UnreadableImportResultError)
+      ) {
+        attemptRef.current = { ...attempt, uncertain: true };
+        setAttemptUncertain(true);
+      }
     },
     onSuccess: (result, attempt, epoch) => {
       if (sessionStore.getSnapshot().epoch !== epoch) {
@@ -227,6 +240,7 @@ export function ImportWorkspacePage() {
       {failure ? (
         <ImportFailure
           error={failure}
+          priorUncertainty={attemptUncertain}
           onRetry={retryCapturedAttempt}
         />
       ) : null}
@@ -244,7 +258,9 @@ export function ImportWorkspacePage() {
       sourceSystem: values.sourceSystem.trim(),
       file: values.file,
       epoch: sessionStore.getSnapshot().epoch,
+      uncertain: false,
     };
+    setAttemptUncertain(false);
     attemptRef.current = attempt;
     setErrorPage(0);
     mutation.mutate(attempt);
@@ -262,7 +278,35 @@ export function ImportWorkspacePage() {
   }
 }
 
-function ImportFailure({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+function ImportFailure({
+  error,
+  priorUncertainty,
+  onRetry,
+}: {
+  error: unknown;
+  priorUncertainty: boolean;
+  onRetry: () => void;
+}) {
+  const ownRateLimit = error instanceof ApiError
+    && error.status === 429
+    && error.code === 'finopsdesk.rate_limit.exceeded';
+
+  if (ownRateLimit && priorUncertainty) {
+    return (
+      <Stack spacing={2}>
+        <Alert severity="warning">
+          <AlertTitle>We couldn’t confirm the result</AlertTitle>
+          We don’t know whether this file was saved. Send the same file again. If it was saved, you’ll see the earlier result. If it wasn’t, the import will run.
+        </Alert>
+        {rateLimitAttemptAlert(error, onRetry)}
+      </Stack>
+    );
+  }
+
+  if (ownRateLimit) {
+    return rateLimitAttemptAlert(error, onRetry);
+  }
+
   if (error instanceof UnknownImportOutcomeError || error instanceof UnreadableImportResultError) {
     return (
       <Alert
@@ -361,6 +405,26 @@ function ImportFailure({ error, onRetry }: { error: unknown; onRetry: () => void
   }
 
   return <Alert severity="error">We couldn’t show the result. Please try again later.</Alert>;
+}
+
+function rateLimitAttemptAlert(error: ApiError, onRetry: () => void) {
+  const wait = error.retryAfterSeconds === null
+    ? ''
+    : ` You can send it again in about ${error.retryAfterSeconds} seconds.`;
+
+  return (
+    <Alert
+      severity="warning"
+      action={
+        <Button type="button" color="inherit" onClick={onRetry}>
+          Send the same file again
+        </Button>
+      }
+    >
+      <AlertTitle>This attempt was not imported</AlertTitle>
+      This file was rejected before the import ran. Nothing from this attempt was saved.{wait}
+    </Alert>
+  );
 }
 
 function ImportResult({

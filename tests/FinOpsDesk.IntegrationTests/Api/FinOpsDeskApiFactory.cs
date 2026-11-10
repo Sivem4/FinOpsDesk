@@ -158,7 +158,7 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
                 }
             }
 
-            configuration.AddInMemoryCollection(settings);
+            configuration.Add(new MutableMemoryConfigurationSource(settings));
         });
 
         if (_configureServices is not null)
@@ -181,5 +181,44 @@ internal class FinOpsDeskApiFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable(
             "Authentication__FinancialClassificationProbes",
             _previousFinancialClassificationProbes);
+    }
+}
+
+internal sealed class MutableMemoryConfigurationSource : IConfigurationSource
+{
+    public MutableMemoryConfigurationSource(IEnumerable<KeyValuePair<string, string?>> initial)
+    {
+        foreach (KeyValuePair<string, string?> pair in initial)
+        {
+            Data[pair.Key] = pair.Value;
+        }
+    }
+
+    public Dictionary<string, string?> Data { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public IConfigurationProvider Build(IConfigurationBuilder builder)
+    {
+        return new MutableMemoryConfigurationProvider(this);
+    }
+}
+
+internal sealed class MutableMemoryConfigurationProvider : ConfigurationProvider
+{
+    private readonly MutableMemoryConfigurationSource _source;
+
+    public MutableMemoryConfigurationProvider(MutableMemoryConfigurationSource source)
+    {
+        _source = source;
+    }
+
+    public override void Load()
+    {
+        Data = new Dictionary<string, string?>(_source.Data, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public override void Set(string key, string? value)
+    {
+        _source.Data[key] = value;
+        base.Set(key, value);
     }
 }

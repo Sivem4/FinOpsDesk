@@ -2,6 +2,7 @@ using System.Text;
 
 using FinOpsDesk.Api.Authentication;
 using FinOpsDesk.Api.Authorization;
+using FinOpsDesk.Api.RateLimiting;
 using FinOpsDesk.Modules.Reconciliation.Presentation;
 
 using Microsoft.AspNetCore.Authorization;
@@ -197,6 +198,7 @@ internal static class OpenApiAuthenticationTransformer
         }
 
         DescribeStatus(operation, "403", forbidden, preserveProblem: handlerProblem || delegationCatalog);
+        DescribeRateLimit(operation, path, method);
 
         if (!csrf || excludedWrite)
         {
@@ -205,6 +207,56 @@ internal static class OpenApiAuthenticationTransformer
 
         AddHeader(operation, FinOpsDeskCsrf.HeaderName, required: true, "Required CSRF token for this JSON write.");
         NoteCsrfFailure(operation);
+    }
+
+    private static void DescribeRateLimit(OpenApiOperation operation, string path, string? method)
+    {
+        if (!OrganizationRateLimitPolicies.TryGetPolicy(method, path, out string policy))
+        {
+            return;
+        }
+
+        string budget = policy switch
+        {
+            OrganizationRateLimitPolicies.MatchingReads =>
+                "Default budget: one shared fixed window of 60 permits per 60 seconds for GET /api/matches, GET /api/matches/smart, and GET /api/matches/batch/preview.",
+            OrganizationRateLimitPolicies.MatchingExecute =>
+                "Default budget: one fixed window of 10 permits per 60 seconds for POST /api/matches/batch/execute.",
+            _ =>
+                "Default budget: one shared token bucket of capacity 6 and one token per minute for POST /api/imports/invoices and POST /api/imports/bank-transactions.",
+        };
+        operation.Responses ??= new OpenApiResponses();
+        operation.Responses["429"] = new OpenApiResponse
+        {
+            Description = budget
+                + " The running instance uses the RateLimiting values captured at startup. Changing that configuration requires a restart. QueueLimit is 0 and replenishment is automatic."
+                + " Rejection is HTTP 429 application/problem+json with title \"Too many requests.\" and code finopsdesk.rate_limit.exceeded. Cache-Control is no-store. Retry-After is optional.",
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/problem+json"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchema
+                    {
+                        Type = JsonSchemaType.Object,
+                        Properties = new Dictionary<string, IOpenApiSchema>
+                        {
+                            ["title"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                            ["status"] = new OpenApiSchema { Type = JsonSchemaType.Integer },
+                            ["code"] = new OpenApiSchema { Type = JsonSchemaType.String },
+                        },
+                    },
+                },
+            },
+            Headers = new Dictionary<string, IOpenApiHeader>
+            {
+                ["Retry-After"] = new OpenApiHeader
+                {
+                    Description = "Optional whole seconds, rounded up, when the limiter reports a positive delay. Omitted when that delay is missing, zero, or negative.",
+                    Required = false,
+                    Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+                },
+            },
+        };
     }
 
     private static void ApplyLogin(OpenApiOperation operation)

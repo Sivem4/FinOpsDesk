@@ -44,7 +44,7 @@ export async function apiGet(path: string, signal: AbortSignal): Promise<unknown
   assertCurrentEpoch(epoch);
 
   if (!response.ok) {
-    throw toApiError(response.status, body);
+    throw toApiError(response.status, body, response.headers.get('Retry-After'));
   }
 
   try {
@@ -106,7 +106,7 @@ async function readCookieFinancial(path: string, signal: AbortSignal): Promise<u
   }
 
   if (!response.ok) {
-    const error = toApiError(response.status, body);
+    const error = toApiError(response.status, body, response.headers.get('Retry-After'));
 
     if (response.status === 503 && error.code === 'auth.authorization.unavailable') {
       sessionStore.markAuthorizationUnavailable();
